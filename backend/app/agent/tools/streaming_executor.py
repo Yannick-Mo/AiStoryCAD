@@ -69,7 +69,7 @@ def _smart_summarise(data: str, max_chars: int, tool_name: str) -> str:
     if len(data) <= max_chars:
         return data
 
-    if data.strip().startswith("{"):
+    if data.strip().startswith(("{", "[")):
         try:
             parsed = json.loads(data)
             if isinstance(parsed, list):
@@ -130,7 +130,8 @@ def _summarise_json_list(parsed: list, max_chars: int, tool_name: str) -> str:
                     compressed.append(item)
             result = json.dumps(compressed, ensure_ascii=False, indent=2)
             if len(result) > max_chars:
-                result = result[:max_chars] + f"\n... [truncated, {len(data)} chars total]"
+                full_len = len(result)
+                result = result[:max_chars] + f"\n... [truncated, {full_len} chars total]"
         return result
 
     # Non-list tool: keep first 3 items
@@ -319,7 +320,12 @@ class StreamingToolExecutor:
         # Resolve tool instance
         tool = self._tools.get(tool_name)
         if not tool:
-            err = {"tool": tool_name, "success": False, "error": f"Tool '{tool_name}' not found"}
+            err = {
+                "tool": tool_name,
+                "success": False,
+                "error": f"Tool '{tool_name}' not found",
+                "_tool_use_id": tool_use_id,
+            }
             self._completed.append((tool_use_id, err))
             return
 
@@ -347,27 +353,30 @@ class StreamingToolExecutor:
 
         Returns:
             List of result dicts for tools that have completed since the
-            last call.  Each dict has ``{tool, success, data, error}``.
+            last call (including ``add_tool``-stage errors such as
+            "tool not found").  Each dict has ``{tool, success, data, error,
+            _tool_use_id}``.
         """
-        results: list[dict] = []
         done_ids: list[str] = []
         for tid, (tool_name, task) in list(self._pending.items()):
             if task.done():
                 done_ids.append(tid)
                 try:
                     result = task.result()
-                    results.append(result)
                 except asyncio.CancelledError:
-                    results.append({"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid})
+                    result = {"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid}
                 except Exception as exc:
-                    results.append({"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid})
+                    result = {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}
+                self._completed.append((result.get("_tool_use_id", tid), result))
 
         for tid in done_ids:
             del self._pending[tid]
 
-        self._completed.extend((r.get("tool", ""), r) for r in results)
+        # Return everything not yet handed to the frontend — this also picks
+        # up add_tool-stage errors appended directly to _completed.
+        new_slice = self._completed[self._completed_yielded:]
         self._completed_yielded = len(self._completed)
-        return results
+        return [r for _, r in new_slice]
 
     # ── Split API for interceptor-aware execution ──────────────────────
     # The autonomous loop calls these in order:
@@ -382,8 +391,13 @@ class StreamingToolExecutor:
         """Wait for in-flight SAFE tools only. Does NOT touch queued tools.
 
         Returns:
-            Results from SAFE tools that completed (including those already
-            yielded via ``get_completed_results``).
+            **All** results accumulated this round — including those already
+            yielded to the frontend via ``get_completed_results`` and
+            ``add_tool``-stage errors.  The caller needs the complete set to
+            build one ``role=tool`` message per tool_call_id (OpenAI/DeepSeek
+            reject an assistant tool_call without a matching tool response).
+            Frontend-event dedup is the caller's responsibility (track which
+            ``_tool_use_id`` values were already emitted during streaming).
         """
         if self._discarded:
             return []
@@ -394,17 +408,15 @@ class StreamingToolExecutor:
             for tid, (tool_name, task) in list(self._pending.items()):
                 try:
                     result = task.result()
-                    self._completed.append((tid, result))
                 except asyncio.CancelledError:
-                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
+                    result = {"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid}
                 except Exception as exc:
-                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}))
+                    result = {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}
+                self._completed.append((result.get("_tool_use_id", tid), result))
             self._pending.clear()
 
-        # Only return results NOT already yielded by get_completed_results
-        new_slice = self._completed[self._completed_yielded:]
         self._completed_yielded = len(self._completed)
-        return [r for _, r in new_slice]
+        return [r for _, r in self._completed]
 
     def get_queued_tools(self) -> tuple[list[tuple[str, dict, str]], list[tuple[str, dict, str]]]:
         """Return queued EXCLUSIVE and BARRIER tools without executing them.
@@ -438,6 +450,7 @@ class StreamingToolExecutor:
         self._queued_exclusive.clear()
         self._queued_barrier.clear()
         self._completed.clear()
+        self._completed_yielded = 0
         self._blocked_writes.clear()
 
     # ------------------------------------------------------------------

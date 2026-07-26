@@ -714,6 +714,10 @@ async def autonomous_loop(
         # Preserve the original ToolCall objects so the assistant message
         # carries a valid tool_calls field (required by OpenAI/DeepSeek API).
         tool_call_objects: list = []
+        # tool_use_ids whose tool_done event was already emitted mid-stream —
+        # await_pending_safe() returns ALL results (for message bookkeeping),
+        # so the frontend event must be deduplicated here.
+        emitted_tool_ids: set[str] = set()
         assistant_text_parts: list[str] = []
         assistant_reasoning_parts: list[str] = []
         tool_use_count = 0
@@ -761,6 +765,9 @@ async def autonomous_loop(
 
                 for result in streaming_executor.get_completed_results():
                     yield _event_tool_done(result)
+                    _tid = result.get("_tool_use_id", "")
+                    if _tid:
+                        emitted_tool_ids.add(_tid)
 
                 if chunk.finish_reason:
                     logger.debug("Stream finish: %s", chunk.finish_reason)
@@ -823,6 +830,10 @@ async def autonomous_loop(
                 continue
 
         # ── Step 4: Await in-flight SAFE tools only ────────────────
+        # await_pending_safe() returns ALL SAFE results from this round,
+        # including those already emitted to the frontend mid-stream — every
+        # tool_call_id must land in safe_result_map so Step 6c can build the
+        # mandatory role=tool message (API rejects orphan tool_calls).
         safe_results = await streaming_executor.await_pending_safe()
         queued_excl, queued_barrier = streaming_executor.get_queued_tools()
 
@@ -831,7 +842,8 @@ async def autonomous_loop(
         for r in safe_results:
             if r.get("tool") not in ("cowriter_analysis",):
                 new_tool_results.append(r)
-                yield _event_tool_done(r)
+                if r.get("_tool_use_id", "") not in emitted_tool_ids:
+                    yield _event_tool_done(r)
                 safe_result_map[r.get("_tool_use_id", "")] = r
         state = state.replace(tool_results=new_tool_results)
 
