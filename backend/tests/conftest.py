@@ -28,5 +28,5 @@ async def test_user(db_session: AsyncSession) -> dict:
     from app.user.repository import UserRepository
     from app.user.service import UserService
     repo = UserRepository(db_session)
-    user = await repo.create("testuser", "test@example.com", UserService._hash_password("password"))
+    user = await repo.create("testuser", "test@example.com", await UserService._hash_password("password"))
     return {"id": user.id, "username": user.username}

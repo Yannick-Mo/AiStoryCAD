@@ -10,9 +10,10 @@ from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.guard import InputGuard, RateLimiter
+from app.agent.guard import InputGuard
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.history_manager import HistoryManager
+from app.api.rate_limiter import get_rate_limiter
 from app.llm.client import LLMClient, get_shared_client
 from app.llm.types import Message
 from app.agent.tools import get_tool_registry as _get_registry
@@ -47,7 +48,7 @@ class SuperAgent:
 
         self.conv_memory = ConversationMemory(redis_client)
         self._history_manager: HistoryManager | None = None
-        self.input_guard = InputGuard(rate_limiter=RateLimiter())
+        self.input_guard = InputGuard(rate_limiter=get_rate_limiter())
 
         # Tool registry — cached for _emit_tool_events write detection
         self._tool_registry_cache: dict | None = None

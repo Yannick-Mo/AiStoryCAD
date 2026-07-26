@@ -9,6 +9,7 @@ from app.agent.guard import (
     RateLimiter,
     InputGuard,
 )
+from app.api.rate_limiter import get_rate_limiter, rate_limiter as auth_limiter
 
 
 class TestNormalizeInput:
@@ -175,3 +176,125 @@ class TestInputGuard:
     def test_obfuscated_unicode_injection(self):
         guard = InputGuard()
         assert guard.check("d_o_a_n_y_t_h_i_n_g_n_o_w") is not None
+
+
+class TestRateLimiterSingleton:
+    """Fix A: same limiter instance is shared across SuperAgent constructions."""
+
+    def test_singleton_identity(self):
+        limiter_a = get_rate_limiter()
+        limiter_b = get_rate_limiter()
+        assert limiter_a is limiter_b, "get_rate_limiter() must return the same object"
+
+    def test_memory_cleanup_empty_key(self):
+        """Fix C: expired key is cleaned up and re-created fresh."""
+        limiter = RateLimiter(max_requests=3, window=1)
+        import time
+
+        # Fill and let expire
+        limiter._check_memory_sync("cleanup_key", time.time())
+        time.sleep(1.1)
+        # After full expiry the key is deleted then re-created;
+        # verify the request is treated as fresh (ok, count=1)
+        ok, count = limiter._check_memory_sync("cleanup_key", time.time())
+        assert ok is True
+        assert count == 1
+
+    def test_async_memory_cleanup_empty_key(self):
+        import asyncio
+
+        limiter = RateLimiter(max_requests=3, window=1)
+
+        async def run():
+            import time
+
+            await limiter._check_memory("cleanup_key_async", time.time())
+            # Let it expire
+            await asyncio.sleep(1.1)
+            ok, count = await limiter._check_memory(
+                "cleanup_key_async", time.time()
+            )
+            assert ok is True
+            assert count == 1
+
+        asyncio.run(run())
+
+    def test_auth_limiter_cleanup(self):
+        """auth_route InMemoryRateLimiter also cleans empty keys,
+        but this is only indirectly tested — it must not leak."""
+        import asyncio
+
+        async def run():
+            await auth_limiter.check("leak_test", max_attempts=5, window=1)
+            await asyncio.sleep(1.1)
+            ok = await auth_limiter.check("leak_test", max_attempts=5, window=1)
+            assert ok is True, "expired key should allow new requests"
+
+        asyncio.run(run())
+
+
+class TestRateLimiterExceedsLimit:
+    """T1: consecutive calls exceeding 30/60s are rejected."""
+
+    def test_shared_instance_blocks_after_limit(self):
+        limiter = RateLimiter(max_requests=3, window=60)
+        for _ in range(3):
+            ok, _ = limiter.check("shared_block_key")
+            assert ok is True
+        ok, _ = limiter.check("shared_block_key")
+        assert ok is False, "4th call with max=3 must be blocked"
+
+    def test_independent_keys_not_affected(self):
+        limiter = RateLimiter(max_requests=2, window=60)
+        limiter.check("indep_a")
+        limiter.check("indep_a")
+        ok, _ = limiter.check("indep_b")
+        assert ok is True, "different key must not share the rate limit"
+
+
+class TestBcryptOffEventLoop:
+    """T3: bcrypt calls use asyncio.to_thread (verify via monkeypatch)."""
+
+    def test_hash_password_uses_to_thread(self, monkeypatch):
+        import asyncio
+        from app.user.service import UserService
+
+        called = False
+        original_to_thread = asyncio.to_thread
+
+        async def tracking_to_thread(fn, *args, **kwargs):
+            nonlocal called
+            called = True
+            return await original_to_thread(fn, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", tracking_to_thread)
+
+        async def run():
+            result = await UserService._hash_password("test_password123")
+            assert isinstance(result, str)
+            assert len(result) > 20  # bcrypt hash is ~60 chars
+
+        asyncio.run(run())
+        assert called, "asyncio.to_thread was not called for hash_password"
+
+    def test_verify_password_uses_to_thread(self, monkeypatch):
+        import asyncio
+        from app.user.service import UserService
+
+        call_count = 0
+        original_to_thread = asyncio.to_thread
+
+        async def tracking_to_thread(fn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return await original_to_thread(fn, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", tracking_to_thread)
+
+        async def run():
+            hashed = await UserService._hash_password("test_password123")
+            result = await UserService._verify_password("test_password123", hashed)
+            assert result is True
+
+        asyncio.run(run())
+        assert call_count >= 2, f"expected >=2 to_thread calls, got {call_count}"

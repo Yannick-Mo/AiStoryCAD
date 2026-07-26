@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -14,12 +15,12 @@ class UserService:
         self.repo = UserRepository(db)
 
     @staticmethod
-    def _hash_password(password: str) -> str:
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    async def _hash_password(password: str) -> str:
+        return (await asyncio.to_thread(bcrypt.hashpw, password.encode(), bcrypt.gensalt())).decode()
 
     @staticmethod
-    def _verify_password(plain: str, hashed: str) -> bool:
-        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    async def _verify_password(plain: str, hashed: str) -> bool:
+        return await asyncio.to_thread(bcrypt.checkpw, plain.encode(), hashed.encode())
 
     @staticmethod
     def _create_token(user_id: uuid.UUID) -> str:
@@ -42,13 +43,13 @@ class UserService:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
         if await self.repo.get_by_username(username):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
-        user = await self.repo.create(username, email, self._hash_password(password))
+        user = await self.repo.create(username, email, await self._hash_password(password))
         token = self._create_token(user.id)
         return {"token": token, "user": {"id": str(user.id), "username": user.username, "email": user.email, "display_name": user.display_name}}
 
     async def login(self, email: str, password: str) -> dict:
         user = await self.repo.get_by_email(email)
-        if not user or not self._verify_password(password, user.password_hash):
+        if not user or not await self._verify_password(password, user.password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
         token = self._create_token(user.id)
         return {"token": token, "user": {"id": str(user.id), "username": user.username, "email": user.email, "display_name": user.display_name}}
@@ -68,7 +69,7 @@ class UserService:
         if display_name is not None:
             updates["display_name"] = display_name
         if password is not None:
-            updates["password_hash"] = self._hash_password(password)
+            updates["password_hash"] = await self._hash_password(password)
         ok = await self.repo.update(user_id, **updates)
         if not ok:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")

@@ -262,23 +262,37 @@ class RateLimiter:
 
     async def _check_memory(self, key: str, now: float) -> tuple[bool, int]:
         async with self._memory_lock:
-            queue = self._memory_store[key]
+            queue = self._memory_store.get(key)
+            if queue is None:
+                self._memory_store[key] = [now]
+                return True, 1
             while queue and queue[0] < now - self.window:
                 queue.pop(0)
+            if not queue:
+                del self._memory_store[key]
+                self._memory_store[key] = [now]
+                return True, 1
             if len(queue) >= self.max_requests:
                 return False, len(queue)
             queue.append(now)
-            return True, len(queue) + 1
+            return True, len(queue)
 
     def _check_memory_sync(self, key: str, now: float) -> tuple[bool, int]:
         with self._memory_sync_lock:
-            queue = self._memory_store[key]
+            queue = self._memory_store.get(key)
+            if queue is None:
+                self._memory_store[key] = [now]
+                return True, 1
             while queue and queue[0] < now - self.window:
                 queue.pop(0)
+            if not queue:
+                del self._memory_store[key]
+                self._memory_store[key] = [now]
+                return True, 1
             if len(queue) >= self.max_requests:
                 return False, len(queue)
             queue.append(now)
-            return True, len(queue) + 1
+            return True, len(queue)
 
     async def _check_redis(self, key: str, now: float) -> tuple[bool, int]:
         min_score = now - self.window
