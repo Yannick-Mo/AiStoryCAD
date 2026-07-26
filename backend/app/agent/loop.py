@@ -352,11 +352,26 @@ async def _build_turn_sections(
     # 1. Mode declaration
     sections.append(MODE_DECLARATION_CHAT if state.mode == "chat" else MODE_DECLARATION_COWRITER)
 
-    # 2. Cowriter persona
+    # 2. Cowriter persona (only in cowriter mode)
     if cowriter_persona:
         sections.append(cowriter_persona)
 
-    # 3. Project context header
+    # 3. Mode-specific writing behavior rules
+    if state.mode == "cowriter":
+        sections.append(
+            "# --- 写作行为规则 ---\n"
+            "- 仅在用户明确请求或确认计划后调用写作工具（write_scene_content、continue_scene、rewrite_scene、call_writer_agent 等）\n"
+            "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
+            "- 你可以根据用户的思路提供完整段落草稿作为示范或起点"
+        )
+    else:
+        sections.append(
+            "# --- 写作行为规则 ---\n"
+            "- Do NOT write scene content on behalf of the user unless explicitly asked\n"
+            "- 在对话模式下，如果不确定用户意图，先反问澄清"
+        )
+
+    # 4. Project context header
     proj_title = proj.get("title", "未命名")
     proj_genre = proj.get("genre", "")
     proj_id = state.project_id or proj.get("id", "unknown")
