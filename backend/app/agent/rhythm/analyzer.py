@@ -3,7 +3,7 @@
 import statistics
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.llm.client import LLMClient, LLMError
+from app.llm.client import LLMError, get_shared_client
 from app.llm.types import Message
 from app.storycad.models import ChapterRhythm, Chapter, Scene, SceneContent
 from app.project.models import Project
@@ -252,7 +252,7 @@ class RhythmAnalyzer:
 
     async def _ai_assess(self, project_id: str, chapters_data: list[dict]) -> str:
         try:
-            client = LLMClient()
+            client = get_shared_client().fork()
             metrics_summary = "\n".join(
                 f"章节{i+1}: 动作={cd['action']} 悬疑={cd['suspense']} 情感={cd['emotion']} 幽默={cd['humor']} 强度={cd['intensity']} (字数={cd['word_count']})"
                 for i, cd in enumerate(chapters_data)

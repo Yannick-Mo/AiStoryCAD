@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.guard import InputGuard, RateLimiter
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.history_manager import HistoryManager
-from app.llm.client import LLMClient
+from app.llm.client import LLMClient, get_shared_client
 from app.llm.types import Message
 from app.agent.tools import get_tool_registry as _get_registry
 from app.agent.tools import get_tool_descriptions as _build_tool_descriptions
@@ -42,7 +42,7 @@ class SuperAgent:
         self.redis_client = redis_client
         self._owns_llm = llm_client is None
         if llm_client is None:
-            llm_client = LLMClient()
+            llm_client = get_shared_client().fork()
         self._llm_client = llm_client
 
         self.conv_memory = ConversationMemory(redis_client)

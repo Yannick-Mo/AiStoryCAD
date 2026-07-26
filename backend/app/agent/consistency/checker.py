@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.models import Project
 from app.storycad.models import Character, Chapter, Scene, SceneContent, ChapterEdge
 from app.agent.consistency.models import ConsistencyIssue, ConsistencyReport
-from app.llm.client import LLMClient
+from app.llm.client import LLMClient, get_shared_client
 from app.llm.types import Message
 from app.utils import row_to_dict
 import logging
@@ -51,7 +51,7 @@ def _parse_llm_issues(content: str) -> list[ConsistencyIssue]:
 class ConsistencyChecker:
     def __init__(self, db: AsyncSession, llm_client: LLMClient | None = None):
         self.db = db
-        self._llm = llm_client or LLMClient()
+        self._llm = llm_client or get_shared_client().fork()
         self._loaded_characters: list[dict] | None = None
         self._loaded_chapters: list[dict] | None = None
         self._loaded_scenes: list[dict] | None = None

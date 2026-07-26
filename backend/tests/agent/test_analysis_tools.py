@@ -55,9 +55,9 @@ class TestAnalyzeChapterTool:
         return db
 
     @patch("app.agent.tools.analysis_v2_tools.ContextBuilder")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    async def test_analyze_chapter_success(self, mock_verify, mock_llm_cls, mock_ctx_builder):
+    async def test_analyze_chapter_success(self, mock_verify, mock_get_shared, mock_ctx_builder):
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(
             content=json.dumps({
@@ -66,7 +66,7 @@ class TestAnalyzeChapterTool:
                 "suggestions": ["加强动作描写", "调整场景长度"],
             })
         )
-        mock_llm_cls.return_value = mock_llm
+        mock_get_shared.return_value.fork.return_value = mock_llm
 
         mock_ctx_instance = MagicMock()
         mock_ctx_instance.build_full = AsyncMock(return_value={"mock": "context"})
@@ -80,8 +80,8 @@ class TestAnalyzeChapterTool:
         assert "节奏" in result.data["analysis"]
 
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_analyze_chapter_not_found(self, mock_llm_cls, mock_verify):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_analyze_chapter_not_found(self, mock_get_shared, mock_verify):
         db = AsyncMock()
         ch_row = MagicMock()
         ch_row.scalar_one_or_none.return_value = None
@@ -104,11 +104,11 @@ class TestAnalyzeChapterTool:
 
     @patch("app.agent.tools.analysis_v2_tools.ContextBuilder")
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_analyze_chapter_json_decode_error(self, mock_llm_cls, mock_verify, mock_ctx_builder):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_analyze_chapter_json_decode_error(self, mock_get_shared, mock_verify, mock_ctx_builder):
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(content="not json at all")
-        mock_llm_cls.return_value = mock_llm
+        mock_get_shared.return_value.fork.return_value = mock_llm
 
         mock_ctx_instance = MagicMock()
         mock_ctx_instance.build_full = AsyncMock(return_value={})
@@ -151,8 +151,8 @@ class TestAnalyzeCharacterArcTool:
         return db
 
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_analyze_character_arc_success(self, mock_llm_cls, mock_verify):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_analyze_character_arc_success(self, mock_get_shared, mock_verify):
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(
             content=json.dumps({
@@ -163,7 +163,7 @@ class TestAnalyzeCharacterArcTool:
                 "suggestions": ["增加一个关键事件"],
             })
         )
-        mock_llm_cls.return_value = mock_llm
+        mock_get_shared.return_value.fork.return_value = mock_llm
 
         result = await AnalyzeCharacterArcTool().run(
             db=self._make_db_for_character(), project_id=str(uuid.uuid4()),
@@ -175,8 +175,8 @@ class TestAnalyzeCharacterArcTool:
         assert result.data["consistency_score"] == 8
 
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_analyze_character_not_found(self, mock_llm_cls, mock_verify):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_analyze_character_not_found(self, mock_get_shared, mock_verify):
         db = AsyncMock()
         char_row = MagicMock()
         char_row.scalar_one_or_none.return_value = None
@@ -190,14 +190,14 @@ class TestAnalyzeCharacterArcTool:
         assert result.error == "Character not found"
 
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_analyze_character_no_scenes(self, mock_llm_cls, mock_verify):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_analyze_character_no_scenes(self, mock_get_shared, mock_verify):
         mock_llm = AsyncMock()
         mock_llm.chat.return_value = MagicMock(
             content=json.dumps({"arc_type": "flat", "consistency_score": 5,
                                "analysis": "角色出现较少", "issues": [], "suggestions": []})
         )
-        mock_llm_cls.return_value = mock_llm
+        mock_get_shared.return_value.fork.return_value = mock_llm
 
         db = AsyncMock()
         char_row = MagicMock()
@@ -226,8 +226,8 @@ class TestSuggestNextTool:
 
     @patch("app.agent.tools.analysis_v2_tools.ContextBuilder")
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_suggest_next_success(self, mock_llm_cls, mock_verify, mock_ctx_builder):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_suggest_next_success(self, mock_get_shared, mock_verify, mock_ctx_builder):
         mock_ctx_builder.return_value = MagicMock()
         mock_ctx_builder.return_value.build_full = AsyncMock(return_value={
             "acts": [
@@ -245,7 +245,7 @@ class TestSuggestNextTool:
                 }
             ]
         })
-        mock_llm_cls.return_value = self._make_mock_llm({
+        mock_get_shared.return_value.fork.return_value = self._make_mock_llm({
             "focus": "场景'发展'",
             "reason": "这是第二场，需要推动情节",
             "suggested_scene": "第一幕→第一章→场景'发展'",
@@ -262,13 +262,13 @@ class TestSuggestNextTool:
 
     @patch("app.agent.tools.analysis_v2_tools.ContextBuilder")
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_suggest_next_no_unwritten(self, mock_llm_cls, mock_verify, mock_ctx_builder):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_suggest_next_no_unwritten(self, mock_get_shared, mock_verify, mock_ctx_builder):
         mock_ctx_builder.return_value = MagicMock()
         mock_ctx_builder.return_value.build_full = AsyncMock(return_value={
             "acts": [{"name": "第一幕", "chapters": [{"title": "第一章", "scenes": [{"title": "开场", "content_preview": "正文"}]}]}]
         })
-        mock_llm_cls.return_value = self._make_mock_llm({
+        mock_get_shared.return_value.fork.return_value = self._make_mock_llm({
             "focus": "all done", "reason": "全部完成",
             "suggested_scene": "", "tips": ["开始下一章"]
         })
@@ -280,11 +280,11 @@ class TestSuggestNextTool:
 
     @patch("app.agent.tools.analysis_v2_tools.ContextBuilder")
     @patch("app.agent.tools.analysis_v2_tools.verify_project_owner")
-    @patch("app.agent.tools.analysis_v2_tools.LLMClient")
-    async def test_suggest_next_no_acts(self, mock_llm_cls, mock_verify, mock_ctx_builder):
+    @patch("app.agent.tools.analysis_v2_tools.get_shared_client")
+    async def test_suggest_next_no_acts(self, mock_get_shared, mock_verify, mock_ctx_builder):
         mock_ctx_builder.return_value = MagicMock()
         mock_ctx_builder.return_value.build_full = AsyncMock(return_value={})
-        mock_llm_cls.return_value = self._make_mock_llm({})
+        mock_get_shared.return_value.fork.return_value = self._make_mock_llm({})
 
         result = await SuggestNextTool().run(db=AsyncMock(), project_id=str(uuid.uuid4()))
 

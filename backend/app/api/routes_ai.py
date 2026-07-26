@@ -11,7 +11,7 @@ from app.api.rate_limiter import rate_limiter
 from app.project.models import Project, ProjectConfig
 from app.agent.project_creator.graph import run_pipeline
 from app.agent.project_creator.state import MaterialState
-from app.llm.client import LLMClient
+from app.llm.client import get_shared_client
 from app.llm.types import Message
 from app.storycad.entity_map import ENTITY_MAP
 from app.storycad.repository import StoryCADRepository
@@ -73,7 +73,7 @@ async def ai_inline(
         f"请{ {'polish':'润色','expand':'扩写','compress':'压缩'}[payload.action] }这段选中的文本，只输出结果。"
     )
 
-    client = LLMClient()
+    client = get_shared_client().fork()
     result = await client.chat(
         messages=[
             Message(role="system", content=system_prompt),
@@ -123,7 +123,7 @@ async def ai_continue(
         f"请给出续写建议。"
     )
 
-    client = LLMClient()
+    client = get_shared_client().fork()
     result = await client.chat(
         messages=[
             Message(role="system", content=system_prompt),

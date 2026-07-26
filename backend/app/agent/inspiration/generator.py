@@ -1,6 +1,6 @@
 import json
 import logging
-from app.llm.client import LLMClient
+from app.llm.client import get_shared_client
 from app.llm.types import Message
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ CHALLENGE_SYSTEM_PROMPT = """你是一个创作挑战生成器。生成带有创
 class InspirationGenerator:
 
     def __init__(self):
-        self._client = LLMClient()
+        self._client = get_shared_client().fork()
 
     async def generate_story_starter(
         self,

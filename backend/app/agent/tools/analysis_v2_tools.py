@@ -4,7 +4,7 @@ import json
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.llm.client import LLMClient
+from app.llm.client import get_shared_client
 from app.llm.types import Message
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.context import ContextBuilder
@@ -73,7 +73,7 @@ class AnalyzeChapterTool(BaseTool):
                 "act": act_data,
             }, ensure_ascii=False)
 
-            client = self.llm_client or LLMClient()
+            client = self.llm_client or get_shared_client().fork()
             msgs = [
                 Message(
                     role="system",
@@ -171,7 +171,7 @@ class AnalyzeCharacterArcTool(BaseTool):
                 "relations": [row_to_dict(r) for r in rels],
             }
 
-            client = self.llm_client or LLMClient()
+            client = self.llm_client or get_shared_client().fork()
             msgs = [
                 Message(
                     role="system",
@@ -262,7 +262,7 @@ class SuggestNextTool(BaseTool):
                                 f"幕'{a.get('name', '')}'→章'{ch.get('title', '')}'→场景'{s.get('title', '')}'"
                             )
 
-            client = self.llm_client or LLMClient()
+            client = self.llm_client or get_shared_client().fork()
             msgs = [
                 Message(
                     role="system",
