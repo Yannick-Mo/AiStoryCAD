@@ -14,7 +14,7 @@ async def test_sync_creates_act(db_session: AsyncSession, test_user: dict):
     repo = StoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
-    project = await project_repo.create("Test Project", "", uuid.UUID(test_user["id"]))
+    project = await project_repo.create("Test Project", "", test_user["id"])
 
     act_id = str(uuid.uuid4())
     payload = {
@@ -38,7 +38,7 @@ async def test_sync_creates_chapter_under_act(db_session: AsyncSession, test_use
     repo = StoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
-    project = await project_repo.create("Test Project", "", uuid.UUID(test_user["id"]))
+    project = await project_repo.create("Test Project", "", test_user["id"])
     act_id = str(uuid.uuid4())
     chapter_id = str(uuid.uuid4())
 
@@ -60,7 +60,7 @@ async def test_sync_deletes_act_cascades_chapters(db_session: AsyncSession, test
     repo = StoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
-    project = await project_repo.create("Test Project", "", uuid.UUID(test_user["id"]))
+    project = await project_repo.create("Test Project", "", test_user["id"])
     act_id = str(uuid.uuid4())
     chapter_id = str(uuid.uuid4())
 
@@ -85,7 +85,7 @@ async def test_sync_updates_global_settings(db_session: AsyncSession, test_user:
     repo = StoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
-    project = await project_repo.create("Test Project", "", uuid.UUID(test_user["id"]))
+    project = await project_repo.create("Test Project", "", test_user["id"])
 
     payload = {
         "projects": {"updated": [{"id": str(project.id), "global_settings": "一个奇幻世界"}]}
@@ -101,7 +101,7 @@ async def test_sync_recalculates_chapter_word_count(db_session: AsyncSession, te
     repo = StoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
-    project = await project_repo.create("Test Project", "", uuid.UUID(test_user["id"]))
+    project = await project_repo.create("Test Project", "", test_user["id"])
     act_id = str(uuid.uuid4())
     chapter_id = str(uuid.uuid4())
     scene_id = str(uuid.uuid4())

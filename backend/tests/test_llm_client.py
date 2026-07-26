@@ -61,6 +61,7 @@ class TestLLMClientChatNonStreaming:
         mock_resp = MagicMock()
         mock_resp.status_code = status_code
         mock_resp.json.return_value = json_data
+        mock_resp.text = json.dumps(json_data)
         mock_resp.raise_for_status = MagicMock()
         return mock_resp
 

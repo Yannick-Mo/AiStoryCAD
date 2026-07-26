@@ -1,27 +1,20 @@
 import uuid
 import pytest
-import asyncio
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from app.config import settings
 from app.project.models import Base
 from app.user.models import User
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session():
     engine = create_async_engine(settings.database_url, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with engine.connect() as conn:
         await conn.begin()
-        session = AsyncSession(bind=conn)
+        session = AsyncSession(bind=conn, expire_on_commit=False)
         yield session
         await session.close()
         await conn.rollback()
@@ -30,7 +23,7 @@ async def db_session():
     await engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_user(db_session: AsyncSession) -> dict:
     from app.user.repository import UserRepository
     from app.user.service import UserService

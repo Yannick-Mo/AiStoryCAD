@@ -135,12 +135,12 @@ class TestPromptLoader:
             tpl = loader.load("plan") or loader.load("cowriter")
         assert tpl is not None
 
-    def test_plan_prompt(self):
+    def test_plan_prompt_deleted(self):
+        # plan.yaml was removed as dead code (commit 2c022a6);
+        # planning now goes through system.yaml sections.
         loader = PromptLoader()
         tpl = loader.load("plan")
-        assert tpl is not None
-        result = tpl.render(tool_descriptions="tool1: desc", entity_context="Project: test", max_steps=10, retry_context=None)
-        assert "tool1" in result
+        assert tpl is None
 
     def test_generate_prompt_deleted(self):
         loader = PromptLoader()

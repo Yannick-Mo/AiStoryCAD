@@ -70,6 +70,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/tests:/app/tests
+      - ./backend/pytest.ini:/app/pytest.ini:ro
     restart: unless-stopped
     stop_grace_period: 30s
     networks:
