@@ -201,18 +201,25 @@ def _event_done(final_state: dict) -> dict:
 # ── Confirm/reject detection ────────────────────────────────────────────
 
 # Keywords that signal the user wants to confirm a pending plan.
-# These must be EXACT matches on the entire message or the message must
-# be very short (=3 chars for Chinese single-word confirmations).
+# 匹配方式：消息 strip 空白和标点后必须与某个关键词**完全相等**才算命中
+# （见 _detect_plan_decision）。子串匹配会把 "开始写第二章" 误判为确认。
 _CONFIRM_KEYWORDS: list[str] = [
-    "确认", "执行", "开始", "ok", "yes",
+    "确认", "执行", "开始", "ok", "yes", "go",
     "没问题", "就这样", "同意", "接受", "做吧", "干吧",
     "按这个来", "照这个来", "用这个", "就按",
+    # 全句等值匹配下这些短词是安全的（原 short_confirm_extra）
+    "好的", "好", "可以", "行", "直接", "继续",
 ]
 _REJECT_KEYWORDS: list[str] = [
     "拒绝", "取消", "算了", "no", "cancel",
     "换个", "换一个", "重新", "再来",
     "重来", "再想想",
+    # 全句等值匹配下这些短词是安全的（原 short_reject_extra）
+    "不要", "不行", "不对", "不好", "停",
 ]
+
+# strip 掉的空白与标点（消息首尾）
+_DECISION_STRIP_CHARS = " \t\r\n。！!？?，,~"
 
 
 def _build_skill_probe_paths(ctx: dict) -> list[str]:
@@ -288,56 +295,23 @@ def _detect_plan_decision(user_content: str, pending_plan: dict) -> str:
 
     Returns ``"confirm"``, ``"reject"``, or ``""`` (no decision detected).
 
-    To avoid false positives on common conversational words (like "可以",
-    "好的", "不", "不行"), this uses stricter matching:
-    - Short messages (up to 10 chars after stripping): direct keyword match
-    - Longer messages: the keyword must appear as a standalone phrase
-      (preceded/followed by punctuation or whitespace boundary)
+    匹配规则：消息 strip 空白和标点（。！!？?，,~）后必须**完全等于**
+    某个确认/拒绝关键词才算命中。子串或词边界匹配都会造成误判：
+    - "开始写第二章" 含确认词 "开始" → 不能当确认，那是新指令
+    - "换个开始" 同时含确认词 "开始" 和拒绝词 "换个" → 不能当确认
+    带任何其他内容的消息一律返回 ""，交给 LLM 处理。
     """
     if not pending_plan or not pending_plan.get("steps"):
         return ""
 
-    content = user_content.strip()
-    content_lower = content.lower()
-    is_short = len(content) <= 10
+    content = user_content.strip(_DECISION_STRIP_CHARS).lower()
+    if not content:
+        return ""
 
-    # ── Confirm detection ──────────────────────────────────────────
-    # For short messages, also check the broad-but-dangerous keywords
-    # "好的", "可以", "行" — these are safe only when the ENTIRE
-    # message is about confirmation.
-    short_confirm_extra = ["好的", "可以", "行", "直接"]
-
-    keywords_to_check = list(_CONFIRM_KEYWORDS)
-    if is_short:
-        keywords_to_check.extend(short_confirm_extra)
-
-    for kw in keywords_to_check:
-        if is_short:
-            if kw in content_lower:
-                return "confirm"
-        else:
-            # For longer messages, require word-boundary match
-            if re.search(r'(?:^|[\s，。！？,;；、])' + re.escape(kw) + r'(?:$|[\s，。！？,;；、])', content_lower):
-                return "confirm"
-
-    # ── Reject detection ───────────────────────────────────────────
-    # "不" is too common to be a keyword; removed entirely.
-    # "不行", "不对", "不好" are also removed — too likely in
-    # feedback like "这个角色不好看".
-    short_reject_extra = ["不行", "不对", "不好"]
-
-    keywords_to_check = list(_REJECT_KEYWORDS)
-    if is_short:
-        keywords_to_check.extend(short_reject_extra)
-
-    for kw in keywords_to_check:
-        if is_short:
-            if kw in content_lower:
-                return "reject"
-        else:
-            if re.search(r'(?:^|[\s，。！？,;；、])' + re.escape(kw) + r'(?:$|[\s，。！？,;；、])', content_lower):
-                return "reject"
-
+    if content in (kw.lower() for kw in _CONFIRM_KEYWORDS):
+        return "confirm"
+    if content in (kw.lower() for kw in _REJECT_KEYWORDS):
+        return "reject"
     return ""
 
 
@@ -534,6 +508,12 @@ async def autonomous_loop(
 - 不要编造角色、章节、场景或关系数据。
 """
     cowriter_persona = _render_cowriter_persona() if state.mode == "cowriter" else ""
+
+    # ── 循环外初始化（最终生成阶段会用到）────────────────────────────
+    # 计划确认分支会在循环体前段 break（跳过本轮的流式赋值），
+    # 这两个变量必须在循环外先绑定，否则最终生成阶段抛 NameError。
+    assistant_text_parts: list[str] = []
+    active_model = state._model_override or None
 
     # ── Main Loop ────────────────────────────────────────────────────
     while state.turn_count < MAX_TURNS:

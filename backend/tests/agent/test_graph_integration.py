@@ -103,11 +103,9 @@ class TestDetectPlanDecision:
     def test_short_reject(self, sample_plan):
         """Short messages with reject keywords should match.
 
-        Note: "不行" matches "行" (a confirm keyword) in short messages.
-        The real _detect_plan_decision excludes "不行" from short reject
-        keywords. See loop.py comments.
+        With exact whole-message matching, "不行" is a reject keyword —
+        the old substring bug ("不行" contains "行") is fixed.
         """
         assert _detect_plan_decision("算了", sample_plan) == "reject"
         assert _detect_plan_decision("取消", sample_plan) == "reject"
-        # "不行" → "行" triggers confirm in short message mode
-        assert _detect_plan_decision("不行", sample_plan) == "confirm"
+        assert _detect_plan_decision("不行", sample_plan) == "reject"
