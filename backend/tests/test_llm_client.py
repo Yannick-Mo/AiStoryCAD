@@ -301,3 +301,180 @@ class TestMessageType:
         msg = Message(role="tool", content='{"result":"ok"}', tool_call_id="call_1")
         assert msg.tool_call_id == "call_1"
         assert msg.content == '{"result":"ok"}'
+
+
+class TestLLMClientStreamChat:
+    """Tests for _stream_chat robustness."""
+
+    @pytest.mark.asyncio
+    async def test_partial_stream_raises_llm_error(self, client):
+        """After yielding content, a mid-stream timeout raises LLMError without retrying."""
+        async def mock_lines():
+            yield 'data: {"choices":[{"delta":{"content":"Hello"}}]}'
+            raise httpx.TimeoutException("Connection timed out")
+
+        resp = AsyncMock()
+        resp.status_code = 200
+        resp.aiter_lines = mock_lines
+
+        cm = MagicMock()
+        cm.__aenter__.return_value = resp
+        cm.__aexit__.return_value = None
+        client._client.stream = MagicMock(return_value=cm)
+
+        chunks = []
+        with pytest.raises(LLMError, match="partial output"):
+            async for chunk in client._stream_chat("url", {}, {"model": "test"}):
+                chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert chunks[0]["delta"].get("content") == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_no_yield_retries(self, client):
+        """When no chunk was yielded, a timeout is retried."""
+        async def mock_lines():
+            yield 'data: {"choices":[{"delta":{"content":"Hello"}}]}'
+            yield 'data: [DONE]'
+
+        resp = AsyncMock()
+        resp.status_code = 200
+        resp.aiter_lines = mock_lines
+
+        cm = MagicMock()
+        cm.__aenter__.return_value = resp
+        cm.__aexit__.return_value = None
+
+        # First call raises ConnectError, second succeeds
+        client._client.stream = MagicMock(
+            side_effect=[httpx.ConnectError("reset"), cm]
+        )
+
+        chunks = []
+        async for chunk in client._stream_chat("url", {}, {"model": "test"}):
+            chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert chunks[0]["delta"]["content"] == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_usage_only_chunk(self, client):
+        """A chunk with empty choices but usage must not raise IndexError."""
+        async def mock_lines():
+            yield 'data: {"choices":[{"delta":{"content":"Hi"}}]}'
+            yield 'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+            yield "data: [DONE]"
+
+        resp = AsyncMock()
+        resp.status_code = 200
+        resp.aiter_lines = mock_lines
+
+        cm = MagicMock()
+        cm.__aenter__.return_value = resp
+        cm.__aexit__.return_value = None
+        client._client.stream = MagicMock(return_value=cm)
+
+        chunks = []
+        async for chunk in client._stream_chat("url", {}, {"model": "test"}):
+            chunks.append(chunk)
+
+        assert len(chunks) == 2
+        assert chunks[1].get("usage") == {
+            "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+        }
+
+
+class TestLLMClientStreamOptions:
+    def test_build_body_includes_include_usage(self, client):
+        msgs = [Message(role="user", content="hello")]
+        body = client._build_body(msgs, "m1", 0.7, 4096, True, None, "auto", None)
+        assert body["stream"] is True
+        assert body["stream_options"] == {"include_usage": True}
+
+    def test_non_stream_no_stream_options(self, client):
+        msgs = [Message(role="user", content="hello")]
+        body = client._build_body(msgs, "m1", 0.7, 4096, False, None, "auto", None)
+        assert "stream" not in body
+        assert "stream_options" not in body
+
+
+class TestLLMClientTimeout:
+    def test_granular_timeout_on_construction(self):
+        with patch("app.llm.client.settings") as mock_settings, \
+             patch("app.llm.client.httpx.AsyncClient") as mock_http_cls:
+            mock_settings.llm_api_key = "key"
+            mock_settings.llm_base_url = "https://api.test/v1"
+            mock_http = AsyncMock()
+            mock_http_cls.return_value = mock_http
+            LLMClient()
+
+        kwargs = mock_http_cls.call_args.kwargs
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, httpx.Timeout)
+        assert timeout.connect == 10.0
+        assert timeout.read == 120.0
+        assert timeout.write == 30.0
+        assert timeout.pool == 10.0
+
+
+class TestLLMClientSessionId:
+    """session_id is threaded through to _tracker.track."""
+
+    def test_session_id_in_parse_response(self, client):
+        data = {
+            "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        }
+        with patch("app.llm.client._tracker") as mock_tracker:
+            client._parse_response(data, "test-model", session_id="my-session")
+
+        mock_tracker.track.assert_called_once_with(
+            model="test-model",
+            prompt_tokens=5,
+            completion_tokens=3,
+            session_id="my-session",
+        )
+
+    def test_session_id_defaults_to_empty(self, client):
+        data = {
+            "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        }
+        with patch("app.llm.client._tracker") as mock_tracker:
+            client._parse_response(data, "test-model")
+
+        mock_tracker.track.assert_called_once_with(
+            model="test-model",
+            prompt_tokens=1,
+            completion_tokens=2,
+            session_id="",
+        )
+
+    @pytest.mark.asyncio
+    async def test_chat_passes_session_id_non_streaming(self, client):
+        """session_id flows from chat() through _chat_non_streaming to _parse_response to tracker."""
+        register("test-m", ModelDef(api_key="key1", base_url="https://api1.test/v1"))
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 4, "total_tokens": 6},
+        }
+        resp.raise_for_status = MagicMock()
+        client._client.post = AsyncMock(return_value=resp)
+
+        with patch("app.llm.client._tracker") as mock_tracker:
+            result = await client.chat(
+                messages=[Message(role="user", content="hi")],
+                stream=False,
+                session_id="from-chat",
+            )
+
+        assert result.content == "OK"
+        mock_tracker.track.assert_called_once_with(
+            model="test-m",
+            prompt_tokens=2,
+            completion_tokens=4,
+            session_id="from-chat",
+        )

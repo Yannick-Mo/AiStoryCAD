@@ -105,7 +105,7 @@ class LLMClient:
         else:
             proxy_url = self._resolve_proxy()
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(timeout),
+                timeout=httpx.Timeout(connect=10.0, read=timeout, write=30.0, pool=10.0),
                 proxy=proxy_url if proxy_url else None,
                 trust_env=True,
             )
@@ -157,6 +157,7 @@ class LLMClient:
         }
         if stream:
             body["stream"] = True
+            body["stream_options"] = {"include_usage": True}
         if tools:
             body["tools"] = [_tool_def_to_dict(t) for t in tools]
             body["tool_choice"] = tool_choice
@@ -175,6 +176,7 @@ class LLMClient:
         tool_choice: str = "auto",
         response_format: Literal["json_object"] | None = None,
         request_id: str = "",
+        session_id: str | None = None,
     ) -> ChatResult:
         resolved = _resolve_models(model or self.model)
         if self.fallback_models:
@@ -206,7 +208,7 @@ class LLMClient:
 
             if not stream:
                 try:
-                    return await self._chat_non_streaming(url, headers, body, current_model)
+                    return await self._chat_non_streaming(url, headers, body, current_model, session_id=session_id)
                 except (LLMNonRetryableError, LLMRetryExhaustedError) as e:
                     last_error = e
                     if current_model != models_to_try[-1]:
@@ -254,6 +256,7 @@ class LLMClient:
                             model=current_model,
                             prompt_tokens=usage.prompt_tokens,
                             completion_tokens=usage.completion_tokens,
+                            session_id=session_id or "",
                         )
 
                 content = "".join(content_parts) or None
@@ -278,6 +281,7 @@ class LLMClient:
         headers: dict[str, str],
         body: dict[str, Any],
         model_name: str,
+        session_id: str | None = None,
     ) -> ChatResult:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
@@ -285,7 +289,7 @@ class LLMClient:
                 resp = await self._client.post(url, headers=headers, json=body)
                 resp.raise_for_status()
                 data = resp.json()
-                return self._parse_response(data, model_name)
+                return self._parse_response(data, model_name, session_id=session_id)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code not in RETRYABLE_STATUSES:
                     raise LLMNonRetryableError(
@@ -314,6 +318,7 @@ class LLMClient:
         real API error is surfaced rather than an opaque httpx ResponseNotRead.
         """
         last_error: Exception | None = None
+        yielded_any = False
         for attempt in range(MAX_RETRIES):
             try:
                 async with self._client.stream(
@@ -346,7 +351,9 @@ class LLMClient:
                             chunk = json.loads(payload)
                         except json.JSONDecodeError:
                             continue
-                        choice = chunk.get("choices", [{}])[0]
+                        choices = chunk.get("choices") or []
+                        choice = choices[0] if choices else {}
+                        yielded_any = True
                         yield {
                             "delta": choice.get("delta", {}),
                             "finish_reason": choice.get("finish_reason"),
@@ -356,6 +363,10 @@ class LLMClient:
             except (LLMNonRetryableError, LLMRetryExhaustedError):
                 raise
             except (httpx.ConnectError, httpx.TimeoutException) as e:
+                if yielded_any:
+                    raise LLMError(
+                        "Stream interrupted after partial output; some content may have been lost"
+                    ) from e
                 last_error = e
             except Exception as e:
                 raise LLMError(f"Unexpected LLM error: {_sanitize_error(str(e))}") from e
@@ -372,6 +383,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         request_id: str = "",
+        session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from the LLM one by one. Yields content strings."""
         models_to_try = _resolve_models(model or self.model)
@@ -405,6 +417,7 @@ class LLMClient:
                             model=current_model,
                             prompt_tokens=ud.get("prompt_tokens", 0),
                             completion_tokens=ud.get("completion_tokens", 0),
+                            session_id=session_id or "",
                         )
                     delta = chunk.get("delta", {})
                     if delta.get("content"):
@@ -427,6 +440,7 @@ class LLMClient:
         tools: list[ToolDef] | None = None,
         tool_choice: str = "auto",
         request_id: str = "",
+        session_id: str | None = None,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream tokens AND tool calls from the LLM.
 
@@ -476,6 +490,7 @@ class LLMClient:
                             model=current_model,
                             prompt_tokens=ud.get("prompt_tokens", 0),
                             completion_tokens=ud.get("completion_tokens", 0),
+                            session_id=session_id or "",
                         )
 
                     delta = chunk.get("delta", {})
@@ -551,7 +566,7 @@ class LLMClient:
 
         raise LLMError(f"All models failed; final error: {last_error}") from last_error
 
-    def _parse_response(self, data: dict, model_name: str) -> ChatResult:
+    def _parse_response(self, data: dict, model_name: str, session_id: str | None = None) -> ChatResult:
         choice = data["choices"][0]
         msg = choice.get("message", {})
         content = msg.get("content")
@@ -578,6 +593,7 @@ class LLMClient:
             model=model_name,
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
+            session_id=session_id or "",
         )
 
         return ChatResult(
