@@ -1,6 +1,7 @@
 from app.agent.project_creator.state import MaterialState
-from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt, GenerationError
 from app.llm.types import Message
+from loguru import logger
 
 
 async def build_settings(state: MaterialState) -> dict:
@@ -13,8 +14,9 @@ async def build_settings(state: MaterialState) -> dict:
             plot_summary=state.get("plot_summary", ""),
             world_elements=state.get("world_elements", ""),
         )
-    except KeyError:
-        system = system_raw
+    except KeyError as e:
+        logger.error("build_settings: KeyError in system prompt template: {}", e)
+        raise GenerationError(node_name="build_settings", message=f"Missing template key: {e}") from e
 
     messages: list[Message] = [
         Message(role="system", content=system),

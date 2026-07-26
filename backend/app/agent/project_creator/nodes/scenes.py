@@ -1,7 +1,8 @@
 import asyncio
 from app.agent.project_creator.state import MaterialState, SceneDef
-from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt, GenerationError
 from app.llm.types import Message
+from loguru import logger
 
 
 def _chars_text(raw_chars: list[dict], designed_chars: list[dict]) -> str:
@@ -38,15 +39,16 @@ async def _generate_one_chapter(
             characters_raw_text=_chars_text(characters_raw, designed_chars),
             world_elements=world_elements,
         )
-    except KeyError:
-        system = system_raw
+    except KeyError as e:
+        logger.error("_generate_one_chapter: KeyError in scenes prompt template: {}", e)
+        raise GenerationError(node_name="scenes", message=f"Missing template key: {e}") from e
     messages: list[Message] = [
         Message(role="system", content=system),
         Message(role="user", content="请为这一章规划场景"),
     ]
     result = await client.chat(messages, temperature=0.6, max_tokens=2048)
     raw = result.content or ""
-    parsed = await parse_json_safe(raw, client, messages)
+    parsed = await parse_json_safe(raw, client, messages, node_name="scenes")
     scene_dicts = parsed.get("scenes", [])
     scenes: list[SceneDef] = []
     for sc in scene_dicts:

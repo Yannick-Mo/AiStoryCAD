@@ -113,7 +113,7 @@ class TestAlreadyExists:
         assert result.success is False
         assert "张三" in result.error
         assert result.correction_hint is not None
-        assert "update" in result.correction_hint
+        assert "更新工具" in result.correction_hint
 
     def test_with_existing_id(self):
         result = BaseTool._already_exists("角色", "张三", existing_id="abc-123")

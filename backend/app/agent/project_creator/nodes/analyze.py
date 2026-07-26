@@ -20,7 +20,7 @@ async def analyze_material(state: MaterialState) -> dict:
 
     result = await client.chat(messages, temperature=0.3)
     raw = result.content or ""
-    parsed = await parse_json_safe(raw, client, messages)
+    parsed = await parse_json_safe(raw, client, messages, node_name="analyze_material")
 
     return {
         "genre": parsed.get("genre", ""),

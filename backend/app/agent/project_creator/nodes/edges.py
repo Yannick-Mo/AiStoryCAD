@@ -65,7 +65,7 @@ async def generate_edges(state: MaterialState) -> dict:
 
     result = await client.chat(messages, temperature=0.5, max_tokens=4096)
     raw = result.content or ""
-    parsed = await parse_json_safe(raw, client, messages)
+    parsed = await parse_json_safe(raw, client, messages, node_name="generate_edges")
     narrative_edges_raw = parsed.get("edges", [])
 
     narrative_edges: list[EdgeDef] = []

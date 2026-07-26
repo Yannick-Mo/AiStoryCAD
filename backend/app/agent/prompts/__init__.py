@@ -28,16 +28,20 @@ class _ReportingUndefined(jinja2.Undefined):
         return "{{" + self._undefined_name + "}}"
 
     def __eq__(self, other: object) -> bool:
-        raise TypeError(
-            f"Cannot compare undefined template variable "
-            f"'{self._undefined_name}' — this is a bug."
+        logger.warning(
+            "Undefined template variable '{}' compared via == — returning False. "
+            "Add |default(...) to the template to suppress this warning.",
+            self._undefined_name,
         )
+        return False
 
     def __ne__(self, other: object) -> bool:
-        raise TypeError(
-            f"Cannot compare undefined template variable "
-            f"'{self._undefined_name}' — this is a bug."
+        logger.warning(
+            "Undefined template variable '{}' compared via != — returning True. "
+            "Add |default(...) to the template to suppress this warning.",
+            self._undefined_name,
         )
+        return True
 
     __bool__ = __nonzero__ = lambda self: False  # type: ignore[assignment]
 

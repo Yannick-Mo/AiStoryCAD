@@ -62,4 +62,4 @@ class BaseAgent:
             return self.output_schema.model_validate(parsed)
         except ValidationError as e:
             logger.error("Schema validation failed for agent output: %s", e)
-            return self.output_schema.model_validate({})
+            raise  # Re-raise instead of silently returning empty model

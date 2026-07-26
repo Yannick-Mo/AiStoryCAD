@@ -1,6 +1,7 @@
 from app.agent.project_creator.state import MaterialState
-from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt, GenerationError
 from app.llm.types import Message
+from loguru import logger
 
 
 def _raw_chars_text(raw_chars: list[dict]) -> str:
@@ -19,8 +20,9 @@ async def design_characters(state: MaterialState) -> dict:
             plot_summary=state.get("plot_summary", ""),
             characters_raw_text=_raw_chars_text(state.get("characters_raw", [])),
         )
-    except KeyError:
-        system = system_raw
+    except KeyError as e:
+        logger.error("design_characters: KeyError in system prompt template: {}", e)
+        raise GenerationError(node_name="design_characters", message=f"Missing template key: {e}") from e
 
     messages: list[Message] = [
         Message(role="system", content=system),
@@ -29,7 +31,7 @@ async def design_characters(state: MaterialState) -> dict:
 
     result = await client.chat(messages, temperature=0.5, max_tokens=4096)
     raw = result.content or ""
-    parsed = await parse_json_safe(raw, client, messages)
+    parsed = await parse_json_safe(raw, client, messages, node_name="design_characters")
 
     characters = parsed.get("characters", [])
     for c in characters:
