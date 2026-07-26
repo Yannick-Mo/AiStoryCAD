@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from datetime import datetime
 from typing import Any
@@ -16,12 +15,28 @@ from app.storycad.entity_map import ENTITY_MAP
 from app.utils import row_to_dict
 
 
+# Fields that clients must never be able to set via update_entity.
+# - id: lookup key only, never writable
+# - project_id: prevents cross-project injection after ownership check
+# - created_at / updated_at: server-managed timestamps
+# - word_count (Scene), scene_count / total_words (Chapter): server-computed statistics
+PROTECTED_FIELDS = frozenset({
+    "id",
+    "project_id",
+    "created_at",
+    "updated_at",
+    "word_count",
+    "scene_count",
+    "total_words",
+})
+
+
 class StoryCADRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     # ============================================================
-    # Editor data: full load (parallelized)
+    # Editor data: full load
     # ============================================================
 
     async def get_editor_data(self, project_id: uuid.UUID) -> dict:
@@ -34,27 +49,18 @@ class StoryCADRepository:
             r = await self.db.execute(q)
             return [self._row(o) for o in r.scalars().all()]
 
-        (
-            result["acts"],
-            result["chapters"],
-            result["scenes"],
-            result["edges"],
-            result["characters"],
-            result["character_relations"],
-            result["themes"],
-            result["theme_chapters"],
-            result["rhythms"],
-        ) = await asyncio.gather(
-            _fetch(Act, "sort_order"),
-            _fetch(Chapter, "sort_order"),
-            _fetch(Scene, "sort_order"),
-            _fetch(ChapterEdge),
-            _fetch(Character, "sort_order"),
-            _fetch(CharacterRelation),
-            _fetch(Theme, "sort_order"),
-            _fetch(ThemeChapter),
-            _fetch(ChapterRhythm),
-        )
+        # Queries run sequentially on purpose: AsyncSession is not safe for
+        # concurrent use (asyncpg allows only one operation per connection),
+        # so asyncio.gather here raised InterfaceError under load.
+        result["acts"] = await _fetch(Act, "sort_order")
+        result["chapters"] = await _fetch(Chapter, "sort_order")
+        result["scenes"] = await _fetch(Scene, "sort_order")
+        result["edges"] = await _fetch(ChapterEdge)
+        result["characters"] = await _fetch(Character, "sort_order")
+        result["character_relations"] = await _fetch(CharacterRelation)
+        result["themes"] = await _fetch(Theme, "sort_order")
+        result["theme_chapters"] = await _fetch(ThemeChapter)
+        result["rhythms"] = await _fetch(ChapterRhythm)
 
         proj_result = await self.db.execute(
             select(Project).where(Project.id == project_id)
@@ -214,6 +220,8 @@ class StoryCADRepository:
         if not obj:
             return None
         for key, value in data.items():
+            if key in PROTECTED_FIELDS:
+                continue
             if hasattr(obj, key):
                 setattr(obj, key, value)
         await self.db.flush()
