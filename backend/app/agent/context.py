@@ -444,7 +444,7 @@ class ContextBuilder:
         sc = result.scalar_one_or_none()
         existing_content = sc.content or "" if sc else ""
         if existing_content:
-            if action == "continue":
+            if action in ("continue", "rewrite"):
                 ctx["existing_content_tail"] = existing_content[-1500:]
             ctx["existing_content"] = existing_content
 

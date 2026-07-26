@@ -235,7 +235,7 @@ class ExpandSelectionTool(BaseTool):
                 return ToolResult(
                     success=False,
                     error="无法在场景正文中找到指定的原始文本，可能存在标点、空格或换行差异",
-                    correction_hint="请先调用 read_scene 获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
+                    correction_hint="请先使用场景读取工具获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
                 )
             new_content = sc.content[:pos] + expanded + sc.content[pos + len(original):]
             writer = WriteSceneContentTool(llm_client=self.llm_client)
@@ -288,7 +288,7 @@ class CompressSelectionTool(BaseTool):
                 return ToolResult(
                     success=False,
                     error="无法在场景正文中找到指定的原始文本，可能存在标点、空格或换行差异",
-                    correction_hint="请先调用 read_scene 获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
+                    correction_hint="请先使用场景读取工具获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
                 )
             new_content = sc.content[:pos] + compressed + sc.content[pos + len(original):]
             writer = WriteSceneContentTool(llm_client=self.llm_client)

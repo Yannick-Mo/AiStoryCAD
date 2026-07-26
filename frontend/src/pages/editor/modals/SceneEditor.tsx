@@ -20,6 +20,8 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
 
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number; text: string } | null>(null)
   const [selectionToolbar, setSelectionToolbar] = useState<{ top: number; left: number } | null>(null)
+  const [diffState, setDiffState] = useState<{ start: number; end: number; oldText: string; newText: string } | null>(null)
+  const [lastReplacement, setLastReplacement] = useState<{ start: number; end: number; oldText: string } | null>(null)
   const [continueSuggestions, setContinueSuggestions] = useState<{ id: string; text: string }[]>([])
   const [aiLoading, setAiLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -130,12 +132,9 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
     setAiLoading(true)
     try {
       const res = await aiInline(projectId, scene.id, action, range.text, contentRef.current)
-      const newContent =
-        contentRef.current.substring(0, range.start) +
-        res.result +
-        contentRef.current.substring(range.end)
-      setContent(newContent)
-      addToast({ polish: '润色完成', expand: '扩写完成', compress: '压缩完成' }[action], 'success')
+      const newText = res.result
+      setDiffState({ start: range.start, end: range.end, oldText: range.text, newText })
+      addToast({ polish: '润色完成，请确认', expand: '扩写完成，请确认', compress: '压缩完成，请确认' }[action], 'success')
     } catch {
       addToast('AI 处理失败，请重试', 'error')
     } finally {
@@ -143,6 +142,33 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
       setSelectionRange(null)
       setSelectionToolbar(null)
     }
+  }
+
+  const handleApplyDiff = () => {
+    if (!diffState) return
+    const cur = contentRef.current
+    const newContent =
+      cur.substring(0, diffState.start) +
+      diffState.newText +
+      cur.substring(diffState.end)
+    setLastReplacement({ start: diffState.start, end: diffState.start + diffState.newText.length, oldText: cur.substring(diffState.start, diffState.end) })
+    setContent(newContent)
+    setDiffState(null)
+  }
+
+  const handleDiscardDiff = () => {
+    setDiffState(null)
+  }
+
+  const handleUndo = () => {
+    if (!lastReplacement) return
+    const cur = contentRef.current
+    const restored =
+      cur.substring(0, lastReplacement.start) +
+      lastReplacement.oldText +
+      cur.substring(lastReplacement.end)
+    setContent(restored)
+    setLastReplacement(null)
   }
 
   const handleContinueSelect = (suggestion: { id: string; text: string }) => {
@@ -229,6 +255,38 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           </div>
         )}
 
+        {diffState && (
+          <div className="mt-2 bg-gray-800/95 border border-amber-600/40 rounded-lg p-3 shadow-xl backdrop-blur-sm">
+            <p className="text-[10px] text-gray-500 mb-2 px-1">AI 修改确认</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-900/80 rounded-md p-2.5 border border-gray-700">
+                <p className="text-[10px] text-gray-500 mb-1">原文</p>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {content.substring(0, diffState.start)}
+                  <span className="line-through text-red-400">{diffState.oldText}</span>
+                  {content.substring(diffState.end)}
+                </p>
+              </div>
+              <div className="bg-gray-900/80 rounded-md p-2.5 border border-amber-700/40">
+                <p className="text-[10px] text-gray-500 mb-1">AI 结果</p>
+                <p className="text-xs text-gray-200 leading-relaxed">
+                  {content.substring(0, diffState.start)}
+                  <span className="bg-amber-700/30 text-amber-300 rounded px-0.5">{diffState.newText}</span>
+                  {content.substring(diffState.end)}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-2 justify-end">
+              <button onClick={handleApplyDiff}
+                className="px-3 py-1 rounded text-xs bg-amber-600 text-black font-medium hover:bg-amber-500 transition-colors"
+              >应用</button>
+              <button onClick={handleDiscardDiff}
+                className="px-3 py-1 rounded text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+              >放弃</button>
+            </div>
+          </div>
+        )}
+
         {continueSuggestions.length > 0 && !aiLoading && (
           <div className="bg-gray-800/95 border border-gray-700 rounded-lg p-2 shadow-xl backdrop-blur-sm mt-2">
             <p className="text-[10px] text-gray-500 mb-1.5 px-1">续写建议：</p>
@@ -247,6 +305,11 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
         )}
 
         <div className="flex gap-2 mt-3 justify-end">
+          {lastReplacement && (
+            <button onClick={handleUndo}
+              className="px-3 py-2 rounded-lg bg-gray-800 text-xs text-orange-400 border border-orange-700/40 hover:bg-orange-900/20 transition-colors mr-auto"
+            >撤销上次 AI 修改</button>
+          )}
           <button onClick={handleSave} disabled={saving || loading} className="px-5 py-2 rounded-lg bg-amber-600 text-sm font-medium text-black hover:bg-amber-500 transition-colors disabled:opacity-50">
             {saving ? '保存中...' : '保存'}
           </button>

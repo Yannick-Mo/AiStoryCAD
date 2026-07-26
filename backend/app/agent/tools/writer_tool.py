@@ -104,7 +104,7 @@ class CallWriterAgentTool(BaseTool):
                     "preview": preview,
                     "summary": f"已{action=='continue' and '续写' or action=='rewrite' and '重写' or '创作'}场景《{ctx.get('scene_title', '')}》，共 {wc} 字",
                 },
-                correction_hint="如需调整内容，可以用 call_writer_agent 重新调用，并在 instructions 中说明修改方向",
+                correction_hint="如需调整内容，可以重新调用写作工具，并在指令中说明修改方向",
             )
         except Exception as e:
             await db.rollback()

@@ -167,11 +167,11 @@ class BaseTool(ABC):
         msg = cls.ENTITY_NOT_FOUND.get(entity, f"{entity} 不存在")
         if extra:
             msg = f"{msg}。{extra}"
-        return ToolResult(success=False, error=msg, correction_hint=f"请使用读取工具确认可用的{entity}ID后再重试")
+        return ToolResult(success=False, error=msg, correction_hint=f"请先使用读取工具确认可用的{entity}ID后再重试")
 
     @classmethod
     def _already_exists(cls, entity: str, name: str, existing_id: str = "") -> ToolResult:
-        hint = f"请使用 update_{entity.lower()} 更新已有{entity}，或更换名称重新创建"
+        hint = f"请使用更新工具修改已有{entity}，或更换名称重新创建"
         if existing_id:
             hint = f"已存在同名{entity}（ID: {existing_id}）。{hint}"
         return ToolResult(
@@ -251,7 +251,7 @@ class BaseTool(ABC):
         return ToolResult(
             success=False,
             error=f"参数缺失: 工具需要 {key} 参数但未提供。{hint}。不要重复调用本工具——先执行获取 {key} 的步骤。",
-            correction_hint=f"下一步：先调用 {source_tool} 获取 {key}，拿到后再重新调用本工具",
+            correction_hint=f"下一步：先使用读取工具获取 {key}，拿到后再重新调用本工具",
         )
 
     # ------------------------------------------------------------------

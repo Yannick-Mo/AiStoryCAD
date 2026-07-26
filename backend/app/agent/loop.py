@@ -360,7 +360,7 @@ async def _build_turn_sections(
     if state.mode == "cowriter":
         sections.append(
             "# --- 写作行为规则 ---\n"
-            "- 仅在用户明确请求或确认计划后调用写作工具（write_scene_content、continue_scene、rewrite_scene、call_writer_agent 等）\n"
+            "- 仅在用户明确请求或确认计划后调用写作工具\n"
             "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
             "- 你可以根据用户的思路提供完整段落草稿作为示范或起点"
         )
@@ -519,8 +519,8 @@ async def autonomous_loop(
     base_system += """
 # --- 项目数据访问规则（必须遵守） ---
 - 项目框架数据（幕/章/场景结构、角色档案、主题、关系）已在上下文中提供，可直接引用。
-- 场景正文内容不包含在上下文中——需要使用 read_scene 工具读取。
-- 在进行写入操作之前，先调用 read 工具获取最新数据。
+- 场景正文内容不包含在上下文中——需要使用场景读取工具获取。
+- 在进行写入操作之前，先通过读取工具获取最新数据。
 - 不要编造角色、章节、场景或关系数据。
 """
     cowriter_persona = _render_cowriter_persona() if state.mode == "cowriter" else ""
@@ -644,6 +644,9 @@ async def autonomous_loop(
                     tool_name = step.get("tool", "")
                     args = step.get("params", {})
                     tool_use_id = step.get("tool_use_id", "")
+                tool_name = step.get("tool", "")
+                    args = step.get("params", {})
+                    tool_use_id = step.get("tool_use_id", "")
                     try:
                         result = await StreamingToolExecutor(
                             filtered_tools, db,
@@ -658,11 +661,11 @@ async def autonomous_loop(
                     # Build tool result message
                     if result.get("success"):
                         data = result.get("data", "")
-                        content = f"[工具执行结果: {tool_name}]\n{data}"
+                        content = f"[操作成功]\n{data}"
                     else:
                         err_text = result.get('error', 'unknown')
                         hint = result.get('correction_hint', '')
-                        content = f"[工具执行失败: {tool_name}]\n错误: {err_text[:1000]}"
+                        content = f"[操作失败]\n错误: {err_text[:1000]}"
                         if hint:
                             content += f"\n修正提示: {hint}"
 
@@ -906,8 +909,8 @@ async def autonomous_loop(
                         new_tool_results.append(result)
                         yield _event_tool_done(result)
                         content = (
-                            f"[工具执行失败: {tool_name}]\n"
-                            f"对话模式禁止写入操作，工具已被拦截。请向用户说明需要切换到协作模式来完成写入操作。"
+                            f"[操作被拦截]\n"
+                            f"对话模式禁止写入操作。请向用户说明需要切换到协作模式来完成写入操作。"
                         )
                         state = state.replace(
                             messages=state.messages
@@ -945,11 +948,11 @@ async def autonomous_loop(
 
                     if result.get("success"):
                         data = result.get("data", "")
-                        content = f"[工具执行结果: {tool_name}]\n{data}"
+                        content = f"[操作成功]\n{data}"
                     else:
                         err_text = result.get('error', 'unknown')
                         hint = result.get('correction_hint', '')
-                        content = f"[工具执行失败: {tool_name}]\n错误: {err_text[:1000]}"
+                        content = f"[操作失败]\n错误: {err_text[:1000]}"
                         if hint:
                             content += f"\n修正提示: {hint}"
 
@@ -964,11 +967,11 @@ async def autonomous_loop(
                         state = _invalidate_after_write(state, tool_name, existing, filtered_tools)
                         if existing.get("success"):
                             data = existing.get("data", "")
-                            content = f"[工具执行结果: {tool_name}]\n{data}"
+                            content = f"[操作成功]\n{data}"
                         else:
                             err_text = existing.get('error', 'unknown')
                             hint = existing.get('correction_hint', '')
-                            content = f"[工具执行失败: {tool_name}]\n错误: {err_text[:1000]}"
+                            content = f"[操作失败]\n错误: {err_text[:1000]}"
                             if hint:
                                 content += f"\n修正提示: {hint}"
                         state = state.replace(

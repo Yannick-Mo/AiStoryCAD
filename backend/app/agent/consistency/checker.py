@@ -17,6 +17,44 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = "你是一个故事一致性分析专家。请以纯JSON格式输出分析结果，不要包含markdown代码块标记或其他非JSON内容。"
 
+_PER_CHECK_SYSTEM_PROMPTS: dict[str, str] = {
+    "character": (
+        "你是一个故事角色一致性分析专家。你的任务是从以下维度找出角色设定与场景内容之间的不一致问题：\n"
+        "1. 角色性格前后矛盾\n"
+        "2. 角色行为不符合其设定（背景、能力、知识等）\n"
+        "3. 角色能力/知识在不同场景中不一致\n"
+        "4. 角色关系与设定描述不符\n\n"
+        "请以JSON格式输出分析结果。每个issue的severity字段必须取 error / warning / info 之一（不要使用竖线|分隔枚举值）。\n"
+        "输出结构示例：\n"
+        '{"issues":[{"check_type":"character","severity":"warning",'
+        '"entity_type":"character","entity_id":"...","description":"...",'
+        '"suggestion":"...","chapter_id":"...","scene_id":"..."}]}'
+    ),
+    "timeline": (
+        "你是一个故事时间线一致性分析专家。你的任务是从以下维度找出时间线逻辑问题：\n"
+        "1. 时间跳跃不合理\n"
+        "2. 场景顺序错误（因果关系或时间顺序颠倒）\n"
+        "3. 时间线矛盾（同一事件在不同场景中时间不一致）\n"
+        "4. 章节连接关系与时序标签矛盾\n\n"
+        "请以JSON格式输出分析结果。每个issue的severity字段必须取 error / warning / info 之一（不要使用竖线|分隔枚举值）。\n"
+        "输出结构示例：\n"
+        '{"issues":[{"check_type":"timeline","severity":"warning",'
+        '"entity_type":"timeline","entity_id":"...","description":"...",'
+        '"suggestion":"...","chapter_id":"...","scene_id":"..."}]}'
+    ),
+    "world": (
+        "你是一个故事世界观一致性分析专家。你的任务是从以下维度找出故事元素与世界观设定之间的矛盾：\n"
+        "1. 场景中出现的物品/技术/规则与世界观设定不符\n"
+        "2. 角色行为违背世界观中的基本规则\n"
+        "3. 不同场景对同一世界观规则的解释不一致\n\n"
+        "请以JSON格式输出分析结果。每个issue的severity字段必须取 error / warning / info 之一（不要使用竖线|分隔枚举值）。\n"
+        "输出结构示例：\n"
+        '{"issues":[{"check_type":"world_rule","severity":"warning",'
+        '"entity_type":"world","entity_id":"...","description":"...",'
+        '"suggestion":"...","chapter_id":"...","scene_id":"..."}]}'
+    ),
+}
+
 
 def _parse_llm_issues(content: str) -> list[ConsistencyIssue]:
     json_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', content)
@@ -117,9 +155,10 @@ class ConsistencyChecker:
         if not characters:
             return None
         prompt = self._build_character_prompt(characters, chapters, scenes, contents_map)
+        system = _SYSTEM_PROMPT + "\n\n" + _PER_CHECK_SYSTEM_PROMPTS["character"]
         result = await self._llm.chat(
             messages=[
-                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="system", content=system),
                 Message(role="user", content=prompt),
             ],
         )
@@ -129,9 +168,10 @@ class ConsistencyChecker:
         if not chapters and not scenes:
             return None
         prompt = self._build_timeline_prompt(chapters, scenes, edges or [])
+        system = _SYSTEM_PROMPT + "\n\n" + _PER_CHECK_SYSTEM_PROMPTS["timeline"]
         result = await self._llm.chat(
             messages=[
-                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="system", content=system),
                 Message(role="user", content=prompt),
             ],
         )

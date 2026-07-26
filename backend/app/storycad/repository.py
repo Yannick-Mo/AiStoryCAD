@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,8 @@ from app.storycad.models import (
 )
 from app.storycad.entity_map import ENTITY_MAP
 from app.utils import row_to_dict
+
+logger = logging.getLogger(__name__)
 
 
 # Fields that clients must never be able to set via update_entity.
