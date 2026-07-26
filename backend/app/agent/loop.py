@@ -43,6 +43,7 @@ from app.agent.token_budget import (
 from app.agent.tools import get_filtered_tools, get_tool_descriptions
 from app.agent.tools.base import BaseTool
 from app.agent.tools.streaming_executor import StreamingToolExecutor
+from app.config import settings
 from app.llm.client import LLMClient
 from app.llm.types import Message
 from loguru import logger
@@ -53,7 +54,7 @@ from app.knowledge.skill_engine import _shared_engine as _skill_engine
 MAX_TURNS = 30
 MAX_RECOVERY = 3
 MAX_RAG_CHARS = 5000
-MODEL_CONTEXT_LIMIT = 900_000
+MODEL_CONTEXT_LIMIT = settings.llm_context_window  # tokens (DeepSeek 128K window)
 
 # ── Tool description cache ────────────────────────────────────────────
 _TOOL_DESC_CACHE: dict[str, str] = {}

@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from loguru import logger
+from redis.asyncio import Redis
 
 from app.llm.client import LLMClient
 from app.llm.types import Message
@@ -18,6 +19,9 @@ SUMMARIZE_AFTER = 30
 KEEP_RECENT = 15
 MIN_SUMMARIZE_INTERVAL = 10
 TOKEN_ESTIMATE_SAFETY = 1.5
+
+# Redis key prefix for persisted summary state
+_SUMMARY_PREFIX = "conv:summary:"
 
 # Tools whose output contains ID information the LLM needs for future calls.
 # Their results are preserved (compressed) during history summarization.
@@ -122,9 +126,41 @@ def _compress_entity_data(data: Any) -> Any:
 
 
 class HistoryManager:
-    def __init__(self, llm_client: LLMClient | None = None):
+    def __init__(
+        self,
+        llm_client: LLMClient | None = None,
+        redis_client: Redis | None = None,
+        conversation_id: str | None = None,
+        conv_memory: Any | None = None,
+    ):
         self._llm_client = llm_client
+        self._redis_client = redis_client
+        self._conversation_id = conversation_id
+        self._conv_memory = conv_memory
         self._last_summary_count = 0
+
+    async def restore_last_summary_count(self) -> None:
+        """Restore ``_last_summary_count`` from Redis if available."""
+        if not self._redis_client or not self._conversation_id:
+            return
+        try:
+            raw = await self._redis_client.get(f"{_SUMMARY_PREFIX}{self._conversation_id}")
+            if raw:
+                self._last_summary_count = int(raw)
+        except Exception:
+            logger.debug("Could not restore summary count from Redis (non-critical)")
+
+    async def _save_summary_position(self, count: int) -> None:
+        """Persist ``_last_summary_count`` to Redis."""
+        if self._redis_client and self._conversation_id:
+            try:
+                await self._redis_client.set(
+                    f"{_SUMMARY_PREFIX}{self._conversation_id}",
+                    str(count),
+                    ex=86400 * 7,
+                )
+            except Exception:
+                logger.debug("Could not persist summary count to Redis (non-critical)")
 
     @property
     def llm(self) -> LLMClient:
@@ -155,6 +191,7 @@ class HistoryManager:
         recent = messages[-KEEP_RECENT * 2:] if len(messages) > KEEP_RECENT * 2 else messages
 
         self._last_summary_count = len(messages)
+        await self._save_summary_position(len(messages))
         summary_msg = Message(role="system", content=f"[至此的对话摘要]:\n{summary}")
 
         result = [summary_msg] + recent
@@ -162,6 +199,17 @@ class HistoryManager:
         post_summary_text = " ".join(m.content or "" for m in result)
         if _estimate_tokens(post_summary_text) > MAX_HISTORY_TOKENS_HARD:
             result = [summary_msg] + recent[-KEEP_RECENT:]
+
+        # Persist the summarized history back to conv_memory
+        if self._conv_memory and self._conversation_id:
+            try:
+                await self._conv_memory.replace_history(self._conversation_id, result)
+                logger.info(
+                    "Persisted summarized history: %d msgs → %d msgs",
+                    len(messages), len(result),
+                )
+            except Exception:
+                logger.warning("Failed to persist summarized history (non-critical)")
 
         return result
 

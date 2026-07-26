@@ -56,7 +56,9 @@ class SuperAgent:
     @property
     def history_manager(self) -> HistoryManager:
         if self._history_manager is None:
-            self._history_manager = HistoryManager()
+            self._history_manager = HistoryManager(
+                redis_client=self.redis_client,
+            )
         return self._history_manager
 
     async def _get_tool_registry(self) -> dict:
@@ -184,6 +186,10 @@ class SuperAgent:
         # 3. History loading
         history = await self.conv_memory.get_history(conversation_id)
         if history:
+            # Wire up conversation context for history persistence
+            self.history_manager._conversation_id = conversation_id
+            self.history_manager._conv_memory = self.conv_memory
+            await self.history_manager.restore_last_summary_count()
             history = await self.history_manager.maybe_summarize(history)
 
         messages = list(history)

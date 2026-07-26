@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     llm_proxy: str = ""
     llm_max_sys_chars: int = 50000
     llm_max_rag_chars: int = 10000
+    llm_context_window: int = 120000  # DeepSeek 128K context window (tokens)
 
     # CORS configuration
     cors_origins: list[str] = ["http://localhost:5173"]

@@ -14,7 +14,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from app.agent.context_compressor import estimate_tokens
+from app.agent.context_compressor import estimate_tokens, estimate_text_tokens
+from app.config import settings
 
 if TYPE_CHECKING:
     from app.llm.types import Message
@@ -42,6 +43,9 @@ MAX_TOOL_RESULT_TOKENS = 100_000
 # How many bytes of a tool result constitute "large" (triggers summary).
 LARGE_TOOL_RESULT_BYTES = 2_000
 
+# Default model limit (tokens), read from settings or fallback.
+_DEFAULT_MODEL_LIMIT = settings.llm_context_window or 120_000
+
 # ── Budget tracker dataclass ────────────────────────────────────────
 
 CONTINUATION_LIMIT = 3
@@ -52,7 +56,7 @@ class TurnBudget:
     """Per-turn token budget state, embedded in ``LoopState``."""
 
     total_estimated_tokens: int = 0
-    model_limit: int = 900_000
+    model_limit: int = _DEFAULT_MODEL_LIMIT
     continuation_count: int = 0
     last_delta_tokens: int = 0
     started_at: float = 0.0
@@ -64,7 +68,7 @@ class TurnBudget:
 def compute_budget(
     messages: list["Message"],
     tool_results: list[dict],
-    model_limit: int = 900_000,
+    model_limit: int = _DEFAULT_MODEL_LIMIT,
 ) -> TurnBudget:
     """Compute the current token budget snapshot.
 
@@ -74,9 +78,9 @@ def compute_budget(
     msg_tokens = estimate_tokens(messages, model_limit)
     # Add estimated tool result tokens
     tr_tokens = sum(
-        len(str(r.get("data", ""))) + len(str(r.get("error", "")))
+        estimate_text_tokens(str(r.get("data", ""))) + estimate_text_tokens(str(r.get("error", "")))
         for r in tool_results
-    ) // 2
+    )
     return TurnBudget(
         total_estimated_tokens=msg_tokens + tr_tokens,
         model_limit=model_limit,

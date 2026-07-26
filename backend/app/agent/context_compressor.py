@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Default model context limits (characters, approximate) ──────────
-DEFAULT_MODEL_LIMIT = 1_800_000  # ~900K tokens (chars estimate, 90% of 1M)
+# ── Default model context limits (tokens) ────────────────────────────
+DEFAULT_MODEL_LIMIT = 100_000  # compression triggers at ~80% of this (~80K tokens)
 
 # ── Threshold ratios ────────────────────────────────────────────────
 COMPRESS_THRESHOLD = 0.80
@@ -79,19 +79,19 @@ def estimate_text_tokens(text: str) -> int:
 def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_LIMIT) -> int:
     """Estimate the token count of a message list.
 
-    Uses a simple char/2 heuristic — fast enough to run every turn,
-    accurate enough for threshold-based decisions.
+    Delegates to ``estimate_text_tokens`` per message (CJK-aware).
+    Fast enough to run every turn, accurate enough for threshold-based decisions.
     """
     total = 0
     for msg in messages:
         content = getattr(msg, "content", "") or ""
-        total += len(content)
+        total += estimate_text_tokens(content)
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 fn = getattr(tc, "function", {})
                 args_str = str(fn.get("arguments", "")) if isinstance(fn, dict) else ""
-                total += len(args_str)
-    return total // 2
+                total += estimate_text_tokens(args_str)
+    return total
 
 
 def should_compress(
