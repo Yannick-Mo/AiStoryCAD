@@ -21,8 +21,8 @@ class Project(Base):
     workflow_stage = Column(String(30), default="init")
     logline = Column(Text, default="")
     global_settings = Column(Text, default="")
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     versions = relationship("ProjectVersion", back_populates="project", order_by="ProjectVersion.version.desc()", cascade="all, delete-orphan")
 
@@ -34,7 +34,7 @@ class ProjectVersion(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
     version = Column(Integer, default=1)
     snapshot = Column(JSONB, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     project = relationship("Project", back_populates="versions")
 
@@ -47,5 +47,5 @@ class ProjectConfig(Base):
     total_words = Column(Integer, default=100000)
     template_type = Column(String(50), default="four_act")
     target_audience = Column(String(100), default="")
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

@@ -16,8 +16,8 @@ class Act(StoryBase):
     name = Column(String(100), nullable=False, default="新幕")
     sort_order = Column(Integer, nullable=False, default=0)
     color = Column(String(20), default="#8b5cf6")
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class Chapter(StoryBase):
@@ -31,8 +31,8 @@ class Chapter(StoryBase):
     sort_order = Column(Integer, nullable=False, default=0)
     scene_count = Column(Integer, default=0)
     total_words = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class Scene(StoryBase):
@@ -47,8 +47,8 @@ class Scene(StoryBase):
     scene_time = Column(String(100), default="")
     summary = Column(Text, default="")
     word_count = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class SceneContent(StoryBase):
@@ -56,7 +56,7 @@ class SceneContent(StoryBase):
     scene_id = Column(UUID(as_uuid=True), ForeignKey("scenes.id", ondelete="CASCADE"), primary_key=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, default="")
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class ChapterEdge(StoryBase):
@@ -69,7 +69,7 @@ class ChapterEdge(StoryBase):
     label = Column(String(100), default="")
     source_handle = Column(String(20), default="")
     target_handle = Column(String(20), default="")
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 # ============================================================
@@ -87,8 +87,8 @@ class Character(StoryBase):
     background = Column(Text, default="")
     motivation = Column(Text, default="")
     sort_order = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class CharacterRelation(StoryBase):
@@ -103,7 +103,7 @@ class CharacterRelation(StoryBase):
     trust = Column(Integer, CheckConstraint('trust >= 0 AND trust <= 100'), default=50)
     threat = Column(Integer, CheckConstraint('threat >= 0 AND threat <= 100'), default=50)
     attraction = Column(Integer, CheckConstraint('attraction >= 0 AND attraction <= 100'), default=50)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 # ============================================================
@@ -119,7 +119,7 @@ class Theme(StoryBase):
     proposition = Column(Text, default="")
     note = Column(Text, default="")
     sort_order = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class ThemeChapter(StoryBase):
@@ -143,6 +143,6 @@ class ChapterRhythm(StoryBase):
     emotion = Column(Integer, nullable=False, default=5)
     humor = Column(Integer, nullable=False, default=5)
     intensity = Column(Integer, nullable=False, default=5)
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
