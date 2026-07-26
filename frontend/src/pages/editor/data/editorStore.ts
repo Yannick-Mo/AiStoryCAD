@@ -19,7 +19,7 @@ export interface ChangeEntry {
   data?: Record<string, unknown>
 }
 
-export function useEditorStore(projectId: string) {
+export function useEditorStore(projectId: string, onFlushError?: (msg: string) => void) {
   const [data, setData] = useState<EditorMockData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -29,6 +29,10 @@ export function useEditorStore(projectId: string) {
   const [saving, setSaving] = useState(false)
   const changesRef = useRef<ChangeEntry[]>([])
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const flushAttemptRef = useRef(0)
+  const onFlushErrorRef = useRef<((msg: string) => void) | undefined>(onFlushError)
+  onFlushErrorRef.current = onFlushError
 
   useEffect(() => {
     let cancelled = false
@@ -36,16 +40,21 @@ export function useEditorStore(projectId: string) {
     loadEditorData(projectId)
       .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
-    return () => { cancelled = true }
+    return () => { cancelled = true; if (retryTimerRef.current) clearTimeout(retryTimerRef.current) }
   }, [projectId])
 
   const enqueueChange = useCallback((change: ChangeEntry) => {
     changesRef.current.push(change)
     setDirty(true)
+    // Debounce auto-save: restart 3s timer on each change
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => flushChangesRef.current?.(), 3000)
   }, [])
 
-  const flushChanges = useCallback(async () => {
-    if (changesRef.current.length === 0) return
+  const flushChangesRef = useRef<() => Promise<boolean>>()
+
+  const flushChanges = useCallback(async (): Promise<boolean> => {
+    if (changesRef.current.length === 0) return true
     setSaving(true)
     const entries = changesRef.current
     changesRef.current = []
@@ -62,20 +71,32 @@ export function useEditorStore(projectId: string) {
     try {
       const result = await syncEditorData(projectId, payload)
       setVersion(result.version)
-    } catch {
+      flushAttemptRef.current = 0
+      return true
+    } catch (err) {
       changesRef.current = [...entries, ...changesRef.current]
       setDirty(true)
+
+      const errorMsg = (err as Error)?.message || ''
+      const isClientError = /^HTTP 4/.test(errorMsg)
+
+      if (isClientError) {
+        flushAttemptRef.current = 0
+        onFlushErrorRef.current?.(`同步失败：${errorMsg}`)
+      } else {
+        flushAttemptRef.current++
+        const delay = Math.min(1000 * Math.pow(2, flushAttemptRef.current), 30000)
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = setTimeout(() => flushChangesRef.current?.(), delay)
+        onFlushErrorRef.current?.('同步失败，正在重试...')
+      }
+      return false
     } finally {
       setSaving(false)
     }
   }, [projectId])
 
-  useEffect(() => {
-    if (!dirty) return
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(flushChanges, 3000)
-    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
-  }, [dirty, flushChanges])
+  flushChangesRef.current = flushChanges
 
   // Selection
   const selectNode = useCallback((type: 'act' | 'chapter', id: string) => {

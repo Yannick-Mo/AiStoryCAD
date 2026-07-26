@@ -57,13 +57,6 @@ def load_project_prompt(name: str) -> str:
         return ""
 
 
-class GenerationError(Exception):
-    """Raised when an LLM generation step fails irretrievably (JSON parse or template render)."""
-
-    def __init__(self, node_name: str, message: str):
-        self.node_name = node_name
-        super().__init__(message)
-
 
 def count_words(text: str) -> int:
     if not text:

@@ -84,6 +84,8 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
   }, [content, loading, aiLoading, scene, projectId])
 
   useEffect(() => { selectionRangeRef.current = selectionRange }, [selectionRange])
+  // Sync contentRef with latest content for AI inline operations (Bug 3 fix)
+  useEffect(() => { contentRef.current = content }, [content])
 
   const handleSelect = useCallback(() => {
     const ta = textareaRef.current
@@ -116,13 +118,12 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
       const result = await saveSceneContent(projectId, scene.id, content)
       savedContentRef.current = content
       onSaved(scene.id, content, result.word_count)
+      onClose()
     } catch (e) {
       console.warn('Save failed:', e)
       addToast('保存失败，请重试', 'error')
-      onSaved(scene.id, content, content.replace(/\s/g, '').length)
     } finally {
       setSaving(false)
-      onClose()
     }
   }
 

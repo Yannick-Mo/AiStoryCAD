@@ -23,7 +23,7 @@ import ConsistencyCheckModal from '../modals/ConsistencyCheckModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
 import { loadEditorData, saveSceneContent } from '../../../api/editor'
-import { ToastProvider } from '../components/Toast'
+import { useToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ResizablePanel from '../components/ResizablePanel'
 import type { Chapter, Scene, EdgeType } from '../types'
@@ -55,7 +55,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [consistencyOpen, setConsistencyOpen] = useState(false)
   const [triggerRhythmAnalysis, setTriggerRhythmAnalysis] = useState(false)
 
-  const store = useEditorStore(projectId)
+  const { addToast } = useToast()
+
+  const store = useEditorStore(projectId, useCallback((msg: string) => {
+    addToast(msg, 'error')
+  }, [addToast]))
   const data = store.data
   const [layoutKey, setLayoutKey] = useState(0)
   const handleAutoLayout = useCallback(() => setLayoutKey(k => k + 1), [])
@@ -118,10 +122,17 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }, [])
 
   const handleProjectUpdated = useCallback(() => {
-    loadEditorData(projectId).then(d => store.setData(d)).catch((err) => {
-      console.error('Failed to reload project data:', err)
+    store.flushChanges().then(ok => {
+      if (ok) {
+        loadEditorData(projectId).then(d => store.setData(d)).catch((err) => {
+          console.error('Failed to reload project data:', err)
+          addToast('重载项目数据失败', 'error')
+        })
+      } else {
+        addToast('本地修改尚未保存，无法安全重载 AI 写入数据，请稍后再试', 'warning')
+      }
     })
-  }, [projectId, store])
+  }, [projectId, store, addToast])
 
   const hasPendingRef = useRef(store.hasPendingChanges)
   hasPendingRef.current = store.hasPendingChanges
@@ -231,7 +242,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }
 
   return (
-    <ToastProvider>
       <div className="h-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden select-none">
         {/* Top bar with save indicator */}
         <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
@@ -630,6 +640,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         }}
         onCancel={() => setConfirmDelete(null)}
       />
-    </ToastProvider>
+    </div>
   )
 }
