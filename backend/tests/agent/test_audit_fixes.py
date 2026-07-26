@@ -224,3 +224,82 @@ class TestModelContextLimit:
         from app.agent.token_budget import _DEFAULT_MODEL_LIMIT
         # Default should be 120_000 (from config.py llm_context_window)
         assert _DEFAULT_MODEL_LIMIT == 120_000
+
+
+# ── T5: RecoveryExecutor — single backoff, model rotation ──────────────
+
+
+class TestRecoveryExecutor:
+    """T5: verify RecoveryExecutor fixes for the audit branch."""
+
+    @pytest.mark.asyncio
+    async def test_no_sleep_in_apply(self):
+        """Bug A: apply() should NOT sleep — caller (loop.py) handles it."""
+        from app.agent.recovery import RecoveryExecutor, RecoveryAction, RecoveryDecision
+        executor = RecoveryExecutor()
+        decision = RecoveryDecision(
+            action=RecoveryAction.RETRY,
+            delay_seconds=9999,  # would be a huge sleep if called
+        )
+        state = {"recovery_state": {}}
+        import time
+        t0 = time.monotonic()
+        updates = await executor.apply(decision, state)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1, f"apply() slept {elapsed:.2f}s — should be instant"
+        assert "recovery_state" in updates
+
+    @pytest.mark.asyncio
+    async def test_model_rotation_persisted_in_recovery_state(self):
+        """Bug B: SWITCH_MODEL must advance index in recovery_state["model_index"]."""
+        from app.agent.recovery import RecoveryExecutor, RecoveryAction, RecoveryDecision
+        fallbacks = ["model-b", "model-c"]
+        executor = RecoveryExecutor(fallback_models=fallbacks)
+        decision = RecoveryDecision(
+            action=RecoveryAction.SWITCH_MODEL,
+            message="Switching model",
+        )
+        state = {"recovery_state": {}}
+        updates = await executor.apply(decision, state)
+        rs = updates["recovery_state"]
+        assert rs.get("model_index") == 1
+        assert updates.get("_model_override") == "model-b"
+
+    @pytest.mark.asyncio
+    async def test_two_switches_use_different_fallbacks(self):
+        """Bug B: Two consecutive SWITCH_MODEL decisions must pick different models."""
+        from app.agent.recovery import RecoveryExecutor, RecoveryAction, RecoveryDecision
+        fallbacks = ["model-b", "model-c"]
+
+        # First switch
+        executor1 = RecoveryExecutor(fallback_models=fallbacks)
+        decision1 = RecoveryDecision(action=RecoveryAction.SWITCH_MODEL)
+        updates1 = await executor1.apply(decision1, {"recovery_state": {}})
+        assert updates1["_model_override"] == "model-b"
+
+        # Second switch — simulate persistent state by passing recovery_state
+        recovery_state = updates1["recovery_state"]  # model_index=1
+        executor2 = RecoveryExecutor(
+            fallback_models=fallbacks,
+            recovery_state=recovery_state,
+        )
+        decision2 = RecoveryDecision(action=RecoveryAction.SWITCH_MODEL)
+        updates2 = await executor2.apply(decision2, {"recovery_state": recovery_state})
+        assert updates2["_model_override"] == "model-c", (
+            f"Second switch picked {updates2['_model_override']}, expected model-c"
+        )
+
+    @pytest.mark.asyncio
+    async def test_model_rotation_exhausted(self):
+        """When all fallbacks are exhausted, all further switches give up."""
+        from app.agent.recovery import RecoveryExecutor, RecoveryAction, RecoveryDecision
+        fallbacks = ["model-b"]
+        executor = RecoveryExecutor(
+            fallback_models=fallbacks,
+            recovery_state={"model_index": 1},
+        )
+        decision = RecoveryDecision(action=RecoveryAction.SWITCH_MODEL)
+        updates = await executor.apply(decision, {"recovery_state": {"model_index": 1}})
+        rs = updates["recovery_state"]
+        assert rs.get("models_exhausted") is True
+        assert "_model_override" not in updates

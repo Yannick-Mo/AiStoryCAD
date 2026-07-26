@@ -16,7 +16,7 @@ search:
     - json
 
 server:
-  secret_key: "storycad-searxng-change-in-production--please--replace--me"
+  secret_key: "${SEARXNG_SECRET_KEY:-storycad-searxng-change-in-production--please--replace--me}"
   limiter: false
   image_proxy: false
   # Bind to all interfaces inside Docker

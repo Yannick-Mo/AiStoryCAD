@@ -1118,7 +1118,10 @@ async def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
     if decision.action == RecoveryAction.GIVE_UP:
         return {"give_up": True, "message": decision.message}
 
-    executor = RecoveryExecutor(fallback_models=get_fallback_models())
+    executor = RecoveryExecutor(
+        fallback_models=get_fallback_models(),
+        recovery_state=state.recovery_state,
+    )
     updates = await executor.apply(decision, state.to_dict())
     state_dict = state.to_dict()
     state_dict.update(updates)

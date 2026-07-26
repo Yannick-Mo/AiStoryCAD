@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -180,9 +179,11 @@ class RecoveryExecutor:
     def __init__(
         self,
         fallback_models: list[str] | None = None,
+        recovery_state: dict | None = None,
     ):
         self._fallback_models = fallback_models or []
-        self._current_model_index = 0
+        recovery_state = recovery_state or {}
+        self._current_model_index = recovery_state.get("model_index", 0)
 
     async def apply(
         self,
@@ -194,9 +195,6 @@ class RecoveryExecutor:
         The caller should merge the returned dict into the agent state so the
         next execution attempt uses the transformed context.
         """
-        if decision.delay_seconds > 0:
-            await asyncio.sleep(decision.delay_seconds)
-
         updates: dict = {}
         recovery_state = dict(state.get("recovery_state", {}))
         history: list[str] = list(recovery_state.get("recovery_history", []))
@@ -206,7 +204,7 @@ class RecoveryExecutor:
         recovery_state["last_message"] = decision.message
 
         if decision.action == RecoveryAction.RETRY:
-            # Simple backoff — already waited above
+            # Simple backoff — sleep is handled by the caller (loop.py)
             pass
 
         elif decision.action == RecoveryAction.RETRY_WITH_ERROR_CONTEXT:

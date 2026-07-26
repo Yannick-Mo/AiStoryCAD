@@ -30,9 +30,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server
+    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy volatile-lru
     expose:
       - "6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -118,6 +120,13 @@ services:
       - CHOWN
       - SETGID
       - SETUID
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    init: true
     logging:
       driver: json-file
       options:
@@ -157,6 +166,7 @@ services:
 
 volumes:
   pgdata:
+  redis-data:
   searxng-data:
 
 networks:
