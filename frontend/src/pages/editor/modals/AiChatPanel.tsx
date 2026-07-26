@@ -69,6 +69,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   const loadingRef = useRef(false)
   const convIdRef = useRef<string | null>(null)
   const modeRef = useRef(mode)
+  const requestIdRef = useRef(0)
 
   useEffect(() => { modeRef.current = mode }, [mode])
 
@@ -89,6 +90,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
     const userMsg: DisplayMessage = { id: generateId(), role: 'user', content: text }
     setMessages(prev => [...prev, userMsg])
 
+    const currentReqId = ++requestIdRef.current
     const currentConvId = convIdRef.current
     let assistantMsg = ''
 
@@ -115,11 +117,16 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
       message: text,
       conversationId: currentConvId,
       onToken: (token: string) => {
+        if (requestIdRef.current !== currentReqId) return
         assistantMsg += token
         scheduleUpdate()
       },
-      onStep: (step: string) => setStep(step),
+      onStep: (step: string) => {
+        if (requestIdRef.current !== currentReqId) return
+        setStep(step)
+      },
       onToolDone: (data: string) => {
+        if (requestIdRef.current !== currentReqId) return
         try {
           const parsed = JSON.parse(data)
           setToolResults(prev => [...prev, parsed])
@@ -127,8 +134,12 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
           console.error('Failed to parse tool_done data:', data, e)
         }
       },
-      onPlan: (plan: PlanData) => setPendingPlan(plan),
+      onPlan: (plan: PlanData) => {
+        if (requestIdRef.current !== currentReqId) return
+        setPendingPlan(plan)
+      },
       onConvId: (id: string) => {
+        if (requestIdRef.current !== currentReqId) return
         convIdRef.current = id
         setConversationId(id)
         setConversations(prev => {
@@ -138,6 +149,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
       },
       onProjectUpdated: () => onProjectUpdated?.(),
       onDone: () => {
+        if (requestIdRef.current !== currentReqId) return
         if (throttleTimer) cancelAnimationFrame(throttleTimer)
         throttleTimer = null
         setMessages(prev => {
@@ -153,6 +165,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
         setStep(null)
       },
       onError: (err: Error) => {
+        if (requestIdRef.current !== currentReqId) return
         if (throttleTimer) cancelAnimationFrame(throttleTimer)
         throttleTimer = null
         setError(err.message)
@@ -161,6 +174,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
         setStep(null)
       },
       onComplete: () => {
+        if (requestIdRef.current !== currentReqId) return
         loadingRef.current = false
         setLoading(false)
         setStep(null)
@@ -174,8 +188,10 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   }, [projectId, contextView, contextId])
 
   const abort = useCallback(() => {
+    ++requestIdRef.current
     abortRef.current?.abort()
     abortRef.current = null
+    loadingRef.current = false
     setLoading(false)
     setStep(null)
   }, [])
@@ -185,6 +201,8 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   }, [])
 
   const loadConversation = useCallback(async (convId: string) => {
+    abortRef.current?.abort()
+    ++requestIdRef.current
     setConversationId(convId)
     convIdRef.current = convId
     setLoading(true)
@@ -204,6 +222,8 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   }, [projectId])
 
   const clear = useCallback(() => {
+    abortRef.current?.abort()
+    ++requestIdRef.current
     setConversationId(null)
     convIdRef.current = null
     setMessages([])

@@ -644,9 +644,6 @@ async def autonomous_loop(
                     tool_name = step.get("tool", "")
                     args = step.get("params", {})
                     tool_use_id = step.get("tool_use_id", "")
-                tool_name = step.get("tool", "")
-                    args = step.get("params", {})
-                    tool_use_id = step.get("tool_use_id", "")
                     try:
                         result = await StreamingToolExecutor(
                             filtered_tools, db,

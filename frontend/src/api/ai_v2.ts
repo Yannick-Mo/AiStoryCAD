@@ -106,6 +106,15 @@ export function sendMessage(options: SendMessageOptions): AbortController {
   const mode = options.mode ?? 'chat'
 
   ;(async () => {
+    let receivedDone = false
+
+    // Track whether the stream ended with a proper done event
+    const origOnDone = options.onDone
+    options.onDone = () => {
+      receivedDone = true
+      origOnDone?.()
+    }
+
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -183,11 +192,15 @@ export function sendMessage(options: SendMessageOptions): AbortController {
         clearInterval(heartbeat)
       }
 
-      options.onComplete?.()
+      if (!receivedDone) {
+        options.onError(new Error('The response may be incomplete - stream ended without a completion signal'))
+      }
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== 'AbortError') {
         options.onError(err)
       }
+    } finally {
+      options.onComplete?.()
     }
   })()
 

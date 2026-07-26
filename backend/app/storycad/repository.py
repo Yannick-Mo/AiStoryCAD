@@ -257,12 +257,26 @@ class StoryCADRepository:
             extra["word_count"] = count_words(content)
         await self.create_entity(model_class, data, extra_attrs=extra or None)
 
-    async def _update_entity(self, entity_type: str, data: dict):
+    async def _update_entity(self, entity_type: str, data: dict, project_id: uuid.UUID):
         model_class = ENTITY_MAP.get(entity_type)
         if not model_class:
             return
-        scene_content = None
         entity_id = data.get("id")
+        if entity_id:
+            if isinstance(entity_id, str):
+                eid = uuid.UUID(entity_id)
+            else:
+                eid = entity_id
+            result = await self.db.execute(select(model_class).where(model_class.id == eid))
+            existing = result.scalar_one_or_none()
+            if existing is None or existing.project_id != project_id:
+                logger.warning(
+                    "Skipping update of %s %s: not found or not in project %s",
+                    entity_type, eid, project_id,
+                )
+                return
+
+        scene_content = None
         if entity_type == "scenes" and "content" in data:
             scene_content = data.pop("content")
         await self.update_entity(model_class, data)
@@ -281,7 +295,7 @@ class StoryCADRepository:
                 else:
                     self.db.add(SceneContent(scene_id=entity_id, project_id=obj.project_id, content=scene_content))
 
-    async def _delete_entity(self, entity_type: str, entity_id_str: str):
+    async def _delete_entity(self, entity_type: str, entity_id_str: str, project_id: uuid.UUID):
         model_class = ENTITY_MAP.get(entity_type)
         if not model_class:
             return
@@ -291,6 +305,15 @@ class StoryCADRepository:
             else:
                 entity_id = entity_id_str
         except (ValueError, AttributeError):
+            return
+        # Verify the entity belongs to the requesting project
+        result = await self.db.execute(select(model_class).where(model_class.id == entity_id))
+        existing = result.scalar_one_or_none()
+        if existing is None or existing.project_id != project_id:
+            logger.warning(
+                "Skipping delete of %s %s: not found or not in project %s",
+                entity_type, entity_id, project_id,
+            )
             return
         await self.delete_entity(model_class, entity_id)
 
