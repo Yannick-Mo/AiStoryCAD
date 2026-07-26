@@ -287,7 +287,7 @@ class UpdateProjectTool(BaseTool):
                 return ToolResult(
                     success=False,
                     error="未传入任何要更新的字段。请在调用时至少提供 title/description/genre/global_settings 中的一个",
-                    correction_hint="请传入要修改的字段及其新值，例如 update_project(global_settings='...')",
+                    correction_hint="请传入要修改的字段及其新值",
                 )
 
             project = await db.get(Project, project_id)

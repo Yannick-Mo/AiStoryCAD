@@ -33,6 +33,10 @@ PROTECTED_FIELDS = frozenset({
     "total_words",
 })
 
+# Subset for create_entity – id and project_id are legitimate at creation
+# time, but stats and timestamps must remain server-managed.
+CREATE_PROTECTED = PROTECTED_FIELDS - {"id", "project_id"}
+
 
 class StoryCADRepository:
     def __init__(self, db: AsyncSession):
@@ -90,13 +94,12 @@ class StoryCADRepository:
             if any(ops.get(k) for k in ("created", "updated", "deleted")):
                 has_changes = True
             for delete_id in ops.get("deleted", []):
-                await self._delete_entity(entity_type, delete_id)
+                await self._delete_entity(entity_type, delete_id, project_id)
             for item in ops.get("created", []):
                 item["project_id"] = project_id
                 await self._create_entity(entity_type, item)
             for item in ops.get("updated", []):
-                item["project_id"] = project_id
-                await self._update_entity(entity_type, item)
+                await self._update_entity(entity_type, item, project_id)
 
         # Handle global_settings separately (only field allowed on Project)
         projects_ops = changes.get("projects", {})
@@ -197,7 +200,7 @@ class StoryCADRepository:
 
     async def create_entity(self, model_class: type, data: dict, extra_attrs: dict | None = None) -> dict:
         column_names = {col.name for col in model_class.__table__.columns}
-        filtered = {k: v for k, v in data.items() if k in column_names}
+        filtered = {k: v for k, v in data.items() if k in column_names and k not in CREATE_PROTECTED}
         for col in model_class.__table__.columns:
             if col.name in filtered and isinstance(filtered[col.name], str) and isinstance(col.type, UUID):
                 filtered[col.name] = uuid.UUID(filtered[col.name])

@@ -1,6 +1,7 @@
 import { Component } from 'react'
 import { useParams } from 'react-router-dom'
 import EditorShell from './layout/EditorShell'
+import { ToastProvider } from './components/Toast'
 
 class EditorErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -29,7 +30,9 @@ export default function ProjectPage() {
   if (!id) return <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-500">项目 ID 无效</div>
   return (
     <EditorErrorBoundary>
-      <EditorShell projectId={id} />
+      <ToastProvider>
+        <EditorShell projectId={id} />
+      </ToastProvider>
     </EditorErrorBoundary>
   )
 }

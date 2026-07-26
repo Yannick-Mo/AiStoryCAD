@@ -179,9 +179,10 @@ class ConsistencyChecker:
 
     async def _check_world_llm(self, global_settings, characters, scenes) -> list[ConsistencyIssue] | None:
         prompt = self._build_world_prompt(global_settings, characters, scenes)
+        system = _SYSTEM_PROMPT + "\n\n" + _PER_CHECK_SYSTEM_PROMPTS["world"]
         result = await self._llm.chat(
             messages=[
-                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="system", content=system),
                 Message(role="user", content=prompt),
             ],
         )
@@ -300,21 +301,27 @@ class ConsistencyChecker:
             ]
             content = contents_map.get(s["id"], "")
             if content:
-                lines.append(f"  内容片段={content[:300]}")
+                if len(content) > 600:
+                    excerpt = content[:300] + "\n\n......（中段省略）......\n\n" + content[-300:]
+                else:
+                    excerpt = content
+                lines.append(
+                    f"  内容片段（以下为节选，不确定时请降级为info）=\n{excerpt}"
+                )
             scene_lines.append("\n".join(lines))
 
         return (
-            "请分析以下故事中的角色一致性。找出角色设定与场景内容之间的不一致问题，"
-            "例如角色性格前后矛盾、角色行为不符合其设定、角色能力/知识不一致等。\n\n"
-            f"角色设定：\n{chr(10).join(char_lines)}\n\n"
-            f"场景内容：\n{chr(10).join(scene_lines)}\n\n"
-            '输出JSON格式：{"issues":[{"check_type":"character","severity":"error|warning|info",'
-            '"entity_type":"character","entity_id":"...","description":"...",'
-            '"suggestion":"...","chapter_id":"...","scene_id":"..."}]}'
+            "以下 <character_data> 和 <scene_data> 标签内是待分析的数据：\n\n"
+            "<character_data>\n"
+            f"{chr(10).join(char_lines)}\n"
+            "</character_data>\n\n"
+            "<scene_data>\n"
+            f"{chr(10).join(scene_lines)}\n"
+            "</scene_data>"
         )
 
     def _build_timeline_prompt(self, chapters, scenes, edges) -> str:
-        parts = ["请分析以下故事的时间线一致性。找出时间线逻辑问题，例如时间跳跃不合理、场景顺序错误、时间线矛盾等。"]
+        parts = ["以下 <timeline_data> 标签内是待分析的时间线数据：\n<timeline_data>"]
         if chapters:
             parts.append("\n章节顺序：")
             for ch in chapters:
@@ -337,15 +344,11 @@ class ConsistencyChecker:
                     f"  {e.get('source_id', '')} -> {e.get('target_id', '')} "
                     f"类型={e.get('edge_type', '')} 标签={e.get('label', '')}"
                 )
-        parts.append(
-            '\n输出JSON格式：{"issues":[{"check_type":"timeline","severity":"error|warning|info",'
-            '"entity_type":"timeline","entity_id":"...","description":"...",'
-            '"suggestion":"...","chapter_id":"...","scene_id":"..."}]}'
-        )
+        parts.append("\n</timeline_data>")
         return "\n".join(parts)
 
     def _build_world_prompt(self, global_settings, characters, scenes) -> str:
-        parts = ["请分析以下故事的世界观一致性。找出故事元素与世界观设定之间的矛盾之处。"]
+        parts = ["以下 <world_data> 标签内是待分析的世界观数据：\n<world_data>"]
         parts.append(f"\n世界观设定：\n{global_settings if global_settings else '(未设定)'}")
         if characters:
             parts.append("\n角色列表：")
@@ -361,11 +364,7 @@ class ConsistencyChecker:
                     f"  场景ID={s['id']} 标题={s.get('title', '')} "
                     f"地点={s.get('setting', '')} 概要={s.get('summary', '')[:100]}"
                 )
-        parts.append(
-            '\n输出JSON格式：{"issues":[{"check_type":"world_rule","severity":"error|warning|info",'
-            '"entity_type":"world","entity_id":"...","description":"...",'
-            '"suggestion":"...","chapter_id":"...","scene_id":"..."}]}'
-        )
+        parts.append("\n</world_data>")
         return "\n".join(parts)
 
     # ---- Rule-based fallbacks ----

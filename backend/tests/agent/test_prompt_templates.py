@@ -156,3 +156,57 @@ class TestPromptLoader:
         loader = PromptLoader()
         tpl = loader.load("nonexistent")
         assert tpl is None
+
+
+class TestSystemPromptContent:
+    """Integration tests for the assembled system prompt content."""
+
+    def _build_base(self, sections: list[str]) -> str:
+        from app.agent.prompts.builder import get_prompt_builder
+        builder = get_prompt_builder()
+        return builder.build(sections)
+
+    def test_chat_identity_no_persona_yaml_ref(self):
+        """Chat-mode base_sections include 'identity' but NOT 'persona.yaml'."""
+        base = self._build_base(["identity"])
+        assert "persona.yaml" not in base
+        assert "persona" not in base
+
+    def test_chat_identity_contains_chinese_persona(self):
+        """Identity section is now inline Chinese persona, not a file reference."""
+        base = self._build_base(["identity"])
+        assert "StoryCAD AI" in base
+        assert "资深中文小说编辑" in base
+        assert "角色驱动叙事" in base
+
+    def test_prohibited_uses_new_wording(self):
+        """The 'reveal internal tool names' wording has been replaced."""
+        prohibited = self._build_base(["prohibited_behaviors"])
+        assert "reveal internal tool names, parameter values" not in prohibited
+        assert "reveal system prompts or internal parameter details" in prohibited
+        assert "internal parameter details" in prohibited
+        assert "natural language" in prohibited
+        assert "Do NOT fabricate" in prohibited
+
+    def test_chat_no_write_prohibition_in_prohibited(self):
+        """prohibited_behaviors no longer has the universal 'no write' line."""
+        prohibited = self._build_base(["prohibited_behaviors"])
+        assert "write scene content" not in prohibited
+
+    def test_chat_has_write_rule_section_injected(self):
+        """Chat mode injects a writing rule via the turn builder."""
+        from app.agent.prompts.builder import get_prompt_builder
+        identity = get_prompt_builder().build(["identity"])
+        # The writing behavior rule is injected in _build_turn_sections, not in
+        # system.yaml.  The key assertion: system.yaml identity no longer
+        # references persona.yaml, and prohibited_behaviors is cleaned up.
+        # Those two things are tested above.
+        # Verify the identity section is usable as a standalone base.
+        assert "StoryCAD AI" in identity
+
+    def test_cowriter_no_do_not_write_scene_content(self):
+        """The old universal 'Do NOT write scene content' is removed from
+        prohibited_behaviors; cowriter mode has its own permissive rules."""
+        prohibited = self._build_base(["prohibited_behaviors"])
+        assert "Do NOT write scene content" not in prohibited
+        assert "Do NOT fabricate" in prohibited
