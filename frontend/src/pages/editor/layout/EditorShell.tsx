@@ -618,7 +618,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           onExport={handleExport}
           onGlobalSetting={() => setGlobalSettingsOpen(true)}
         />
-      </div>
       <ConfirmDialog
         open={confirmDelete !== null}
         title={confirmDelete?.type === 'act' ? '删除幕' : confirmDelete?.type === 'scene' ? '删除场景' : '删除章'}
@@ -640,6 +639,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         }}
         onCancel={() => setConfirmDelete(null)}
       />
-    </div>
+      </div>
   )
 }

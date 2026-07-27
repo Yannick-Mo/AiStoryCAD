@@ -1089,6 +1089,7 @@ async def autonomous_loop(
                 temperature=0.7,
                 request_id=state.trace_id,
                 model=active_model,
+                tools=tool_schemas,
             ):
                 yield _event_token(token)
         except Exception as e:

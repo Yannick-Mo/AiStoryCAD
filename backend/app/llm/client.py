@@ -382,10 +382,15 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 16384,
+        tools: list[ToolDef] | None = None,
         request_id: str = "",
         session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream tokens from the LLM one by one. Yields content strings."""
+        """Stream tokens from the LLM one by one. Yields content strings.
+
+        If *tools* is provided, ``tool_choice`` is set to ``"none"`` so the
+        model sees tool definitions but is forced to respond in plain text.
+        """
         models_to_try = _resolve_models(model or self.model)
         last_error: Exception | None = None
 
@@ -401,7 +406,9 @@ class LLMClient:
 
             body = self._build_body(
                 messages, current_model, temperature, max_tokens,
-                stream=True, tools=None, tool_choice="auto", response_format=None,
+                stream=True, tools=tools,
+                tool_choice="none" if tools else "auto",
+                response_format=None,
             )
             headers = {
                 "Authorization": f"Bearer {model_def.api_key}",
