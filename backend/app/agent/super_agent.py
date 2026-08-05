@@ -46,12 +46,23 @@ class SuperAgent:
             llm_client = get_shared_client().fork()
         self._llm_client = llm_client
 
-        self.conv_memory = ConversationMemory(redis_client)
+        self._conv_memory: ConversationMemory | None = None
         self._history_manager: HistoryManager | None = None
         self.input_guard = InputGuard(rate_limiter=get_rate_limiter())
 
         # Tool registry — cached for _emit_tool_events write detection
         self._tool_registry_cache: dict | None = None
+
+    @property
+    def conv_memory(self) -> ConversationMemory:
+        """ConversationMemory bound to the current db session.
+
+        ``_stream_chat`` swaps ``self.db`` to a long-lived stream session,
+        so the memory layer must follow the session it will write through.
+        """
+        if self._conv_memory is None or self._conv_memory.db is not self.db:
+            self._conv_memory = ConversationMemory(self.db, self.redis_client)
+        return self._conv_memory
 
     @property
     def history_manager(self) -> HistoryManager:

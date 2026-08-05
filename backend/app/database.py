@@ -24,6 +24,10 @@ async def init_db():
         ConsistencyReportRecord,
         ConsistencyLog,
     )
+    from app.agent.memory.models import (  # noqa: F401
+        Conversation,
+        ConversationMessage,
+    )
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)

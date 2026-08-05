@@ -86,7 +86,15 @@ class HistoryManager:
         self._last_summary_count = 0
 
     async def restore_last_summary_count(self) -> None:
-        """Restore ``_last_summary_count`` from Redis if available."""
+        """Restore ``_last_summary_count`` from DB (via conv_memory) if available."""
+        if self._conv_memory and self._conversation_id:
+            try:
+                count = await self._conv_memory.get_summary_count(self._conversation_id)
+                if count:
+                    self._last_summary_count = int(count)
+                    return
+            except Exception:
+                logger.debug("Could not restore summary count from conv_memory (non-critical)")
         if not self._redis_client or not self._conversation_id:
             return
         try:
@@ -97,7 +105,12 @@ class HistoryManager:
             logger.debug("Could not restore summary count from Redis (non-critical)")
 
     async def _save_summary_position(self, count: int) -> None:
-        """Persist ``_last_summary_count`` to Redis."""
+        """Persist ``_last_summary_count`` to DB (via conv_memory), else Redis."""
+        if self._conv_memory and self._conversation_id:
+            try:
+                await self._conv_memory.set_summary_count(self._conversation_id, count)
+            except Exception:
+                logger.debug("Could not persist summary count to conv_memory (non-critical)")
         if self._redis_client and self._conversation_id:
             try:
                 await self._redis_client.set(

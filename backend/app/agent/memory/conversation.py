@@ -8,7 +8,10 @@ from typing import Any
 
 from loguru import logger
 from redis.asyncio import Redis
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.memory.models import Conversation, ConversationMessage
 from app.llm.types import Message, ToolCall
 
 
@@ -16,9 +19,13 @@ _CONV_PREFIX = "conv:"
 _CONV_META_PREFIX = "conv_meta:"
 _CONV_MSGS_PREFIX = "conv_msgs:"
 _SET_PREFIX = "conv_set:"
-MAX_HISTORY_MESSAGES = 200
 _MAX_IN_MEMORY_CONVERSATIONS = 500
 _IN_MEMORY_TTL = 86400 * 7
+MAX_HISTORY_MESSAGES = 200
+
+# Redis is now only a cache. TTL bounds how long a stale entry can survive if
+# the DB write path was interrupted; the DB remains the source of truth.
+_CACHE_TTL = 86400 * 7
 
 
 def _msg_to_dict(m: Message) -> dict[str, Any]:
@@ -47,235 +54,364 @@ def _dict_to_msg(d: dict) -> Message:
     )
 
 
+def _to_uuid(value: str) -> uuid.UUID:
+    """Best-effort string -> UUID conversion for legacy string inputs."""
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return uuid.UUID(int=0)
+
+
+def _canonical_id(value: str) -> str:
+    """Return a stable canonical form for a conversation id."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        return str(value)
+
+
 class ConversationMemory:
-    def __init__(self, redis_client: Redis | None = None):
+    """Conversation persistence backed by PostgreSQL, with Redis as cache.
+
+    Design (see docs/conversation_persistence.md):
+      * ``conversations`` + ``conversation_messages`` tables are the source
+        of truth — they survive Redis eviction, restart, and scale-out.
+      * Redis caches hot message lists / metadata; every entry is
+        rebuildable from the DB and bounded by ``_CACHE_TTL``.
+    """
+
+    def __init__(self, db: AsyncSession, redis_client: Redis | None = None):
+        self.db = db
         self._redis = redis_client
         self._lock = asyncio.Lock()
-        self._store: dict[str, list[dict]] = {}
-        self._meta: dict[str, dict] = {}
-        self._store_access: dict[str, float] = {}
 
-    async def _evict_if_needed(self):
-        if len(self._store) <= _MAX_IN_MEMORY_CONVERSATIONS:
+    # ── Cache helpers ──────────────────────────────────────────────────
+
+    async def _cache_meta(self, conv: Conversation) -> None:
+        if not self._redis:
             return
-        now = time.time()
-        cutoff = now - _IN_MEMORY_TTL
-        expired = [k for k, t in self._store_access.items() if t < cutoff]
-        if expired:
-            for k in expired:
-                self._store.pop(k, None)
-                self._meta.pop(k, None)
-                self._store_access.pop(k, None)
-        while len(self._store) > _MAX_IN_MEMORY_CONVERSATIONS:
-            oldest = min(self._store_access, key=self._store_access.get)
-            self._store.pop(oldest, None)
-            self._meta.pop(oldest, None)
-            self._store_access.pop(oldest, None)
+        try:
+            meta_key = f"{_CONV_PREFIX}{conv.id}"
+            await self._redis.hset(
+                meta_key,
+                mapping={
+                    "project_id": str(conv.project_id),
+                    "user_id": str(conv.user_id),
+                    "title": conv.title or "",
+                },
+            )
+            await self._redis.expire(meta_key, _CACHE_TTL)
+        except Exception as exc:
+            logger.debug("conv cache meta write failed: {}", exc)
+
+    async def _cache_messages(self, conversation_id: str, msgs: list[dict]) -> None:
+        if not self._redis:
+            return
+        try:
+            key = f"{_CONV_MSGS_PREFIX}{conversation_id}"
+            pipe = self._redis.pipeline()
+            pipe.delete(key)
+            for d in msgs:
+                pipe.rpush(key, json.dumps(d))
+            pipe.expire(key, _CACHE_TTL)
+            await pipe.execute()
+        except Exception as exc:
+            logger.debug("conv cache messages write failed: {}", exc)
+
+    async def _cache_agent_state(self, conversation_id: str, data: dict) -> None:
+        if not self._redis:
+            return
+        try:
+            key = f"{_CONV_META_PREFIX}{conversation_id}"
+            await self._redis.hset(key, "agent_state", json.dumps(data, ensure_ascii=False))
+            await self._redis.expire(key, _CACHE_TTL)
+        except Exception as exc:
+            logger.debug("conv cache agent_state write failed: {}", exc)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def create_conversation(self, project_id: str, user_id: str, title: str = "") -> str:
-        conv_id = str(uuid.uuid4())
-        now = time.time()
-        meta = {"project_id": project_id, "user_id": user_id, "title": title, "created_at": now}
+        conv = Conversation(
+            id=uuid.uuid4(),
+            project_id=_to_uuid(project_id),
+            user_id=_to_uuid(user_id),
+            title=title or "",
+        )
+        self.db.add(conv)
+        await self.db.commit()
+        await self._cache_meta(conv)
         if self._redis:
-            pipe = self._redis.pipeline()
-            pipe.hset(
-                f"{_CONV_PREFIX}{conv_id}",
-                mapping={"project_id": project_id, "user_id": user_id, "title": title},
-            )
-            pipe.sadd(f"{_SET_PREFIX}{project_id}:{user_id}", conv_id)
-            await pipe.execute()
-        else:
-            async with self._lock:
-                self._meta[conv_id] = meta
-                self._store[conv_id] = []
-                self._store_access[conv_id] = now
-        return conv_id
+            try:
+                await self._redis.sadd(f"{_SET_PREFIX}{project_id}:{user_id}", str(conv.id))
+                await self._redis.expire(f"{_SET_PREFIX}{project_id}:{user_id}", _CACHE_TTL)
+            except Exception as exc:
+                logger.debug("conv cache set add failed: {}", exc)
+        return str(conv.id)
 
     async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        cid = _canonical_id(conversation_id)
+        conv = await self._get_conversation(cid)
+        if conv is None:
+            return
+        conv.title = title
+        await self.db.commit()
+        await self._cache_meta(conv)
+
+    async def delete_conversation(self, project_id: str, user_id: str, conversation_id: str) -> bool:
+        cid = _canonical_id(conversation_id)
+        conv = await self._get_conversation(cid)
+        if conv is None:
+            return False
+        if str(conv.project_id) != str(_to_uuid(project_id)) or str(conv.user_id) != str(_to_uuid(user_id)):
+            return False
+        await self.db.delete(conv)
+        await self.db.commit()
         if self._redis:
-            await self._redis.hset(f"{_CONV_PREFIX}{conversation_id}", "title", title)
-        else:
-            async with self._lock:
-                if conversation_id in self._meta:
-                    self._meta[conversation_id]["title"] = title
+            try:
+                pipe = self._redis.pipeline()
+                pipe.delete(f"{_CONV_PREFIX}{cid}")
+                pipe.delete(f"{_CONV_MSGS_PREFIX}{cid}")
+                pipe.delete(f"{_CONV_META_PREFIX}{cid}")
+                pipe.srem(f"{_SET_PREFIX}{project_id}:{user_id}", cid)
+                await pipe.execute()
+            except Exception as exc:
+                logger.debug("conv cache delete failed: {}", exc)
+        return True
+
+    # ── Messages ──────────────────────────────────────────────────────
 
     async def get_history(self, conversation_id: str) -> list[Message]:
+        cid = _canonical_id(conversation_id)
+        # Cache hit path
         if self._redis:
-            raw = await self._redis.lrange(
-                f"{_CONV_MSGS_PREFIX}{conversation_id}", 0, -1
-            )
-            msgs = []
-            for item in raw:
-                d = json.loads(item)
-                msgs.append(_dict_to_msg(d))
-            return msgs
-        async with self._lock:
-            raw = self._store.get(conversation_id, [])
-        return [_dict_to_msg(d) for d in raw]
+            try:
+                raw = await self._redis.lrange(f"{_CONV_MSGS_PREFIX}{cid}", 0, -1)
+                if raw:
+                    return [_dict_to_msg(json.loads(item)) for item in raw]
+            except Exception as exc:
+                logger.debug("conv cache history read failed: {}", exc)
+
+        rows = await self._load_history_rows(cid)
+        msgs = [_dict_to_msg(r.data) for r in rows]
+        if msgs:
+            await self._cache_messages(cid, [_msg_to_dict(m) for m in msgs])
+        return msgs
+
+    async def _load_history_rows(self, conversation_id: str) -> list[ConversationMessage]:
+        if _to_uuid(conversation_id).int == 0:
+            return []
+        result = await self.db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id == _to_uuid(conversation_id))
+            .order_by(ConversationMessage.id)
+            .limit(MAX_HISTORY_MESSAGES)
+        )
+        return list(result.scalars().all())
 
     async def save_message(self, conversation_id: str, message: Message) -> None:
-        d = _msg_to_dict(message)
+        cid = _canonical_id(conversation_id)
+        if _to_uuid(cid).int == 0:
+            return
+        # Trim to the newest MAX_HISTORY_MESSAGES in the DB as well.
+        count = await self._count_messages(cid)
+        if count >= MAX_HISTORY_MESSAGES:
+            overflow = count - MAX_HISTORY_MESSAGES + 1
+            await self._trim_messages(cid, overflow)
+        self.db.add(ConversationMessage(
+            conversation_id=_to_uuid(cid),
+            data=_msg_to_dict(message),
+        ))
+        await self.db.commit()
         if self._redis:
-            pipe = self._redis.pipeline()
-            pipe.rpush(f"{_CONV_MSGS_PREFIX}{conversation_id}", json.dumps(d))
-            pipe.ltrim(f"{_CONV_MSGS_PREFIX}{conversation_id}", -MAX_HISTORY_MESSAGES, -1)
-            pipe.expire(f"{_CONV_MSGS_PREFIX}{conversation_id}", 86400 * 7)
-            await pipe.execute()
-        else:
-            async with self._lock:
-                if conversation_id not in self._store:
-                    self._store[conversation_id] = []
-                if conversation_id not in self._meta:
-                    self._meta[conversation_id] = {"project_id": "", "user_id": "", "title": ""}
-                self._store[conversation_id].append(d)
-                self._store_access[conversation_id] = time.time()
-                if len(self._store[conversation_id]) > MAX_HISTORY_MESSAGES:
-                    self._store[conversation_id] = self._store[conversation_id][-MAX_HISTORY_MESSAGES:]
-                await self._evict_if_needed()
+            try:
+                key = f"{_CONV_MSGS_PREFIX}{cid}"
+                pipe = self._redis.pipeline()
+                pipe.rpush(key, json.dumps(_msg_to_dict(message)))
+                pipe.ltrim(key, -MAX_HISTORY_MESSAGES, -1)
+                pipe.expire(key, _CACHE_TTL)
+                await pipe.execute()
+            except Exception as exc:
+                logger.debug("conv cache message append failed: {}", exc)
+
+    async def _count_messages(self, conversation_id: str) -> int:
+        result = await self.db.execute(
+            select(func.count(ConversationMessage.id))
+            .where(ConversationMessage.conversation_id == _to_uuid(conversation_id))
+        )
+        return int(result.scalar() or 0)
+
+    async def _trim_messages(self, conversation_id: str, keep_count: int) -> None:
+        subq = (
+            select(ConversationMessage.id)
+            .where(ConversationMessage.conversation_id == _to_uuid(conversation_id))
+            .order_by(ConversationMessage.id)
+            .limit(keep_count)
+        )
+        ids = [r[0] for r in await self.db.execute(subq)]
+        if ids:
+            await self.db.execute(
+                delete(ConversationMessage).where(ConversationMessage.id.in_(ids))
+            )
+
+    async def replace_history(self, conversation_id: str, messages: list[Message]) -> None:
+        cid = _canonical_id(conversation_id)
+        if _to_uuid(cid).int == 0:
+            return
+        await self.db.execute(
+            delete(ConversationMessage).where(ConversationMessage.conversation_id == _to_uuid(cid))
+        )
+        for m in messages:
+            self.db.add(ConversationMessage(
+                conversation_id=_to_uuid(cid),
+                data=_msg_to_dict(m),
+            ))
+        await self.db.commit()
+        await self._cache_messages(cid, [_msg_to_dict(m) for m in messages])
+
+    # ── Conversation list / detail ────────────────────────────────────
 
     async def list_conversations(self, project_id: str, user_id: str) -> list[dict]:
-        if self._redis:
-            conv_ids = await self._redis.smembers(f"{_SET_PREFIX}{project_id}:{user_id}")
-            convs = []
-            for cid_bytes in conv_ids:
-                cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
-                data = await self._redis.hgetall(f"{_CONV_PREFIX}{cid}")
-                if data:
-                    decoded = {}
-                    for k, v in data.items():
-                        k_str = k.decode() if isinstance(k, bytes) else k
-                        v_str = v.decode() if isinstance(v, bytes) else v
-                        decoded[k_str] = v_str
-                    decoded["id"] = cid
-                    convs.append(decoded)
-            return convs
-        async with self._lock:
-            result = []
-            for cid, meta in self._meta.items():
-                if meta.get("project_id") == project_id and meta.get("user_id") == user_id:
-                    result.append({"id": cid, **meta})
-            return result
+        result = await self.db.execute(
+            select(Conversation)
+            .where(
+                Conversation.project_id == _to_uuid(project_id),
+                Conversation.user_id == _to_uuid(user_id),
+            )
+            .order_by(Conversation.created_at.desc())
+        )
+        convs = []
+        for conv in result.scalars().all():
+            convs.append({
+                "id": str(conv.id),
+                "project_id": str(conv.project_id),
+                "user_id": str(conv.user_id),
+                "title": conv.title or "",
+                "created_at": self._iso(conv.created_at),
+            })
+        return convs
 
     async def get_conversation(self, project_id: str, user_id: str, conversation_id: str) -> dict | None:
-        if self._redis:
-            data = await self._redis.hgetall(f"{_CONV_PREFIX}{conversation_id}")
-            if data:
-                decoded = {}
-                for k, v in data.items():
-                    k_str = k.decode() if isinstance(k, bytes) else k
-                    v_str = v.decode() if isinstance(v, bytes) else v
-                    decoded[k_str] = v_str
-                if decoded.get("project_id") != project_id or decoded.get("user_id") != user_id:
-                    return None
-                # Include messages for frontend ConversationDetail contract
-                messages = await self.get_history(conversation_id)
-                decoded["messages"] = [
-                    {
-                        "id": f"{conversation_id}-{i}",
-                        "role": m.role,
-                        "content": m.content or "",
-                        "created_at": decoded.get("created_at", ""),
-                    }
-                    for i, m in enumerate(messages)
-                ]
-                return decoded
+        cid = _canonical_id(conversation_id)
+        conv = await self._get_conversation(cid)
+        if conv is None:
             return None
-        async with self._lock:
-            meta = self._meta.get(conversation_id)
-        if meta and meta.get("project_id") == project_id and meta.get("user_id") == user_id:
-            messages = await self.get_history(conversation_id)
-            meta["messages"] = [
+        if str(conv.project_id) != str(_to_uuid(project_id)) or str(conv.user_id) != str(_to_uuid(user_id)):
+            return None
+        messages = await self.get_history(cid)
+        return {
+            "id": str(conv.id),
+            "project_id": str(conv.project_id),
+            "user_id": str(conv.user_id),
+            "title": conv.title or "",
+            "created_at": self._iso(conv.created_at),
+            "messages": [
                 {
-                    "id": f"{conversation_id}-{i}",
+                    "id": f"{cid}-{i}",
                     "role": m.role,
                     "content": m.content or "",
-                    "created_at": meta.get("created_at", ""),
+                    "created_at": self._iso(conv.created_at),
                 }
                 for i, m in enumerate(messages)
-            ]
-            return meta
-        return None
+            ],
+        }
 
-    async def save_agent_state(self, conversation_id: str, pending_plan: dict, current_options: list[dict], plan_confirmed: bool = False, mode: str = "chat", cowriter_session: dict | None = None, id_registry: dict | None = None, id_registry_version: int = 0) -> None:
+    # ── Agent state ───────────────────────────────────────────────────
+
+    async def save_agent_state(
+        self,
+        conversation_id: str,
+        pending_plan: dict,
+        current_options: list[dict],
+        plan_confirmed: bool = False,
+        mode: str = "chat",
+        cowriter_session: dict | None = None,
+        id_registry: dict | None = None,
+        id_registry_version: int = 0,
+    ) -> None:
+        cid = _canonical_id(conversation_id)
+        conv = await self._get_conversation(cid)
+        if conv is None:
+            return
         try:
-            data = json.dumps({
+            data = {
                 "pending_plan": pending_plan,
                 "current_options": current_options,
-                "plan_confirmed": plan_confirmed,
+                "plan_confirmed": bool(plan_confirmed),
                 "mode": mode,
                 "cowriter_session": cowriter_session or {},
                 "id_registry": id_registry or {},
                 "id_registry_version": int(id_registry_version or 0),
-            }, ensure_ascii=False)
+            }
+            # Round-trip through JSON to guarantee JSON-serializability
+            json.dumps(data, ensure_ascii=False)
+            conv.agent_state = data
+            await self.db.commit()
+            await self._cache_agent_state(cid, data)
         except (TypeError, ValueError) as e:
             logger.error("Failed to serialize agent state: {}", e)
-            return
-        if self._redis:
-            await self._redis.hset(f"{_CONV_PREFIX}{conversation_id}", "agent_state", data)
-            await self._redis.expire(f"{_CONV_PREFIX}{conversation_id}", 86400 * 7)
-        else:
-            async with self._lock:
-                if conversation_id in self._meta:
-                    self._meta[conversation_id]["agent_state"] = data
 
     async def load_agent_state(self, conversation_id: str) -> tuple:
-        raw = None
+        cid = _canonical_id(conversation_id)
+        state: dict | None = None
+
+        # Cache read first
         if self._redis:
-            raw = await self._redis.hget(f"{_CONV_PREFIX}{conversation_id}", "agent_state")
-        else:
-            async with self._lock:
-                meta = self._meta.get(conversation_id, {})
-                raw = meta.get("agent_state")
-        if raw:
             try:
-                state = json.loads(raw)
-                return (
-                    state.get("pending_plan", {}),
-                    state.get("current_options", []),
-                    state.get("plan_confirmed", False),
-                    state.get("mode", "chat"),
-                    state.get("cowriter_session", {}),
-                    state.get("id_registry", {}) or {},
-                    int(state.get("id_registry_version", 0) or 0),
-                )
-            except (json.JSONDecodeError, TypeError):
-                return {}, [], False, "chat", {}, {}, 0
-        return {}, [], False, "chat", {}, {}, 0
+                raw = await self._redis.hget(f"{_CONV_META_PREFIX}{cid}", "agent_state")
+                if raw:
+                    state = json.loads(raw)
+            except Exception as exc:
+                logger.debug("conv cache agent_state read failed: {}", exc)
 
-    async def replace_history(self, conversation_id: str, messages: list[Message]) -> None:
-        """Atomically replace all stored messages for a conversation."""
-        dicts = [_msg_to_dict(m) for m in messages]
-        if self._redis:
-            pipe = self._redis.pipeline()
-            key = f"{_CONV_MSGS_PREFIX}{conversation_id}"
-            pipe.delete(key)
-            for d in dicts:
-                pipe.rpush(key, json.dumps(d))
-            pipe.expire(key, 86400 * 7)
-            await pipe.execute()
-        else:
-            async with self._lock:
-                self._store[conversation_id] = dicts
-                self._store_access[conversation_id] = time.time()
+        if state is None:
+            conv = await self._get_conversation(cid)
+            if conv is not None and conv.agent_state:
+                state = conv.agent_state
+                if self._redis:
+                    await self._cache_agent_state(cid, state)
 
-    async def delete_conversation(self, project_id: str, user_id: str, conversation_id: str) -> bool:
-        if self._redis:
-            belongs = await self._redis.sismember(
-                f"{_SET_PREFIX}{project_id}:{user_id}", conversation_id
+        if not state:
+            return {}, [], False, "chat", {}, {}, 0
+        try:
+            return (
+                state.get("pending_plan", {}),
+                state.get("current_options", []),
+                state.get("plan_confirmed", False),
+                state.get("mode", "chat"),
+                state.get("cowriter_session", {}),
+                state.get("id_registry", {}) or {},
+                int(state.get("id_registry_version", 0) or 0),
             )
-            if not belongs:
-                return False
-            pipe = self._redis.pipeline()
-            pipe.delete(f"{_CONV_PREFIX}{conversation_id}")
-            pipe.delete(f"{_CONV_MSGS_PREFIX}{conversation_id}")
-            pipe.srem(f"{_SET_PREFIX}{project_id}:{user_id}", conversation_id)
-            await pipe.execute()
-            return True
-        async with self._lock:
-            meta = self._meta.get(conversation_id)
-            if meta and meta.get("project_id") == project_id and meta.get("user_id") == user_id:
-                self._meta.pop(conversation_id, None)
-                self._store.pop(conversation_id, None)
-                self._store_access.pop(conversation_id, None)
-                return True
-            return False
+        except (json.JSONDecodeError, TypeError):
+            return {}, [], False, "chat", {}, {}, 0
+
+    # ── Summary position ──────────────────────────────────────────────
+
+    async def get_summary_count(self, conversation_id: str) -> int:
+        conv = await self._get_conversation(_canonical_id(conversation_id))
+        return conv.summary_count if conv else 0
+
+    async def set_summary_count(self, conversation_id: str, count: int) -> None:
+        conv = await self._get_conversation(_canonical_id(conversation_id))
+        if conv is None:
+            return
+        conv.summary_count = int(count)
+        await self.db.commit()
+
+    # ── Helpers ───────────────────────────────────────────────────────
+
+    async def _get_conversation(self, conversation_id: str) -> Conversation | None:
+        if _to_uuid(conversation_id).int == 0:
+            return None
+        result = await self.db.execute(
+            select(Conversation).where(Conversation.id == _to_uuid(conversation_id))
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    def _iso(dt: Any) -> str:
+        if dt is None:
+            return ""
+        if isinstance(dt, (int, float)):
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(dt))
+        return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)

@@ -9,6 +9,7 @@ sys.path.insert(0, ".")
 from app.project.models import Base
 from app.storycad.models import StoryBase
 from app.user.models import User
+from app.agent.memory.models import Conversation, ConversationMessage  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
