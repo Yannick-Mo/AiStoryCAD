@@ -12,7 +12,7 @@ async def check_consistency(token: str, project_id: str) -> dict:
         try:
             from app.agent.consistency.checker import ConsistencyChecker
             checker = ConsistencyChecker(db)
-            report = await checker.check_all(project_id)
+            report = await checker.check_all(project_id, requested_by=user["id"])
             return report.model_dump(mode="json")
         except Exception:
             return {"error": "一致性检查失败", "issues": [], "summary": ""}

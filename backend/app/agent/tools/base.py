@@ -88,6 +88,7 @@ class BaseTool(ABC):
 
     meta: ToolMeta | None = None
     llm_client: LLMClient | None = None
+    _uses_own_session: bool = False
 
     def __init__(self, llm_client: LLMClient | None = None):
         self.llm_client = llm_client

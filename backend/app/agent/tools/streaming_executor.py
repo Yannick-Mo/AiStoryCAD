@@ -24,14 +24,16 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Tool names whose *output* should be dropped from tool_results visible to
-# the frontend (they're internal signalling tools, not meaningful to users).
-_INTERNAL_TOOLS: set[str] = {"cowriter_analysis"}
-
 # Tools whose output is typically very long and should be summarized.
 _ANALYSIS_TOOL_NAMES: set[str] = {
     "analyze_chapter", "project_health", "check_consistency",
     "analyze_rhythm", "suggest_next",
+}
+
+# Consistency reports are the one analysis output the LLM still needs to act
+# on in detail; give them a larger budget than the generic 2000 chars.
+_ANALYSIS_TOOL_QUOTAS: dict[str, int] = {
+    "check_consistency": 6000,
 }
 
 # List/structural tools whose output the LLM uses for ID lookup.
@@ -47,13 +49,6 @@ _LIST_TOOL_NAMES: set[str] = {
 _STRUCTURAL_TOOL_NAMES: set[str] = {
     "list_chapters", "list_scenes", "list_characters",
     "list_relations", "list_edges", "search_nodes",
-}
-
-# Tools that produce purely structural JSON.
-_JSON_OUTPUT_TOOLS: set[str] = {
-    "list_chapters", "list_scenes", "list_characters",
-    "list_relations", "list_edges", "search_nodes",
-    "project_health", "analyze_rhythm",
 }
 
 
@@ -193,14 +188,15 @@ def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | 
     data is JSON-serialized first, then structure-aware truncation is
     applied to preserve entity IDs.
     """
-    if tool is not None and hasattr(tool, "_effective_max_result_chars"):
-        max_chars = tool._effective_max_result_chars
-    elif tool_name in _ANALYSIS_TOOL_NAMES:
-        max_chars = 2000
+    # Use the tool's own configured limit as the ceiling, but tighten it for
+    # analysis/structural categories whose outputs are typically long and
+    # mostly consumed for ID lookup (this branch used to be dead because
+    # ``_effective_max_result_chars`` always exists via the BaseTool property).
+    max_chars = tool._effective_max_result_chars if tool is not None else 8000
+    if tool_name in _ANALYSIS_TOOL_NAMES:
+        max_chars = min(max_chars, _ANALYSIS_TOOL_QUOTAS.get(tool_name, 2000))
     elif tool_name in _STRUCTURAL_TOOL_NAMES:
-        max_chars = 4000
-    else:
-        max_chars = 8000
+        max_chars = min(max_chars, 4000)
 
     data = result.data
     # Normalize dict/list to JSON string first so _smart_summarise
@@ -282,8 +278,10 @@ class StreamingToolExecutor:
 
         self._discarded = False
 
-        # Track the last user message for mode checks
-        self._blocked_writes: list[tuple[str, dict, str]] = []
+        # Monotonic id generator for tool_use blocks that arrive without an id
+        # (prevents key collisions in _pending and _completed when the model
+        # omits tool_use ids).
+        self._id_seq = 0
 
         # How many items from _completed have been yielded via get_completed_results.
         # Used by await_pending_safe to avoid re-yielding duplicate tool_done events.
@@ -316,6 +314,8 @@ class StreamingToolExecutor:
         if not tool_name:
             logger.warning("StreamingToolExecutor.add_tool: could not extract tool name")
             return
+
+        tool_use_id = self._coerce_tool_use_id(tool_name, tool_use_id)
 
         # Resolve tool instance
         tool = self._tools.get(tool_name)
@@ -451,11 +451,22 @@ class StreamingToolExecutor:
         self._queued_barrier.clear()
         self._completed.clear()
         self._completed_yielded = 0
-        self._blocked_writes.clear()
 
     # ------------------------------------------------------------------
     # Public execution entry-point (for interceptor-aware callers)
     # ------------------------------------------------------------------
+
+    def _coerce_tool_use_id(self, name: str, tool_use_id: str) -> str:
+        """Return a stable, unique tool_use_id, synthesising one when absent.
+
+        Models occasionally emit tool_use blocks without an ``id``.  Colliding
+        empty ids would silently overwrite entries in ``_pending`` /
+        ``_completed`` and break frontend dedup by ``_tool_use_id``.
+        """
+        if tool_use_id:
+            return tool_use_id
+        self._id_seq += 1
+        return f"call_{name}_{self._id_seq}"
 
     async def execute_tool(
         self, name: str, args: dict, tool_use_id: str = ""
@@ -483,6 +494,8 @@ class StreamingToolExecutor:
         if not tool:
             return {"tool": name, "success": False, "error": "Tool not found", "_tool_use_id": tool_use_id}
 
+        tool_use_id = self._coerce_tool_use_id(name, tool_use_id)
+
         # Inject project_id and user_id into tool args if missing (LLM often
         # omits them on chained tool calls).  The tool descriptions in the
         # prompt also note that project_id is auto-injected.
@@ -493,38 +506,62 @@ class StreamingToolExecutor:
             merged["user_id"] = self._user_id
 
         timeout = tool._effective_timeout if tool._effective_timeout else 30
+        uses_own_session = bool(getattr(tool, "_uses_own_session", False))
 
         try:
-            # SAFE tools share the same AsyncSession (not coroutine-safe), so
-            # serialise their DB access through the executor lock.  EXCLUSIVE
-            # and BARRIER tools are already serial via the queue.
-            if tool._effective_concurrency == ConcurrencyMode.SAFE:
+            # SAFE tools that DON'T manage their own session share the
+            # executor's AsyncSession (not coroutine-safe), so serialise their
+            # DB access through the executor lock. Own-session tools (e.g. the
+            # long-running check_consistency) never touch the shared session,
+            # so they run lock-free — otherwise a minutes-long check would
+            # block every other SAFE tool in the loop.
+            if tool._effective_concurrency == ConcurrencyMode.SAFE and not uses_own_session:
                 async with self._safe_lock:
+                    try:
+                        result: ToolResult = await asyncio.wait_for(
+                            tool.run(db=self._db, **merged),
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        # Roll back INSIDE the lock: a concurrent SAFE tool may
+                        # be mid-transaction, and rolling back here (while it
+                        # holds the session) would abort its work too.
+                        try:
+                            await self._db.rollback()
+                        except Exception:
+                            pass
+                        return {"tool": name, "success": False, "error": f"工具执行超时（{timeout}秒），事务已回滚", "_tool_use_id": tool_use_id}
+            else:
+                try:
                     result: ToolResult = await asyncio.wait_for(
                         tool.run(db=self._db, **merged),
                         timeout=timeout,
                     )
-            else:
-                result: ToolResult = await asyncio.wait_for(
-                    tool.run(db=self._db, **merged),
-                    timeout=timeout,
-                )
+                except asyncio.TimeoutError:
+                    # Only roll back the shared session if this tool actually
+                    # used it; an own-session tool timed out while a *different*
+                    # SAFE tool may hold the shared session mid-transaction.
+                    if not uses_own_session:
+                        try:
+                            await self._db.rollback()
+                        except Exception:
+                            pass
+                    return {"tool": name, "success": False, "error": f"工具执行超时（{timeout}秒）", "_tool_use_id": tool_use_id}
             d = _summarise_tool_output(name, result, tool)
             d["_tool_use_id"] = tool_use_id
+            # Forward the (merged) invocation params so the ID registry can tell
+            # a filtered list_* result from an authoritative full snapshot, and
+            # so project_updated events can report actual changes.
+            d["params"] = merged
             return d
-        except asyncio.TimeoutError:
-            # A timeout may have left the DB connection in a partially-modified
-            # state — roll back to prevent InFailedSQLTransactionError.
-            try:
-                await self._db.rollback()
-            except Exception:
-                pass
-            return {"tool": name, "success": False, "error": f"工具执行超时（{timeout}秒），事务已回滚", "_tool_use_id": tool_use_id}
         except asyncio.CancelledError:
             raise
         except KeyError as ke:
+            # "参数缺失" matches loop.py's cascade-fuse detection so a model
+            # that keeps omitting params gets the stop-and-list_* reminder.
             return {"tool": name, "success": False,
-                    "error": f"缺少必要参数: {ke}。请检查工具描述中的 required 参数并全部提供",
+                    "error": f"参数缺失: 工具需要 {ke} 参数但未提供。请检查工具描述中的 required 参数并全部提供",
+                    "correction_hint": f"下一步：先使用读取工具获取所需参数（缺失: {ke}），拿到后再重新调用本工具",
                     "_tool_use_id": tool_use_id}
         except Exception as exc:
             logger.exception("Tool '%s' execution failed", name)

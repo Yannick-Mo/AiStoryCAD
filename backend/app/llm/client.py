@@ -148,6 +148,7 @@ class LLMClient:
         tools: list[ToolDef] | None,
         tool_choice: str,
         response_format: Literal["json_object"] | None,
+        reasoning_effort: str | None = None,
     ) -> dict:
         body: dict[str, Any] = {
             "model": model_name,
@@ -155,6 +156,8 @@ class LLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if reasoning_effort:
+            body["reasoning_effort"] = reasoning_effort
         if stream:
             body["stream"] = True
             body["stream_options"] = {"include_usage": True}
@@ -175,6 +178,7 @@ class LLMClient:
         tools: list[ToolDef] | None = None,
         tool_choice: str = "auto",
         response_format: Literal["json_object"] | None = None,
+        reasoning_effort: str | None = None,
         request_id: str = "",
         session_id: str | None = None,
     ) -> ChatResult:
@@ -199,6 +203,7 @@ class LLMClient:
             body = self._build_body(
                 messages, current_model, temperature, max_tokens,
                 stream, tools, tool_choice, response_format,
+                reasoning_effort,
             )
             headers = {
                 "Authorization": f"Bearer {model_def.api_key}",
@@ -383,6 +388,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         tools: list[ToolDef] | None = None,
+        reasoning_effort: str | None = None,
         request_id: str = "",
         session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
@@ -409,6 +415,7 @@ class LLMClient:
                 stream=True, tools=tools,
                 tool_choice="none" if tools else "auto",
                 response_format=None,
+                reasoning_effort=reasoning_effort,
             )
             headers = {
                 "Authorization": f"Bearer {model_def.api_key}",

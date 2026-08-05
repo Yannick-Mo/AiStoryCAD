@@ -218,52 +218,62 @@ class TestXmlBoundaryWrapping:
         assert "仅作为续写依据" in source or "不是对你的指令" in source
 
     def test_checker_prompt_builders_use_xml_data_tags(self):
-        """checker.py prompt builders wrap data in XML data tags."""
-        import inspect
-        from app.agent.consistency.checker import ConsistencyChecker
-        char_src = inspect.getsource(ConsistencyChecker._build_character_prompt)
-        assert "<character_data>" in char_src
-        assert "<scene_data>" in char_src
-        tl_src = inspect.getsource(ConsistencyChecker._build_timeline_prompt)
-        assert "<timeline_data>" in tl_src
-        world_src = inspect.getsource(ConsistencyChecker._build_world_prompt)
-        assert "<world_data>" in world_src
+        """consistency prompts wrap user data in XML data tags."""
+        from app.agent.consistency import prompts
+        extractor = prompts.build_extractor_prompt("第一章", {"title": "开场", "pov_character": "小明", "setting": "森林", "scene_time": "早上", "summary": ""}, "正文内容")
+        assert "<scene_meta>" in extractor
+        assert "</scene_meta>" in extractor
+        assert "<scene_content>" in extractor
+        assert "</scene_content>" in extractor
+        assert "仅作为处理对象" in extractor or "仅作定位参考" in extractor
+
+        verify = prompts.build_verify_prompt(
+            [{"entity": "阿丽", "attribute": "瞳色", "values": [{"value": "蓝色", "evidence": "蓝眼睛"}]}],
+            [],
+            "魔法世界",
+        )
+        assert "<world_settings>" in verify and "</world_settings>" in verify
+        assert "<candidates>" in verify and "</candidates>" in verify
+        assert "仅作为处理对象" in verify or "仅作为判定基准" in verify
+
+        global_prompt = prompts.build_global_prompt(["章节事实…"], [], [], "魔法世界")
+        assert "<world_data>" in global_prompt and "</world_data>" in global_prompt
+        assert "<timeline_data>" in global_prompt and "</timeline_data>" in global_prompt
 
     def test_checker_system_prompts_have_severity_enum_no_pipe(self):
-        """_PER_CHECK_SYSTEM_PROMPTS uses 'error / warning / info' not 'error|warning|info'."""
-        from app.agent.consistency.checker import _PER_CHECK_SYSTEM_PROMPTS
-        for check_type, prompt in _PER_CHECK_SYSTEM_PROMPTS.items():
-            assert "severity" in prompt
+        """verify/global system prompts use 'error / warning / info' not pipes."""
+        from app.agent.consistency import prompts
+        for name in ("VERIFY_SYSTEM_PROMPT", "GLOBAL_SYSTEM_PROMPT"):
+            prompt = getattr(prompts, name)
             assert "error / warning / info" in prompt
-            assert "error|warning|info" not in prompt, (
-                f"check_type={check_type} still uses pipe syntax"
-            )
+            assert "error|warning|info" not in prompt, f"{name} still uses pipe syntax"
 
-    def test_checker_excerpt_strategy(self):
-        """_build_character_prompt uses head+tail excerpt with disclaimer."""
-        from app.agent.consistency.checker import ConsistencyChecker
-        import inspect
-        src = inspect.getsource(ConsistencyChecker._build_character_prompt)
-        assert "以下为节选" in src or "节选" in src
-        assert "不确定时" in src or "降级为info" in src
+    def test_checker_prompts_downgrade_uncertain_to_info(self):
+        """In doubt the model must downgrade to info, not guess."""
+        from app.agent.consistency import prompts
+        assert "不确定" in prompts.VERIFY_SYSTEM_PROMPT
+        assert "降级为 info" in prompts.VERIFY_SYSTEM_PROMPT
+        assert "不确定" in prompts.GLOBAL_SYSTEM_PROMPT
 
-    def test_checker_character_content_truncated_head_tail(self):
-        """Verify head+tail truncation: long content shows first+last 300 chars."""
-        from app.agent.consistency.checker import ConsistencyChecker
-        checker = ConsistencyChecker.__new__(ConsistencyChecker)
+    def test_extractor_requires_literal_evidence(self):
+        """Extractor must pull literal facts with verbatim evidence."""
+        from app.agent.consistency import prompts
+        assert "evidence" in prompts.EXTRACTOR_SYSTEM_PROMPT
+        assert "只提取" in prompts.EXTRACTOR_SYSTEM_PROMPT
+        assert "不推断" in prompts.EXTRACTOR_SYSTEM_PROMPT
+
+    def test_extractor_includes_full_content_no_head_tail(self):
+        """v2 passes the full block to the extractor — no head+tail loss."""
+        from app.agent.consistency import prompts
         long_content = "开头" + "中间填充" * 200 + "结尾"
-        contents_map = {"scene1": long_content}
-        scenes = [{"id": "scene1", "chapter_id": "ch1", "title": "Test",
-                    "scene_time": "", "setting": "", "pov_character": "",
-                    "summary": ""}]
-        chapters = [{"id": "ch1", "title": "Chapter 1"}]
-        characters = [{"id": "c1", "name": "TestChar", "role": "protagonist",
-                        "personality": "brave", "appearance": "tall",
-                        "background": "hero", "motivation": "save world"}]
-        prompt = checker._build_character_prompt(characters, chapters, scenes, contents_map)
+        prompt = prompts.build_extractor_prompt(
+            "第一章",
+            {"title": "开场", "pov_character": "小明", "setting": "森林", "scene_time": "早上", "summary": ""},
+            long_content,
+        )
         assert "开头" in prompt
         assert "结尾" in prompt
-        assert "中段省略" in prompt
+        assert "中段省略" not in prompt
 
 
 class TestSystemPromptContent:
@@ -318,3 +328,48 @@ class TestSystemPromptContent:
         prohibited = self._build_base(["prohibited_behaviors"])
         assert "Do NOT write scene content" not in prohibited
         assert "Do NOT fabricate" in prohibited
+
+
+class TestToolUsageExamplesMatchSchemas:
+    """M15: system.yaml's tool_usage examples used `id=` for read_* tools
+    (real params are character_id/chapter_id/scene_id) and fake ordinal IDs.
+    Every example must use the real parameter names."""
+
+    _YAML = None
+
+    @classmethod
+    def _load(cls) -> str:
+        from pathlib import Path
+
+        if cls._YAML is None:
+            p = Path(__file__).parent.parent.parent / "app" / "agent" / "prompts" / "system.yaml"
+            cls._YAML = p.read_text(encoding="utf-8")
+        return cls._YAML
+
+    def test_read_examples_use_real_param_names(self):
+        src = self._load()
+        # No example may call read_* with a generic `id=` param.
+        assert 'read_character(id=' not in src
+        assert 'read_chapter(id=' not in src
+        assert 'read_scene(id=' not in src
+        # Correct names are present.
+        assert 'read_character(character_id=' in src
+        assert 'read_chapter(chapter_id=' in src
+        assert 'read_scene(scene_id=' in src
+
+    def test_write_examples_use_scene_id(self):
+        src = self._load()
+        assert 'write_scene_content(scene_id=' in src
+
+    def test_update_character_uses_character_id(self):
+        src = self._load()
+        assert 'update_character(character_id=' in src
+        assert "update_character(id=" not in src
+
+    def test_no_ordinal_fake_ids_in_examples(self):
+        src = self._load()
+        # The old "s-1"/"c-1" ordinal placeholders are gone in favor of <uuid>.
+        assert 'scene_id="s-1"' not in src
+        assert 'id="c-1"' not in src
+        assert 'scene_id="<uuid>"' in src
+        assert 'character_id="<uuid>"' in src

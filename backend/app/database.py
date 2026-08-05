@@ -19,6 +19,11 @@ async def init_db():
     from app.user.models import User  # noqa: F401
     from app.storycad.models import Act, Chapter, Scene, SceneContent, Character, CharacterRelation, Theme, ThemeChapter, ChapterEdge, ChapterRhythm  # noqa: F401
     from app.knowledge.models import KnowledgeChunk  # noqa: F401
+    from app.agent.consistency.orm import (  # noqa: F401
+        SceneFactCache,
+        ConsistencyReportRecord,
+        ConsistencyLog,
+    )
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
