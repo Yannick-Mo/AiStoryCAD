@@ -765,7 +765,11 @@ async def autonomous_loop(
                     plan_confirmed=True,
                     transition="plan_confirmed_and_executed",
                 )
-                break  # Skip LLM call, go to final response
+                # Do NOT break here: the user confirmed the plan, so resume the
+                # SAME loop iteration.  Context is reloaded (writes invalidated
+                # it), the tool results are fed to the LLM, and the loop keeps
+                # executing chained steps of the original multi-step task.
+                continue
 
             elif decision == "reject":
                 logger.info("Plan rejected by user — clearing pending plan")

@@ -23,6 +23,47 @@ from app.knowledge.skill_engine import _shared_engine as _skill_engine
 _CHAT_STREAM_TIMEOUT = 120  # 2 min (was 60s — too tight for writing tools)
 
 
+def _snapshot_to_dict(final_values: dict) -> dict:
+    """Convert loop final_values into a JSON-serializable loop snapshot.
+
+    The snapshot captures the full in-memory loop state (messages, tool
+    results, project context, skills, cowriter session, ...) so a later
+    confirm/reject request can resume the SAME loop instead of starting a
+    fresh one.  ``Message`` objects are serialized via ``_msg_to_dict``.
+    """
+    snapshot: dict = {}
+    for key in (
+        "project_id", "user_id", "conversation_id", "mode",
+        "project_context", "active_skills", "tool_results",
+        "id_registry", "id_registry_version",
+        "cowriter_session", "current_options",
+        "pending_plan", "plan_confirmed",
+        "planned_steps", "current_step_index",
+        "errors", "retry_count", "max_retries",
+        "recovery_state", "_model_override",
+        "budget_total_estimated", "budget_model_limit",
+        "budget_continuation_count", "budget_last_delta", "budget_warn_level",
+        "tool_only_turns", "write_only_turns",
+        "_last_scan_count", "_turn_count",
+        "_context_loaded", "_invalidated_sections",
+    ):
+        if key in final_values:
+            snapshot[key] = final_values[key]
+    messages = final_values.get("messages", [])
+    from app.agent.memory.conversation import _msg_to_dict
+    snapshot["messages"] = [_msg_to_dict(m) for m in messages if m is not None]
+    return snapshot
+
+
+def _snapshot_from_dict(snapshot: dict) -> dict:
+    """Inverse of :func:`_snapshot_to_dict`: rebuild initial_state fields."""
+    from app.agent.memory.conversation import _dict_to_msg
+    state = dict(snapshot)
+    messages = state.get("messages", []) or []
+    state["messages"] = [_dict_to_msg(m) for m in messages]
+    return state
+
+
 class SuperAgent:
     """Orchestrator for the model-driven AI assistant.
 
@@ -251,6 +292,7 @@ class SuperAgent:
             saved_session,
             saved_id_registry,
             saved_id_registry_version,
+            saved_loop_snapshot,
         ) = await self.conv_memory.load_agent_state(conversation_id)
 
         # Mode switch: clear stale state
@@ -259,6 +301,7 @@ class SuperAgent:
             saved_options = []
             saved_plan_confirmed = False
             saved_session = {}
+            saved_loop_snapshot = None
             await self.conv_memory.save_agent_state(
                 conversation_id, {}, [], False, mode, cowriter_session={},
                 id_registry=saved_id_registry,
@@ -266,35 +309,89 @@ class SuperAgent:
             )
 
         # 5. Build initial state dict
-        initial_state: dict = {
-            "project_id": project_id,
-            "user_id": user_id,
-            "trace_id": request_id,
-            "conversation_id": conversation_id,
-            "project_context": project_context,
-            "messages": messages,
-            "tool_results": [],
-            "id_registry": saved_id_registry,
-            "_id_registry_persisted": saved_id_registry,
-            "id_registry_version": (saved_id_registry_version or 0) + 1,
-            "active_skills": active_skills,
-            "mode": mode,
-            "intermediate_steps": [],
-            "retry_count": 0,
-            "max_retries": 3,
-            "current_options": saved_options,
-            "planned_steps": [],
-            "current_step_index": 0,
-            "errors": [],
-            "pending_plan": saved_pending_plan,
-            "plan_confirmed": saved_plan_confirmed,
-            "retry_context": None,
-            "cowriter_session": saved_session,
-            "_context_loaded": False,
-            "_turn_count": 1,
-            "recovery_state": {},
-            "_model_override": "",
-        }
+        # If a full loop snapshot exists (a plan was awaiting confirmation),
+        # resume the SAME loop: restore in-memory context (messages, tool
+        # results, project context, skills) instead of starting fresh.
+        if saved_loop_snapshot:
+            snapshot_state = _snapshot_from_dict(saved_loop_snapshot)
+            # Guard against stale snapshots from another project/session
+            if (str(snapshot_state.get("project_id", "")) != str(project_id)
+                    or str(snapshot_state.get("conversation_id", "")) != str(conversation_id)):
+                saved_loop_snapshot = None
+
+        if saved_loop_snapshot:
+            snapshot_state = _snapshot_from_dict(saved_loop_snapshot)
+            # Drop the plan-generation turn's scaffold: the original assistant
+            # tool_calls + placeholder tool messages.  The confirm/reject path
+            # re-creates a fresh synthetic assistant with the SAME tool_use_ids,
+            # so keeping the old ones would produce duplicate tool_call IDs.
+            msgs = snapshot_state.get("messages", [])
+            while msgs and getattr(msgs[-1], "role", "") == "tool":
+                msgs.pop()
+            if msgs and getattr(msgs[-1], "role", "") == "assistant" and getattr(msgs[-1], "tool_calls", None):
+                last = msgs[-1]
+                msgs[-1] = Message(role="assistant", content=last.content)
+            msgs.append(Message(role="user", content=message))
+
+            initial_state: dict = {
+                "project_id": project_id,
+                "user_id": user_id,
+                "trace_id": request_id,
+                "conversation_id": conversation_id,
+                "project_context": snapshot_state.get("project_context", {}) or {},
+                "messages": msgs,
+                "tool_results": snapshot_state.get("tool_results", []) or [],
+                "id_registry": snapshot_state.get("id_registry", saved_id_registry) or {},
+                "_id_registry_persisted": snapshot_state.get("id_registry", saved_id_registry) or {},
+                "id_registry_version": (snapshot_state.get("id_registry_version", 0) or 0) + 1,
+                "active_skills": snapshot_state.get("active_skills", active_skills) or [],
+                "mode": mode,
+                "intermediate_steps": [],
+                "retry_count": 0,
+                "max_retries": 3,
+                "current_options": saved_options,
+                "planned_steps": snapshot_state.get("planned_steps", []) or [],
+                "current_step_index": snapshot_state.get("current_step_index", 0) or 0,
+                "errors": [],
+                "pending_plan": saved_pending_plan,
+                "plan_confirmed": saved_plan_confirmed,
+                "retry_context": None,
+                "cowriter_session": saved_session,
+                "_context_loaded": bool(snapshot_state.get("_context_loaded", False)),
+                "_turn_count": int(snapshot_state.get("_turn_count", 1) or 1),
+                "recovery_state": snapshot_state.get("recovery_state", {}) or {},
+                "_model_override": snapshot_state.get("_model_override", "") or "",
+            }
+        else:
+            initial_state: dict = {
+                "project_id": project_id,
+                "user_id": user_id,
+                "trace_id": request_id,
+                "conversation_id": conversation_id,
+                "project_context": project_context,
+                "messages": messages,
+                "tool_results": [],
+                "id_registry": saved_id_registry,
+                "_id_registry_persisted": saved_id_registry,
+                "id_registry_version": (saved_id_registry_version or 0) + 1,
+                "active_skills": active_skills,
+                "mode": mode,
+                "intermediate_steps": [],
+                "retry_count": 0,
+                "max_retries": 3,
+                "current_options": saved_options,
+                "planned_steps": [],
+                "current_step_index": 0,
+                "errors": [],
+                "pending_plan": saved_pending_plan,
+                "plan_confirmed": saved_plan_confirmed,
+                "retry_context": None,
+                "cowriter_session": saved_session,
+                "_context_loaded": False,
+                "_turn_count": 1,
+                "recovery_state": {},
+                "_model_override": "",
+            }
 
         # 6. Save user message
         await self.conv_memory.save_message(
@@ -390,6 +487,18 @@ class SuperAgent:
             log.debug("Cleared options/plan_confirmed after successful plan execution")
 
         # 12. Persist state
+        # When a plan is awaiting confirmation, save the FULL loop snapshot so a
+        # later confirm/reject request can resume this exact loop (messages, tool
+        # results, project context).  Once the plan is confirmed+executed, the
+        # snapshot is cleared below so the next turn starts fresh.
+        snapshot: dict | None = None
+        if final_values.get("pending_plan") and not final_values.get("plan_confirmed"):
+            try:
+                snapshot = _snapshot_to_dict(final_values)
+            except Exception as exc:
+                logger.error("Failed to serialize loop snapshot: {}", exc, exc_info=True)
+                snapshot = None
+
         await self.conv_memory.save_agent_state(
             conversation_id,
             final_values.get("pending_plan", {}),
@@ -399,6 +508,7 @@ class SuperAgent:
             cowriter_session=final_values.get("cowriter_session", {}),
             id_registry=final_values.get("id_registry", {}) or {},
             id_registry_version=final_values.get("id_registry_version", 0),
+            loop_snapshot=snapshot,
         )
 
         # 13. Fallback: if no tokens were streamed, extract from final state

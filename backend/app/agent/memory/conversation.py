@@ -327,6 +327,7 @@ class ConversationMemory:
         cowriter_session: dict | None = None,
         id_registry: dict | None = None,
         id_registry_version: int = 0,
+        loop_snapshot: dict | None = None,
     ) -> None:
         cid = _canonical_id(conversation_id)
         conv = await self._get_conversation(cid)
@@ -341,6 +342,7 @@ class ConversationMemory:
                 "cowriter_session": cowriter_session or {},
                 "id_registry": id_registry or {},
                 "id_registry_version": int(id_registry_version or 0),
+                "loop_snapshot": loop_snapshot,
             }
             # Round-trip through JSON to guarantee JSON-serializability
             json.dumps(data, ensure_ascii=False)
@@ -371,7 +373,7 @@ class ConversationMemory:
                     await self._cache_agent_state(cid, state)
 
         if not state:
-            return {}, [], False, "chat", {}, {}, 0
+            return {}, [], False, "chat", {}, {}, 0, None
         try:
             return (
                 state.get("pending_plan", {}),
@@ -381,9 +383,10 @@ class ConversationMemory:
                 state.get("cowriter_session", {}),
                 state.get("id_registry", {}) or {},
                 int(state.get("id_registry_version", 0) or 0),
+                state.get("loop_snapshot"),
             )
         except (json.JSONDecodeError, TypeError):
-            return {}, [], False, "chat", {}, {}, 0
+            return {}, [], False, "chat", {}, {}, 0, None
 
     # ── Summary position ──────────────────────────────────────────────
 

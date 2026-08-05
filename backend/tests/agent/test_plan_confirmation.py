@@ -130,3 +130,78 @@ class TestConfirmBreakPath:
         final = [e for e in events if e.get("_loop_done")][0]["final_state"]
         assert final["pending_plan"] == {}
         assert final["plan_confirmed"] is True
+
+
+class TestConfirmResumesLoop:
+    """Confirming a plan must NOT stop the loop: it resumes the SAME iteration,
+    feeds the plan's tool results back to the LLM, and keeps executing the
+    chained multi-step task (fix for the '确认后执行完工具就停止' bug)."""
+
+    async def test_confirm_feeds_tool_results_back_to_llm(self):
+        """确认后 loop 继续：LLM 再次被调用，且能看到 plan 工具的执行结果。"""
+        llm = MagicMock()
+        seen_calls: list[list[Message]] = []
+        llm_call_count = 0
+
+        async def fake_stream_with_tools(**kwargs):
+            nonlocal llm_call_count
+            llm_call_count += 1
+            seen_calls.append(kwargs["messages"])
+            yield {"content": "", "tool_call": None}
+
+        llm.chat_stream_with_tools = fake_stream_with_tools
+
+        async def fake_stream_tokens(**kwargs):
+            yield "确认后继续处理完成"
+
+        llm.chat_stream_tokens = fake_stream_tokens
+        db = AsyncMock()
+
+        initial = {
+            "project_id": "",
+            "user_id": "u1",
+            "mode": "chat",
+            "messages": [Message(role="user", content="确认")],
+            "pending_plan": {
+                "steps": [
+                    {
+                        "tool": "create_character",
+                        "params": {"name": "测试角色"},
+                        "tool_use_id": "tc_1",
+                    }
+                ]
+            },
+        }
+
+        events = []
+        with patch(
+            "app.agent.response_builder.build_system_prompt",
+            new=AsyncMock(return_value="SYS"),
+        ):
+            async for ev in autonomous_loop(initial, {}, llm, db, ""):
+                events.append(ev)
+
+        assert any(e.get("_loop_done") for e in events)
+
+        # Plan step was executed
+        tool_events = [e for e in events if "_tool_done" in e]
+        assert len(tool_events) == 1
+        assert tool_events[0]["_tool_done"]["tool"] == "create_character"
+
+        # The loop CONTINUED: LLM was called again AFTER the plan execution,
+        # and its messages include the tool result from the confirmed plan.
+        assert llm_call_count >= 2, (
+            f"expected the loop to resume (>=2 LLM calls), got {llm_call_count}"
+        )
+
+        # The post-confirm LLM call sees a role=tool message for tc_1
+        resumed_msgs = seen_calls[1]
+        roles_after_confirm = [m.role for m in resumed_msgs]
+        assert "tool" in roles_after_confirm
+        tool_msg = [m for m in resumed_msgs if m.role == "tool"][0]
+        assert tool_msg.tool_call_id == "tc_1"
+
+        final = [e for e in events if e.get("_loop_done")][0]["final_state"]
+        assert final["pending_plan"] == {}
+        assert final["plan_confirmed"] is True
+
