@@ -23,6 +23,7 @@ class ListCharactersTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             repo = StoryCADRepository(db)
             characters = await repo.list_entities(Character, pid)
             relations_result = await db.execute(
@@ -159,11 +160,16 @@ class DeleteCharacterTool(BaseTool):
                     | (CharacterRelation.target_id == char_id)
                 )
             )).scalars().all()
+            deleted_relation_ids = [str(r.id) for r in rels]
             for rel in rels:
                 await db.delete(rel)
             await db.delete(char)
             await db.commit()
-            return ToolResult(success=True, data={"deleted": name, "character_id": str(char_id)})
+            return ToolResult(success=True, data={
+                "deleted": name,
+                "character_id": str(char_id),
+                "deleted_relation_ids": deleted_relation_ids,
+            })
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))

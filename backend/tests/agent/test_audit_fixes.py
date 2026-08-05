@@ -9,7 +9,6 @@ from app.agent.context_compressor import (
 )
 from app.agent.memory.history_manager import (
     HistoryManager,
-    _estimate_tokens as hm_estimate_tokens,
 )
 from app.llm.types import Message
 
@@ -212,18 +211,19 @@ class TestSummaryThrottling:
 
 
 class TestModelContextLimit:
-    """T4: verify MODEL_CONTEXT_LIMIT default approximates 120_000."""
+    """T4: verify MODEL_CONTEXT_LIMIT derives from settings (400K window)."""
 
     def test_context_limit_from_settings(self):
-        """DEFAULT_MODEL_LIMIT should be properly set (≈100K for compressing)."""
-        # DEFAULT_MODEL_LIMIT should be 100_000 (compression triggers at ~80%)
-        assert DEFAULT_MODEL_LIMIT == 100_000
+        """DEFAULT_MODEL_LIMIT should come from settings.llm_context_window."""
+        from app.config import settings
+        assert DEFAULT_MODEL_LIMIT == settings.llm_context_window
 
     def test_token_budget_default_from_settings(self):
         """token_budget's default model_limit should come from settings."""
         from app.agent.token_budget import _DEFAULT_MODEL_LIMIT
-        # Default should be 120_000 (from config.py llm_context_window)
-        assert _DEFAULT_MODEL_LIMIT == 120_000
+        from app.config import settings
+        # Should be settings.llm_context_window (from config.py)
+        assert _DEFAULT_MODEL_LIMIT == settings.llm_context_window
 
 
 # ── T5: RecoveryExecutor — single backoff, model rotation ──────────────
@@ -303,3 +303,41 @@ class TestRecoveryExecutor:
         rs = updates["recovery_state"]
         assert rs.get("models_exhausted") is True
         assert "_model_override" not in updates
+
+
+# ── T6: History threshold alignment (M19/M23) ─────────────────────────
+
+
+class TestHistoryThresholdAlignment:
+    """M19/M23: history summarization thresholds were 200K/400K — larger
+    than the 120K model window, so summarization never fired in time.
+    Thresholds are now derived from the same window the loop uses, and the
+    private token estimator was removed in favor of the shared one."""
+
+    def test_summarize_threshold_derived_from_window(self):
+        from app.agent.memory import history_manager as hm
+
+        window = hm._MODEL_CONTEXT_WINDOW
+        assert hm.MAX_HISTORY_TOKENS_EST == int(window * 0.75)
+        assert hm.MAX_HISTORY_TOKENS_EST < window
+        assert hm.MAX_HISTORY_TOKENS_HARD <= window
+
+    def test_history_uses_shared_estimator(self):
+        import inspect
+
+        import app.agent.memory.history_manager as hm
+
+        src = inspect.getsource(hm.HistoryManager.maybe_summarize)
+        # The private CJK estimator (with its own 1.5x multiplier) is gone.
+        assert "estimate_tokens(messages)" in src
+        assert "estimate_tokens(result)" in src
+        assert "estimate_text_tokens" not in src
+        assert "_estimate_tokens(" not in src
+
+    def test_recovery_compress_uses_loop_window(self):
+        import inspect
+
+        from app.agent.recovery import RecoveryExecutor
+
+        src = inspect.getsource(RecoveryExecutor.apply)
+        assert "model_limit=settings.llm_context_window" in src

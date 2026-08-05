@@ -107,7 +107,10 @@ def trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKEN
     Tier 2 – included if budget allows, otherwise truncated.
     Tier 3 – only included with ample room.
     """
-    sections.sort(key=lambda s: (s.tier, s.label))
+    # Stable sort by tier only — insertion order encodes intended precedence
+    # WITHIN a tier (persona → mode → project_title → cowriter_persona).
+    # Sorting by label too would reverse that (e.g. "cowriter_persona" < "persona").
+    sections.sort(key=lambda s: s.tier)
 
     result_parts: list[str] = []
     used = 0
@@ -299,6 +302,17 @@ async def build_system_prompt(state: dict) -> str:
             content = _format_tool_data(raw)
             result_lines.append(f"{icon} {tool_name}：{content}")
         sections.append(_ContextSection(tier=1, label="tool_results", text="\n".join(result_lines)))
+
+    # Entity ID registry — rebuilt from the latest tool results + persisted
+    # baseline so the final response can reference IDs without re-querying.
+    from app.agent.id_registry import build_id_registry, render_id_registry
+    registry_text = render_id_registry(build_id_registry(
+        tool_results,
+        persisted=state.get("id_registry") or {},
+        version=state.get("id_registry_version", 1),
+    ))
+    if registry_text:
+        sections.append(_ContextSection(tier=1, label="id_registry", text=registry_text))
 
     if errors:
         error_lines = ["遇到的问题："]

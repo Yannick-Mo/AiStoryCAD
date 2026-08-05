@@ -26,8 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context_compressor import (
     async_compress_context,
+    build_boundary_message,
 )
 from app.agent.hooks import hook_registry
+from app.agent.id_registry import build_id_registry
 from app.agent.interceptors import (
     InterceptResult,
     apply_interceptors,
@@ -53,7 +55,6 @@ from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 MAX_TURNS = 30
 MAX_RECOVERY = 3
-MAX_RAG_CHARS = 5000
 MODEL_CONTEXT_LIMIT = settings.llm_context_window  # tokens (DeepSeek 128K window)
 
 # ── Tool description cache ────────────────────────────────────────────
@@ -130,6 +131,13 @@ def _invalidate_after_write(
     if tool and tool.is_write_operation:
         section = _section_for_tool(tool_name)
         invalidated = set(state._invalidated_sections) | {section}
+        # Drop the shared 300s context cache so read tools (read_full_project,
+        # read_project_overview, list_*) in the SAME turn see fresh data.
+        try:
+            from app.agent.context import ContextBuilder
+            ContextBuilder.invalidate_project(state.project_id)
+        except Exception:
+            logger.warning("Context cache invalidation failed for project=%s", state.project_id, exc_info=True)
         return state.replace(
             _context_loaded=False,
             _invalidated_sections=invalidated,
@@ -332,6 +340,79 @@ def _render_cowriter_persona() -> str:
     return result if result else ""
 
 
+_FRAMEWORK_SECTION_MAX = 6000
+
+
+def _render_framework_section(state: "LoopState") -> str:
+    """Render the loaded project framework into a compact, bounded text section.
+
+    Fixes H2: the framework was loaded into ``state.project_context`` but the
+    system prompt only *claimed* it was provided ("已在上下文中提供") without
+    ever including it — so the model had no structure/character/theme data to
+    reference and had to discover everything via tools.
+    """
+    ctx = state.project_context or {}
+    acts = ctx.get("acts", [])
+    if not acts:
+        return ""
+    lines = ["# --- 项目框架 ---"]
+
+    for act in acts:
+        lines.append(f"## {act.get('sort_order')}. {act.get('name') or '未命名幕'} (act_id={act.get('id')})")
+        for ch in act.get("chapters", []):
+            scenes = ch.get("scenes", [])
+            ch_line = (
+                f"- 章 {ch.get('sort_order')}《{ch.get('title') or '未命名'}》"
+                f"(chapter_id={ch.get('id')})"
+            )
+            if scenes:
+                scenes_txt = "；".join(
+                    f"{s.get('sort_order')}. {s.get('title') or '未命名'}(scene_id={s.get('id')})"
+                    for s in scenes
+                )
+                ch_line += f" 场次: {scenes_txt}"
+            lines.append(ch_line)
+
+    characters = ctx.get("characters", [])
+    if characters:
+        char_txt = "；".join(
+            f"{c.get('name') or '?'}({c.get('role') or '角色'}, character_id={c.get('id')})"
+            for c in characters[:60]
+        )
+        lines.append(f"## 角色\n{char_txt}")
+
+    themes = ctx.get("themes", [])
+    if themes:
+        lines.append("## 主题\n" + "；".join(t.get("name", "?") for t in themes[:30]))
+
+    relations = ctx.get("relations", [])
+    if relations:
+        rel_lines = []
+        for r in relations[:40]:
+            src = r.get("character_name") or r.get("character_id") or "?"
+            tgt = r.get("target_name") or r.get("target_id") or "?"
+            rel_lines.append(f"- {src} → {r.get('label') or r.get('rel_type')} → {tgt}")
+        lines.append("## 关系\n" + "\n".join(rel_lines))
+
+    edges = ctx.get("edges", [])
+    if edges:
+        edge_lines = []
+        for e in edges[:40]:
+            src = e.get("source_title") or e.get("source_id") or "?"
+            tgt = e.get("target_title") or e.get("target_id") or "?"
+            edge_lines.append(f"- {src} -[{e.get('edge_type')}]-> {tgt}")
+        lines.append("## 连线\n" + "\n".join(edge_lines))
+
+    truncated = ctx.get("truncated_note", "")
+    if truncated:
+        lines.append(truncated)
+
+    text = "\n".join(lines)
+    if len(text) > _FRAMEWORK_SECTION_MAX:
+        text = text[:_FRAMEWORK_SECTION_MAX] + "\n... [项目框架过长已截断，完整结构请调用 read_project_overview]"
+    return text
+
+
 async def _build_turn_sections(
     state: "LoopState",
     cowriter_persona: str,
@@ -414,10 +495,14 @@ async def _build_turn_sections(
         stats_parts.append(f"{len(edges_data)}条连线")
     sections.append(" | ".join(stats_parts))
 
-    # 5. Data access guidance
+    # 5. Project framework (actually injected — fixes H2)
+    framework = _render_framework_section(state)
+    if framework:
+        sections.append(framework)
     sections.append(
-        "项目框架数据已在上下文中提供（结构树、角色档案、主题、关系）。\n"
-        "场景正文需通过 read_scene 工具读取。如需更多细节，使用 read_character / read_chapter / list_relations 等工具。"
+        "场景正文需通过 read_scene 工具读取。如需更多细节，使用 read_character / "
+        "read_chapter / list_relations 等工具。项目框架以列表为准，未列出的 ID "
+        "必须通过 list_* 工具获取。"
     )
 
     # 6. Recent scenes hint
@@ -457,7 +542,7 @@ async def _build_turn_sections(
             logger.warning("Failed to load active skill prompts", exc_info=True)
 
     # 9. Dynamic sections from AttachmentInjector
-    for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
+    for section_name in ("id_registry", "session_progress", "plan_reminder", "error_context"):
         text = dynamic_sections.get(section_name)
         if text:
             sections.append(text)
@@ -592,7 +677,10 @@ async def autonomous_loop(
             except Exception as e:
                 logger.warning("Context load skipped/partial: %s", e)
                 await db.rollback()
-                state = state.replace(transition="context_load_failed", _context_loaded=True)
+                # Do NOT mark the context as loaded on failure — otherwise a
+                # later write (which sets _context_loaded=False) would skip the
+                # reload entirely and serve the previous stale context.
+                state = state.replace(transition="context_load_failed", _context_loaded=False)
 
         # ── Re-filter tools (skills may have changed) ──────────────
         filtered_tools = get_filtered_tools(tools, mode=state.mode)
@@ -698,6 +786,10 @@ async def autonomous_loop(
             state = state.replace(_last_scan_count=original_count)
         if len(compressed) != original_count:
             reactive = len(compressed) < original_count * 0.3
+            # Insert a user-visible boundary message so the model (and any
+            # later summary) knows history was truncated.
+            boundary = build_boundary_message(original_count, len(compressed), reactive=reactive)
+            compressed = [boundary] + list(compressed)
             state = state.replace(
                 messages=compressed,
                 transition="reactive_compressed" if reactive else "context_compressed",
@@ -705,6 +797,17 @@ async def autonomous_loop(
             logger.info("Compressed %d → %d messages", original_count, len(state.messages))
 
         # ── Step 2: Build messages for LLM ─────────────────────────
+        # Rebuild the merged ID registry from the persisted baseline + this
+        # request's tool-result window.  tool_results survive compression, so
+        # the registry stays available across turns without verbatim message
+        # preservation.
+        state = state.replace(
+            id_registry=build_id_registry(
+                state.tool_results,
+                persisted=state._id_registry_persisted,
+                version=state.id_registry_version,
+            )
+        )
         dynamic_sections = _attach.build_system_sections(state)
         sections = await _build_turn_sections(
             state, cowriter_persona, dynamic_sections,
@@ -808,16 +911,27 @@ async def autonomous_loop(
             # ── Reactive compression for 413 / context overflow ──
             error_lower = str(e).lower()
             if any(kw in error_lower for kw in ("context length", "too long", "413", "token limit", "prompt too long")):
-                from app.agent.context_compressor import reactive_compress
+                from app.agent.context_compressor import estimate_tokens, reactive_compress
+                tokens_before = estimate_tokens(state.messages, MODEL_CONTEXT_LIMIT)
                 compressed = reactive_compress(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
-                state = state.replace(
-                    messages=compressed,
-                    retry_count=state.retry_count + 1,
-                    transition="reactive_compressed",
+                tokens_after = estimate_tokens(compressed, MODEL_CONTEXT_LIMIT)
+                # Only retry if compression actually reduced the context;
+                # otherwise escalate to recovery instead of looping forever
+                # on a persistent overflow.
+                if tokens_after < tokens_before and len(compressed) < len(state.messages):
+                    boundary = build_boundary_message(len(state.messages), len(compressed), reactive=True)
+                    state = state.replace(
+                        messages=[boundary] + list(compressed),
+                        retry_count=state.retry_count + 1,
+                        transition="reactive_compressed",
+                    )
+                    await hook_registry.run("post_turn", state=state, llm_client=llm,
+                                             turn_start=turn_start)
+                    continue
+                logger.warning(
+                    "Reactive compression did not reduce context (%d msgs, ~%d tokens) — escalating to recovery",
+                    len(state.messages), tokens_before,
                 )
-                await hook_registry.run("post_turn", state=state, llm_client=llm,
-                                         turn_start=turn_start)
-                continue
             # --- Recover ---
             decision = await _try_recovery(state, llm, str(e))
             if decision.get("give_up"):
@@ -921,6 +1035,19 @@ async def autonomous_loop(
             if intercept.needs_confirmation:
                 streaming_executor.clear_queued()
                 plan = build_confirmation_plan(intercept.pending_tools, filtered_tools)
+                # Every tool_call on the assistant message needs a role=tool
+                # response or the next API call is rejected (orphan tool_call).
+                # The confirmed tools are NOT executed yet, so insert honest
+                # placeholders explaining they await confirmation.
+                for tool_name, args, tool_use_id in intercept.pending_tools:
+                    state = state.replace(
+                        messages=state.messages
+                        + [Message(
+                            role="tool",
+                            content=f"[操作等待确认]\n工具 {tool_name} 已生成计划，等待用户确认后执行。",
+                            tool_call_id=tool_use_id,
+                        )]
+                    )
                 state = state.replace(
                     pending_plan=plan,
                     plan_confirmed=False,
@@ -936,7 +1063,9 @@ async def autonomous_loop(
                     try:
                         result = await streaming_executor.execute_tool(tool_name, args, tool_use_id)
                     except Exception as tool_err:
-                        result = {"tool": tool_name, "success": False, "error": str(tool_err)}
+                        # Keep _tool_use_id so the tool_done event and id_registry
+                        # can correlate this failure to its tool_use block.
+                        result = {"tool": tool_name, "success": False, "error": str(tool_err), "_tool_use_id": tool_use_id}
                         logger.error("Tool %s failed: %s", tool_name, tool_err)
 
                     new_tool_results.append(result)
@@ -1084,6 +1213,7 @@ async def autonomous_loop(
         gen_msgs_final.extend(cleaned)
 
         try:
+            final_parts: list[str] = []
             async for token in llm.chat_stream_tokens(
                 messages=gen_msgs_final,
                 temperature=0.7,
@@ -1091,7 +1221,20 @@ async def autonomous_loop(
                 model=active_model,
                 tools=tool_schemas,
             ):
+                final_parts.append(token)
                 yield _event_token(token)
+            # Non-blocking output-safety advisory.  Never strips content (a
+            # story may legitimately reference dark themes) — just surfaces a
+            # warning so the operator/UI can review.
+            final_text = "".join(final_parts)
+            if final_text:
+                try:
+                    from app.agent.guard import check_output_safety
+                    if check_output_safety(final_text):
+                        logger.warning("Output safety flag triggered for trace=%s", state.trace_id)
+                        yield _event_step("⚠️ 输出检测到潜在不安全内容，已记录并交由人工审核")
+                except Exception:
+                    pass
         except Exception as e:
             logger.error("Final generate error: %s", e, exc_info=True)
             err_msg = str(e)
@@ -1103,6 +1246,13 @@ async def autonomous_loop(
 
     # ── Build final state dict ──────────────────────────────────────
     final_state = state.to_dict()
+    # Recompute the registry so plan-confirmed results (which bypass Step 2)
+    # are included before persisting.
+    final_state["id_registry"] = build_id_registry(
+        state.tool_results,
+        persisted=state._id_registry_persisted,
+        version=state.id_registry_version,
+    )
     yield _event_done(final_state)
 
 

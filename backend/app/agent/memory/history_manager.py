@@ -2,70 +2,53 @@
 
 from __future__ import annotations
 
-import json
-import math
 import re
 from typing import Any
 
 from loguru import logger
 from redis.asyncio import Redis
 
+from app.agent.context_compressor import estimate_tokens
+from app.config import settings
 from app.llm.client import LLMClient
 from app.llm.types import Message
 
-MAX_HISTORY_TOKENS_EST = 200_000
-MAX_HISTORY_TOKENS_HARD = 400_000
+# ── Thresholds, derived from the model context window ─────────────────
+# The agent loop compresses at ~80% of the window (context_compressor).
+# Summarize BEFORE that so long history is folded into a summary instead of
+# being truncated by the emergency path.  (MAX_HISTORY_TOKENS_EST used to be
+# 200K — larger than the window — so summarization never fired in time.)
+_MODEL_CONTEXT_WINDOW = settings.llm_context_window or 120_000
+MAX_HISTORY_TOKENS_EST = int(_MODEL_CONTEXT_WINDOW * 0.75)
+MAX_HISTORY_TOKENS_HARD = _MODEL_CONTEXT_WINDOW
 SUMMARIZE_AFTER = 30
 KEEP_RECENT = 15
 MIN_SUMMARIZE_INTERVAL = 10
-TOKEN_ESTIMATE_SAFETY = 1.5
 
 # Redis key prefix for persisted summary state
 _SUMMARY_PREFIX = "conv:summary:"
-
-# Tools whose output contains ID information the LLM needs for future calls.
-# Their results are preserved (compressed) during history summarization.
-_LIST_TOOLS_FOR_ID: frozenset = frozenset({
-    "list_chapters", "list_scenes", "list_characters",
-    "list_relations", "list_edges", "read_full_project",
-})
 
 # Pattern to extract tool name from tool message content like:
 # "[工具执行结果: list_chapters]\n..." or "[工具执行失败: update_chapter]\n..."
 _TOOL_MSG_PATTERN = re.compile(r'^\[工具执行(?:结果|失败): (\w+)\]')
 
 
-def _estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
-    chinese = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3000' <= c <= '\u303f')
-    ascii_len = len(text) - chinese
-    return int(math.ceil((chinese * 1.5 + ascii_len * 0.25) * TOKEN_ESTIMATE_SAFETY))
-
-
 def _sanitize_for_summary(messages: list[Message]) -> list[Message]:
     """Remove internal tool details, keep only essential info.
 
-    For list tools (list_chapters, list_scenes, etc.), the result data
-    (IDs + names) is preserved in compressed form so the LLM can still
-    reference entity IDs even after summarization.
+    Tool messages are collapsed to ``[Tool executed: name]`` placeholders —
+    entity IDs are covered by the per-turn ID registry, so verbatim tool-result
+    preservation is no longer needed here.
     """
     sanitized: list[Message] = []
     for m in messages:
         if m.role == "tool":
             tool_name = _extract_tool_name(m.content or "")
-            if tool_name in _LIST_TOOLS_FOR_ID:
-                sanitized.append(Message(
-                    role="tool",
-                    content=_compress_tool_content(m.content or ""),
-                    tool_call_id=m.tool_call_id,
-                ))
-            else:
-                sanitized.append(Message(
-                    role="tool",
-                    content=f"[Tool executed: {tool_name or 'unknown'}]",
-                    tool_call_id=m.tool_call_id,
-                ))
+            sanitized.append(Message(
+                role="tool",
+                content=f"[Tool executed: {tool_name or 'unknown'}]",
+                tool_call_id=m.tool_call_id,
+            ))
         elif m.tool_calls:
             sanitized.append(Message(
                 role=m.role,
@@ -86,43 +69,6 @@ def _extract_tool_name(content: str) -> str | None:
     """
     m = _TOOL_MSG_PATTERN.match(content)
     return m.group(1) if m else None
-
-
-def _compress_tool_content(content: str) -> str:
-    """Compress list tool result: keep only IDs + identity fields for summarization."""
-    # Content format: "[工具执行结果: tool_name]\n{json_data}"
-    header = content.split("\n", 1)[0] if "\n" in content else content
-    data_part = content.split("\n", 1)[1] if "\n" in content else ""
-    if not data_part:
-        return header
-    try:
-        parsed = json.loads(data_part)
-        compressed = _compress_entity_data(parsed)
-        return f"{header}\n{json.dumps(compressed, ensure_ascii=False)}"
-    except (json.JSONDecodeError, TypeError):
-        # Not valid JSON — truncate to first 300 chars
-        return f"{header}\n{data_part[:300]}"
-
-
-def _compress_entity_data(data: Any) -> Any:
-    """Recursively compress entity data to essential fields only."""
-    if isinstance(data, dict):
-        result = {}
-        for k, v in data.items():
-            if k in ("id", "title", "name", "sort_order", "rel_type", "label"):
-                result[k] = v
-            elif isinstance(v, str) and len(v) > 100:
-                result[k] = v[:50]
-            elif isinstance(v, (dict, list)):
-                compressed = _compress_entity_data(v)
-                if compressed:
-                    result[k] = compressed
-            else:
-                result[k] = v
-        return result
-    if isinstance(data, list):
-        return [_compress_entity_data(item) for item in data]
-    return data
 
 
 class HistoryManager:
@@ -171,7 +117,7 @@ class HistoryManager:
 
     async def maybe_summarize(self, messages: list[Message]) -> list[Message]:
         user_msgs = [m for m in messages if m.role == "user"]
-        total_tokens = _estimate_tokens(" ".join(m.content or "" for m in messages))
+        total_tokens = estimate_tokens(messages)
 
         if len(user_msgs) <= SUMMARIZE_AFTER and total_tokens <= MAX_HISTORY_TOKENS_EST:
             return messages
@@ -196,8 +142,7 @@ class HistoryManager:
 
         result = [summary_msg] + recent
 
-        post_summary_text = " ".join(m.content or "" for m in result)
-        if _estimate_tokens(post_summary_text) > MAX_HISTORY_TOKENS_HARD:
+        if estimate_tokens(result) > MAX_HISTORY_TOKENS_HARD:
             result = [summary_msg] + recent[-KEEP_RECENT:]
 
         # Persist the summarized history back to conv_memory

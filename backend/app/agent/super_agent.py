@@ -238,6 +238,8 @@ class SuperAgent:
             saved_plan_confirmed,
             saved_mode,
             saved_session,
+            saved_id_registry,
+            saved_id_registry_version,
         ) = await self.conv_memory.load_agent_state(conversation_id)
 
         # Mode switch: clear stale state
@@ -247,7 +249,9 @@ class SuperAgent:
             saved_plan_confirmed = False
             saved_session = {}
             await self.conv_memory.save_agent_state(
-                conversation_id, {}, [], False, mode, cowriter_session={}
+                conversation_id, {}, [], False, mode, cowriter_session={},
+                id_registry=saved_id_registry,
+                id_registry_version=saved_id_registry_version,
             )
 
         # 5. Build initial state dict
@@ -259,6 +263,9 @@ class SuperAgent:
             "project_context": project_context,
             "messages": messages,
             "tool_results": [],
+            "id_registry": saved_id_registry,
+            "_id_registry_persisted": saved_id_registry,
+            "id_registry_version": (saved_id_registry_version or 0) + 1,
             "active_skills": active_skills,
             "mode": mode,
             "intermediate_steps": [],
@@ -379,6 +386,8 @@ class SuperAgent:
             final_values.get("plan_confirmed", False),
             mode=final_values.get("mode", mode),
             cowriter_session=final_values.get("cowriter_session", {}),
+            id_registry=final_values.get("id_registry", {}) or {},
+            id_registry_version=final_values.get("id_registry_version", 0),
         )
 
         # 13. Fallback: if no tokens were streamed, extract from final state

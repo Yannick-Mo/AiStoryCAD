@@ -178,16 +178,20 @@ class DeleteChapterTool(BaseTool):
             scene_ids = await db.execute(
                 select(Scene.id).where(Scene.chapter_id == chapter_id)
             )
-            for (sid,) in scene_ids.all():
+            deleted_scene_ids = [str(sid) for (sid,) in scene_ids.all()]
+            for sid in deleted_scene_ids:
                 await db.execute(
-                    SceneContent.__table__.delete().where(SceneContent.scene_id == sid)
+                    SceneContent.__table__.delete().where(SceneContent.scene_id == uuid.UUID(sid))
                 )
             await db.execute(Scene.__table__.delete().where(Scene.chapter_id == chapter_id))
             await db.delete(chapter)
             await db.flush()
             await _recalc_chapter_counts(db, project_id)
             await db.commit()
-            return ToolResult(success=True, data={"deleted_chapter_id": kwargs["chapter_id"]})
+            return ToolResult(success=True, data={
+                "deleted_chapter_id": kwargs["chapter_id"],
+                "deleted_scene_ids": deleted_scene_ids,
+            })
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))
@@ -224,11 +228,15 @@ class DeleteActTool(BaseTool):
             chapter_ids = await db.execute(
                 select(Chapter.id).where(Chapter.act_id == act_id)
             )
+            deleted_chapter_ids: list[str] = []
+            deleted_scene_ids: list[str] = []
             for (chid,) in chapter_ids.all():
+                deleted_chapter_ids.append(str(chid))
                 scene_ids = await db.execute(
                     select(Scene.id).where(Scene.chapter_id == chid)
                 )
                 for (sid,) in scene_ids.all():
+                    deleted_scene_ids.append(str(sid))
                     await db.execute(
                         SceneContent.__table__.delete().where(SceneContent.scene_id == sid)
                     )
@@ -238,7 +246,11 @@ class DeleteActTool(BaseTool):
             await db.flush()
             await _recalc_chapter_counts(db, project_id)
             await db.commit()
-            return ToolResult(success=True, data={"deleted_act_id": kwargs["act_id"]})
+            return ToolResult(success=True, data={
+                "deleted_act_id": kwargs["act_id"],
+                "deleted_chapter_ids": deleted_chapter_ids,
+                "deleted_scene_ids": deleted_scene_ids,
+            })
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))
@@ -683,21 +695,12 @@ async def _write_new_project(
             chap_id_map[(act_idx, ch_idx)] = chapter_result["id"]
 
     scene_sort_total = 0
-    per_chapter_count: dict[tuple[int, int], int] = {}
     for sc in sorted(
         state.get("scenes", []),
         key=lambda s: (s.get("act_idx", 0), s.get("chapter_idx", 0)),
     ):
         cid = chap_id_map.get((sc.get("act_idx", 0), sc.get("chapter_idx", 0)))
         if not cid:
-            continue
-        key = (sc.get("act_idx", 0), sc.get("chapter_idx", 0))
-        per_chapter_count[key] = per_chapter_count.get(key, 0) + 1
-        if per_chapter_count[key] > 5:
-            logger.warning(
-                "Skipping scene '%s' — chapter %s already has 5 scenes (cap reached)",
-                sc.get("title", "untitled"), key
-            )
             continue
         scene_sort_total += 1
         await repo.create_entity(Scene, {

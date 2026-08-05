@@ -45,7 +45,7 @@ class CallWriterAgentTool(BaseTool):
                     "description": "写作指导：字数要求、风格方向、重点内容等",
                 },
             },
-            "required": ["scene_id"],
+            "required": ["scene_id", "action"],
         },
     )
 
@@ -54,7 +54,13 @@ class CallWriterAgentTool(BaseTool):
             scene_id_raw = self._require_param(kwargs, "scene_id")
             if scene_id_raw is None:
                 return self._missing_param("scene_id")
-            action = kwargs.get("action", "write")
+            action = kwargs.get("action")
+            if action not in ("write", "continue", "rewrite"):
+                return ToolResult(
+                    success=False,
+                    error="参数缺失: 工具需要 action 参数但未提供或取值非法（可选值：write/continue/rewrite）。不要省略该参数，否则将默认覆盖场景正文。",
+                    correction_hint="下一步：明确指定 action=write（新写覆盖）/continue（续写追加）/rewrite（重写）后再调用本工具",
+                )
             instructions = kwargs.get("instructions", "")
 
             sc_id = uuid.UUID(scene_id_raw)

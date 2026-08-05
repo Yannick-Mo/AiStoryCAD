@@ -5,7 +5,7 @@ model when the context window is near capacity.  The model can then
 trim its response to avoid hitting the hard ceiling mid-stream.
 
 Inspired by Claude Code's ``checkTokenBudget()`` in ``query/tokenBudget.ts``
-but adapted for DeepSeek's 128K context window without auto-continue.
+but adapted for DeepSeek's 400K context window without auto-continue.
 """
 
 from __future__ import annotations
@@ -32,13 +32,13 @@ CRITICAL_AT_RATIO = 0.95
 # Token buffer between our estimated budget and the model's true
 # context limit.  The model also needs room for the new response and
 # any tool results produced during the turn.
-SAFETY_BUFFER_TOKENS = 50_000
+SAFETY_BUFFER_TOKENS = 100_000
 
 # Maximum tokens we budget for the model's response.
 MAX_RESPONSE_TOKENS = 8_192
 
 # Maximum tokens we budget for tool results produced this turn.
-MAX_TOOL_RESULT_TOKENS = 100_000
+MAX_TOOL_RESULT_TOKENS = 200_000
 
 # How many bytes of a tool result constitute "large" (triggers summary).
 LARGE_TOOL_RESULT_BYTES = 2_000

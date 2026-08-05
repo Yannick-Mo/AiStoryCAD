@@ -37,11 +37,11 @@ tool_usage:
 
     ## Recommended Exploration Flow
     ```
-    read_project_overview()                → project skeleton + stats
-    read_character(id="char-uuid")         → character full profile
-    read_chapter(id="ch-uuid")             → chapter scenes summary
-    read_scene(id="scene-uuid")            → scene details + content
-    list_relations(character_id="uuid")    → relations for a character
+    read_project_overview()                     → project skeleton + stats
+    read_character(character_id="<uuid>")       → character full profile
+    read_chapter(chapter_id="<uuid>")           → chapter scenes summary
+    read_scene(scene_id="<uuid>")               → scene details + content
+    list_relations(character_id="<uuid>")       → relations for a character
     ```
 
     ## Tool Classification
@@ -75,8 +75,8 @@ tool_usage:
     ```
     → read_project_overview()          # Step 1: get overview + IDs
     → ... pick scene_id from result
-    → read_scene(scene_id="s-1")       # Step 2: read current content
-    → write_scene_content(scene_id="s-1", content="...")  # Step 3: write
+    → read_scene(scene_id="<uuid>")    # Step 2: read current content
+    → write_scene_content(scene_id="<uuid>", content="...")  # Step 3: write
     ```
 
     ## Re-read After Writes
@@ -84,11 +84,17 @@ tool_usage:
     **always re-read** the affected entity to confirm the change and get
     the current state for the next turn:
     ```
-    → update_character(id="c-1", name="新名字")
-    → read_character(id="c-1")   # ← confirm and get fresh data
+    → update_character(character_id="<uuid>", name="新名字")
+    → read_character(character_id="<uuid>")   # ← confirm and get fresh data
     ```
     Do NOT assume the previous read result is still accurate — write tools
     change data.
+
+    ## Entity ID Index
+    Every turn's system prompt includes a `# --- 已知实体 ID ---` section listing
+    recently seen entity IDs with human-readable labels, grouped by type.  When
+    the ID you need appears there, you may pass it directly to the target tool
+    without re-running a list_* tool.
 
     ## Error Handling
     - Missing param: the `(必须: ...)` hint lists ALL required params — pass every one

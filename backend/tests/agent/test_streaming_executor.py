@@ -245,3 +245,130 @@ class TestLoopToolMessageBookkeeping:
         assert len(done_ids) == len(set(done_ids)), (
             f"duplicate tool_done events emitted: {done_ids}"
         )
+
+
+class TestEmptyToolUseIdSynthesized:
+    """M9: models that omit tool_use ids must not collide in _pending/_completed."""
+
+    async def test_two_safe_tools_without_ids_get_unique_ids(self):
+        tool = FakeSafeTool()
+        executor = StreamingToolExecutor({"list_chapters": tool}, db=AsyncMock())
+        executor.add_tool(_tool_call_dict("list_chapters"))
+        executor.add_tool(_tool_call_dict("list_chapters"))
+
+        final = await executor.await_pending_safe()
+        ids = [r.get("_tool_use_id") for r in final]
+        assert len(ids) == 2, "both tools must produce results"
+        assert ids[0] != ids[1], (
+            "empty tool_use_id collided — second result overwrote the first"
+        )
+        assert all(i.startswith("call_list_chapters_") for i in ids)
+
+    async def test_empty_id_result_surfaces_via_get_completed_results(self):
+        tool = FakeSafeTool()
+        executor = StreamingToolExecutor({"list_chapters": tool}, db=AsyncMock())
+        executor.add_tool(_tool_call_dict("list_chapters"))
+        midstream = await _drain_completed(executor)
+        assert len(midstream) == 1
+        assert midstream[0]["_tool_use_id"].startswith("call_list_chapters_")
+
+
+class _SlowTool(BaseTool):
+    meta = ToolMeta(
+        name="slow_tool",
+        description="Fake slow tool",
+        parameters={"type": "object", "properties": {}},
+        concurrency=ConcurrencyMode.SAFE,
+        timeout=1,
+    )
+
+    async def run(self, db, **kwargs):
+        await asyncio.sleep(10)
+        return ToolResult(success=True, data="late")
+
+
+class TestTimeoutRollbackInsideLock:
+    """M10: a timed-out SAFE tool must roll back inside the executor lock so a
+    concurrent SAFE tool's transaction is not aborted."""
+
+    async def test_safe_tool_timeout_does_not_kill_other_tool(self):
+        rollback = AsyncMock()
+        db = AsyncMock()
+        db.rollback = rollback
+
+        executor = StreamingToolExecutor(
+            {"slow_tool": _SlowTool(), "list_chapters": FakeSafeTool()},
+            db=db,
+        )
+        executor.add_tool(_tool_call_dict("slow_tool"), tool_use_id="tc_slow")
+        executor.add_tool(_tool_call_dict("list_chapters"), tool_use_id="tc_fast")
+
+        final = await executor.await_pending_safe()
+        by_id = {r.get("_tool_use_id"): r for r in final}
+
+        assert "超时" in by_id["tc_slow"]["error"]
+        assert by_id["tc_fast"]["success"] is True, (
+            "rollback after a sibling tool timeout aborted the other SAFE tool"
+        )
+        rollback.assert_awaited()
+
+
+class _KeyErrorTool(BaseTool):
+    meta = ToolMeta(
+        name="keyerror_tool",
+        description="Fake tool that raises KeyError",
+        parameters={"type": "object", "properties": {}},
+        concurrency=ConcurrencyMode.SAFE,
+    )
+
+    async def run(self, db, **kwargs):
+        kwargs["missing_param"]
+        return ToolResult(success=True, data="never")
+
+
+class TestKeyErrorCarriesCorrectionHint:
+    """H6: KeyError from a tool (missing param) must surface correction_hint so
+    loop.py builds a 修正提示 message instead of failing silently."""
+
+    async def test_keyerror_result_has_correction_hint(self):
+        executor = StreamingToolExecutor({"keyerror_tool": _KeyErrorTool()}, db=AsyncMock())
+        executor.add_tool(_tool_call_dict("keyerror_tool"), tool_use_id="tc_k")
+
+        final = await executor.await_pending_safe()
+        r = [x for x in final if x.get("_tool_use_id") == "tc_k"][0]
+        assert r["success"] is False
+        assert r.get("correction_hint"), "KeyError result must carry correction_hint"
+        assert "missing_param" in r["error"]
+
+
+class TestAnalysisCategoryLimitApplies:
+    """H8: the dead ``hasattr`` branch meant analysis/structural tools were never
+    capped at their tighter category limits — output now truncates."""
+
+    def test_analysis_tool_long_output_is_truncated(self):
+        from types import SimpleNamespace
+
+        from app.agent.tools.streaming_executor import _summarise_tool_output
+
+        tool = SimpleNamespace(_effective_max_result_chars=8000)
+        long = "长" * 5000
+        out = _summarise_tool_output(
+            "project_health", ToolResult(success=True, data=long), tool
+        )
+        assert len(out["data"]) < 5000, (
+            "analysis tool output was not capped at the 2000-char category limit"
+        )
+
+    def test_non_categorised_tool_keeps_default_limit(self):
+        from types import SimpleNamespace
+
+        from app.agent.tools.streaming_executor import _summarise_tool_output
+
+        tool = SimpleNamespace(_effective_max_result_chars=8000)
+        data = "x" * 5000
+        out = _summarise_tool_output(
+            "read_scene", ToolResult(success=True, data=data), tool
+        )
+        assert out["data"] == data, (
+            "5000 chars fits under the 8000 default — must not be truncated"
+        )

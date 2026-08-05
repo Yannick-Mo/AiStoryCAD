@@ -15,13 +15,15 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
+from app.config import settings
+
 if TYPE_CHECKING:
     from app.llm.types import Message
 
 logger = logging.getLogger(__name__)
 
 # ── Default model context limits (tokens) ────────────────────────────
-DEFAULT_MODEL_LIMIT = 100_000  # compression triggers at ~80% of this (~80K tokens)
+DEFAULT_MODEL_LIMIT = settings.llm_context_window or 100_000  # compression triggers at ~80% of this
 
 # ── Threshold ratios ────────────────────────────────────────────────
 COMPRESS_THRESHOLD = 0.80
@@ -34,30 +36,6 @@ AGGRESSIVE_HEAD_COUNT = 3
 AGGRESSIVE_TAIL_COUNT = 8
 REACTIVE_HEAD_COUNT = 2
 REACTIVE_TAIL_COUNT = 5
-
-# Tools whose results carry entity IDs that downstream tools depend on.
-# These must survive all compression layers so the LLM can chain
-# list_* → extract ID → write_* across turns without re-querying.
-_ID_SOURCE_TOOLS: set[str] = {
-    "list_chapters", "list_scenes", "list_characters",
-    "list_relations", "list_edges", "read_full_project",
-    "read_chapter", "read_scene", "read_project_overview",
-    "read_character", "search_nodes",
-}
-
-
-def _is_id_source_msg(msg: "Message") -> bool:
-    """Return True if *msg* is a tool result from an ID-source tool."""
-    if msg.role != "tool":
-        return False
-    content = msg.content or ""
-    if not content.startswith("[工具执行结果:"):
-        return False
-    end = content.find("]")
-    if end > 0:
-        tool_name = content[7:end].strip()
-        return tool_name in _ID_SOURCE_TOOLS
-    return False
 
 
 def estimate_text_tokens(text: str) -> int:
@@ -146,17 +124,8 @@ def compress_history(
     tail = messages[-t:]
     middle = messages[h:-t]
 
-    # Extract ID-source tool messages from middle so they survive compression
-    preserved_id_msgs: list[M] = []
-    rest_middle: list[M] = []
-    for msg in middle:
-        if _is_id_source_msg(msg):
-            preserved_id_msgs.append(msg)
-        else:
-            rest_middle.append(msg)
-
     summary_parts: list[str] = []
-    for msg in rest_middle:
+    for msg in middle:
         role = _msg_role_label(getattr(msg, "role", "unknown"))
         content = (getattr(msg, "content", "") or "")[:200]
         if content:
@@ -174,7 +143,7 @@ def compress_history(
         ),
     )
 
-    result = list(head) + [summary] + preserved_id_msgs + list(tail)
+    result = list(head) + [summary] + list(tail)
 
     new_tokens = estimate_tokens(result, model_limit)
     logger.info(
@@ -216,13 +185,12 @@ def reactive_compress(
             head_count=h, tail_count=t,
         )
 
-    # Strategy: keep head + tail from non-tool messages, DROP all
-    # non-ID-source tool messages, but PRESERVE ID-source tool messages
-    # so the LLM can still look up entity IDs for downstream tool calls.
-    id_source_msgs: list[M] = [m for m in messages if _is_id_source_msg(m)]
+    # Strategy: keep head + tail from non-tool messages, DROP all tool
+    # messages.  Entity IDs are covered by the per-turn ID registry, so
+    # verbatim tool-message preservation is no longer needed.
     non_tool: list[M] = [
         m for m in messages
-        if m.role != "tool" or _is_id_source_msg(m)
+        if m.role != "tool"
     ]
     if len(non_tool) <= h + t:
         # Fall back to aggressive compress if stripping tools isn't enough
@@ -253,9 +221,7 @@ def reactive_compress(
         ),
     )
 
-    # Keep a reasonable number of ID-source messages at the end
-    preserved = id_source_msgs[-3:] if len(id_source_msgs) > 3 else id_source_msgs
-    result = list(head) + [summary] + list(tail) + preserved
+    result = list(head) + [summary] + list(tail)
 
     tokens_before = estimate_tokens(messages, model_limit)
     tokens_after = estimate_tokens(result, model_limit)
@@ -300,6 +266,22 @@ _SUMMARY_PROMPT = """你是一个对话摘要助手。请用简洁的中文摘�
 摘要："""
 
 
+_LIGHTER_SUMMARY_PROMPT = """你是一个对话摘要助手。请用中文详细摘要以下小说创作助手与用户的对话。
+
+要求：
+- 保留用户的关键需求、创作决策、情节设定
+- 保留 AI 给出的重要建议和已执行的操作
+- 标记任何待办事项或未完成的任务
+- 保留所有实体 ID 和名称（角色名、章节名等）
+- 尽量保留对话中的重要细节和上下文信息
+- 摘要控制在 500 字以内
+
+对话内容：
+{text}
+
+摘要："""
+
+
 async def async_compress_context(
     messages: list["Message"],
     llm_chat: Callable[..., Any],
@@ -307,18 +289,24 @@ async def async_compress_context(
     model_limit: int = DEFAULT_MODEL_LIMIT,
     head_count: int | None = None,
     tail_count: int | None = None,
+    threshold: float = COMPRESS_THRESHOLD,
+    summary_prompt: str | None = None,
 ) -> list["Message"]:
     """Async compression using LLM-generated summary for the middle section.
 
     Falls back to synchronous ``compress_history`` if the LLM call fails,
     so compression always succeeds (degraded but never skipped).
+
+    Args:
+        threshold: token ratio below which compression is skipped (0.0 = always compress).
+        summary_prompt: custom prompt template with {text} placeholder. None uses default.
     """
     from app.llm.types import Message as M
 
     tokens = estimate_tokens(messages, model_limit)
     ratio = tokens / model_limit if model_limit else 0
 
-    if ratio <= COMPRESS_THRESHOLD:
+    if ratio <= threshold:
         return list(messages)
 
     h = head_count if head_count is not None else DEFAULT_HEAD_COUNT
@@ -334,25 +322,20 @@ async def async_compress_context(
     tail = messages[-t:]
     middle = messages[h:-t]
 
-    preserved_id_msgs: list[M] = []
-    rest_middle: list[M] = []
-    for msg in middle:
-        if _is_id_source_msg(msg):
-            preserved_id_msgs.append(msg)
-        else:
-            rest_middle.append(msg)
-
-    if not rest_middle:
-        return list(head) + preserved_id_msgs + list(tail)
+    if not middle:
+        return list(messages)
 
     summary_text = ""
     try:
-        formatted = _format_for_summary(rest_middle)
-        prompt = _SUMMARY_PROMPT.format(text=formatted)
+        formatted = _format_for_summary(middle)
+        prompt = (summary_prompt or _SUMMARY_PROMPT).format(text=formatted)
         result = await llm_chat([M(role="user", content=prompt)], max_tokens=1024, temperature=0.3)
         summary_text = (result.content or "").strip()
     except Exception:
-        logger.warning("LLM summary failed — falling back to truncation-based compression")
+        logger.warning(
+            "LLM summary failed — falling back to truncation-based compression",
+            exc_info=True,
+        )
         return compress_history(messages, model_limit=model_limit, head_count=head_count, tail_count=tail_count)
 
     summary = M(
@@ -365,7 +348,7 @@ async def async_compress_context(
         ),
     )
 
-    result = list(head) + [summary] + preserved_id_msgs + list(tail)
+    result = list(head) + [summary] + list(tail)
     new_tokens = estimate_tokens(result, model_limit)
     logger.info(
         "LLM context compressed: %d msgs → %d msgs, ~%d → ~%d tokens",

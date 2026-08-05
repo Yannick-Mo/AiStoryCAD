@@ -97,6 +97,7 @@ def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
     lines.append(
         "# (必须: <param>) = 必需参数。← tool_name = 先调此工具获取值再传入。\n"
         "# [需确认] = 需用户批准  [破坏性] = 不可逆\n"
+        "# # --- 已知实体 ID --- 段会列出近期出现的实体 ID，可直接引用。\n"
     )
     for t_name, t_inst in sorted(tools.items()):
         d = t_inst.to_openai_tool()

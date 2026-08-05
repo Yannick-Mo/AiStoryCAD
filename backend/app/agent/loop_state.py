@@ -42,6 +42,15 @@ class LoopState:
     # ── Tool execution ──────────────────────────────────────────────
     tool_results: list[dict] = field(default_factory=list)
 
+    # ── Entity ID registry ──────────────────────────────────────────
+    # ``id_registry`` holds the *merged* registry (persisted baseline + this
+    # request's tool-result window), rebuilt each turn.  ``_id_registry_persisted``
+    # is the immutable baseline loaded from Redis at request start.  Version is
+    # bumped once per request; ``seen`` counters use it to expire stale entries.
+    id_registry: dict = field(default_factory=dict)
+    id_registry_version: int = 1
+    _id_registry_persisted: dict = field(default_factory=dict)
+
     # ── Cowriter session ────────────────────────────────────────────
     cowriter_session: dict = field(default_factory=dict)
     current_options: list[dict] = field(default_factory=list)
@@ -119,6 +128,10 @@ class LoopState:
             active_skills=list(initial_state.get("active_skills", []) or []),
             # Tool execution
             tool_results=list(initial_state.get("tool_results", []) or []),
+            # Entity ID registry
+            id_registry=dict(initial_state.get("id_registry", {}) or {}),
+            id_registry_version=int(initial_state.get("id_registry_version", 1) or 1),
+            _id_registry_persisted=dict(initial_state.get("_id_registry_persisted", {}) or {}),
             # Cowriter
             cowriter_session=dict(initial_state.get("cowriter_session", {}) or {}),
             current_options=list(initial_state.get("current_options", []) or []),
@@ -168,6 +181,8 @@ class LoopState:
             "messages": self.messages,
             "mode": self.mode,
             "tool_results": self.tool_results,
+            "id_registry": self.id_registry,
+            "id_registry_version": self.id_registry_version,
             "active_skills": self.active_skills,
             "intermediate_steps": [],
             "retry_count": self.retry_count,

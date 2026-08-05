@@ -99,15 +99,6 @@ class ConversationMemory:
                 if conversation_id in self._meta:
                     self._meta[conversation_id]["title"] = title
 
-    async def get_or_create_conversation(self, project_id: str, user_id: str, conversation_id: str | None = None, title: str = "") -> tuple[str, bool]:
-        """Return (conversation_id, is_new). Atomic check-and-create."""
-        if conversation_id:
-            existing = await self.get_conversation(project_id, user_id, conversation_id)
-            if existing:
-                return conversation_id, False
-        cid = await self.create_conversation(project_id, user_id, title)
-        return cid, True
-
     async def get_history(self, conversation_id: str) -> list[Message]:
         if self._redis:
             raw = await self._redis.lrange(
@@ -205,9 +196,17 @@ class ConversationMemory:
             return meta
         return None
 
-    async def save_agent_state(self, conversation_id: str, pending_plan: dict, current_options: list[dict], plan_confirmed: bool = False, mode: str = "chat", cowriter_session: dict | None = None) -> None:
+    async def save_agent_state(self, conversation_id: str, pending_plan: dict, current_options: list[dict], plan_confirmed: bool = False, mode: str = "chat", cowriter_session: dict | None = None, id_registry: dict | None = None, id_registry_version: int = 0) -> None:
         try:
-            data = json.dumps({"pending_plan": pending_plan, "current_options": current_options, "plan_confirmed": plan_confirmed, "mode": mode, "cowriter_session": cowriter_session or {}}, ensure_ascii=False)
+            data = json.dumps({
+                "pending_plan": pending_plan,
+                "current_options": current_options,
+                "plan_confirmed": plan_confirmed,
+                "mode": mode,
+                "cowriter_session": cowriter_session or {},
+                "id_registry": id_registry or {},
+                "id_registry_version": int(id_registry_version or 0),
+            }, ensure_ascii=False)
         except (TypeError, ValueError) as e:
             logger.error("Failed to serialize agent state: {}", e)
             return
@@ -230,18 +229,18 @@ class ConversationMemory:
         if raw:
             try:
                 state = json.loads(raw)
-                return state.get("pending_plan", {}), state.get("current_options", []), state.get("plan_confirmed", False), state.get("mode", "chat"), state.get("cowriter_session", {})
+                return (
+                    state.get("pending_plan", {}),
+                    state.get("current_options", []),
+                    state.get("plan_confirmed", False),
+                    state.get("mode", "chat"),
+                    state.get("cowriter_session", {}),
+                    state.get("id_registry", {}) or {},
+                    int(state.get("id_registry_version", 0) or 0),
+                )
             except (json.JSONDecodeError, TypeError):
-                return {}, [], False, "chat", {}
-        return {}, [], False, "chat", {}
-
-    async def delete_last_message(self, conversation_id: str) -> None:
-        if self._redis:
-            await self._redis.rpop(f"{_CONV_MSGS_PREFIX}{conversation_id}")
-        else:
-            async with self._lock:
-                if conversation_id in self._store and self._store[conversation_id]:
-                    self._store[conversation_id].pop()
+                return {}, [], False, "chat", {}, {}, 0
+        return {}, [], False, "chat", {}, {}, 0
 
     async def replace_history(self, conversation_id: str, messages: list[Message]) -> None:
         """Atomically replace all stored messages for a conversation."""

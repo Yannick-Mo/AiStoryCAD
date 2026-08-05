@@ -168,16 +168,43 @@ async def compress_context(
     before_count = len(history)
     before_tokens = estimate_tokens(history)
 
-    compressed = await async_compress_context(history, llm_client.chat)
-    await agent.conv_memory.replace_history(req.conversation_id, compressed)
-    # Also save a boundary system message so the next turn shows compression happened
-    from app.agent.context_compressor import build_boundary_message
-    boundary = build_boundary_message(before_count, len(compressed))
-    await agent.conv_memory.save_message(req.conversation_id, boundary)
+    from app.agent.context_compressor import (
+        async_compress_context,
+        build_boundary_message,
+        _LIGHTER_SUMMARY_PROMPT,
+    )
+
+    # Percentage-based head/tail: 20% head + 30% tail retained, middle 50% summarized
+    total = len(history)
+    head_count = max(2, int(total * 0.20))
+    tail_count = max(3, int(total * 0.30))
+
+    # Button always compresses (threshold=0.0), lighter parameters
+    compressed = await async_compress_context(
+        history,
+        llm_client.chat,
+        threshold=0.0,
+        head_count=head_count,
+        tail_count=tail_count,
+        summary_prompt=_LIGHTER_SUMMARY_PROMPT,
+    )
 
     after_count = len(compressed)
     after_tokens = estimate_tokens(compressed)
     saved_pct = round((1 - after_tokens / max(before_tokens, 1)) * 100)
+
+    # Only persist if compression actually reduced anything
+    if after_count >= before_count:
+        return {
+            "compressed": False,
+            "before": {"messages": before_count, "tokens": before_tokens},
+            "after": {"messages": after_count, "tokens": after_tokens},
+            "saved_percent": 0,
+        }
+
+    await agent.conv_memory.replace_history(req.conversation_id, compressed)
+    boundary = build_boundary_message(before_count, after_count)
+    await agent.conv_memory.save_message(req.conversation_id, boundary)
 
     return {
         "compressed": True,

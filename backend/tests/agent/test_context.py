@@ -69,3 +69,87 @@ class TestIsMeaningfulQuery:
     def test_greeting_with_punctuation(self):
         assert not _is_meaningful_query("你好！")
         assert not _is_meaningful_query("hello?")
+
+
+class TestDeletePrefix:
+    def test_deletes_matching_keys_only(self):
+        cache = _LRUCache(ttl=30, maxsize=10)
+        cache.set("ctx_cache:p1:full:", {"a": 1})
+        cache.set("ctx_cache:p1:summary:minimal", {"b": 2})
+        cache.set("ctx_cache:p2:full:", {"c": 3})
+        cache.delete_prefix("ctx_cache:p1:")
+        assert cache.get("ctx_cache:p1:full:") is None
+        assert cache.get("ctx_cache:p1:summary:minimal") is None
+        assert cache.get("ctx_cache:p2:full:") == {"c": 3}
+
+    def test_no_matches_is_noop(self):
+        cache = _LRUCache(ttl=30, maxsize=10)
+        cache.set("ctx_cache:p9:full:", {"a": 1})
+        cache.delete_prefix("ctx_cache:nope:")
+        assert cache.get("ctx_cache:p9:full:") == {"a": 1}
+
+
+class TestInvalidateProject:
+    """H3: after a write, the shared 300s context cache must be dropped so read
+    tools in the same turn serve fresh data."""
+
+    def test_invalidate_clears_this_project_only(self):
+        from app.agent.context import ContextBuilder, _CONTEXT_CACHE
+        import uuid
+
+        pid = uuid.uuid4()
+        other = uuid.uuid4()
+
+        _CONTEXT_CACHE.set(f"ctx_cache:{pid}:full:", {"x": 1})
+        _CONTEXT_CACHE.set(f"ctx_cache:{pid}:summary:framework", {"y": 2})
+        _CONTEXT_CACHE.set(f"ctx_cache:{other}:full:", {"z": 3})
+
+        ContextBuilder.invalidate_project(pid)
+
+        assert _CONTEXT_CACHE.get(f"ctx_cache:{pid}:full:") is None
+        assert _CONTEXT_CACHE.get(f"ctx_cache:{pid}:summary:framework") is None
+        assert _CONTEXT_CACHE.get(f"ctx_cache:{other}:full:") == {"z": 3}
+
+
+class TestBuildSummaryCacheHitRefreshesRag:
+    """M16: cache hits were returning the framework WITHOUT rag_context (RAG was
+    computed after _cache_set). Now RAG is refreshed fresh on every call."""
+
+    async def test_cache_hit_includes_fresh_rag_context(self):
+        from unittest.mock import AsyncMock
+
+        from app.agent.context import ContextBuilder
+        import uuid
+
+        builder = ContextBuilder(AsyncMock())
+        pid = uuid.uuid4()
+        cached = {"project": {"genre": "fantasy"}, "acts": [], "characters": []}
+
+        builder._cache_get = AsyncMock(return_value=cached)
+        builder._get_rag_context_if_meaningful = AsyncMock(return_value="KNOWLEDGE")
+
+        out = await builder.build_summary(
+            pid, query_hint="请帮我分析这个角色的性格发展", depth="minimal"
+        )
+        assert out["rag_context"] == "KNOWLEDGE"
+        builder._get_rag_context_if_meaningful.assert_awaited_once()
+
+
+class TestTrimContextPreservesTier0InsertionOrder:
+    """M14: sorting by (tier, label) reversed the deliberate precedence within a
+    tier — e.g. cowriter_persona sorted before the base persona."""
+
+    def test_base_persona_precedes_cowriter_persona(self):
+        from app.agent.response_builder import _ContextSection, trim_context
+
+        sections = [
+            _ContextSection(tier=0, label="persona", text="BASE_PERSONA"),
+            _ContextSection(tier=0, label="mode", text="MODE_DECL"),
+            _ContextSection(tier=0, label="project_title", text="TITLE"),
+            _ContextSection(tier=0, label="cowriter_persona", text="COWRITER_PERSONA"),
+        ]
+        out = trim_context(sections)
+        assert out.index("BASE_PERSONA") < out.index("COWRITER_PERSONA"), (
+            "alphabetical tiebreak reversed tier-0 precedence"
+        )
+        assert out.index("MODE_DECL") < out.index("COWRITER_PERSONA")

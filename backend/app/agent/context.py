@@ -4,7 +4,7 @@ import json
 import logging
 import time
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from typing import Any
 
 from redis.asyncio import Redis
@@ -65,6 +65,12 @@ class _LRUCache:
         self._store.move_to_end(key)
         while len(self._store) > self._maxsize:
             self._store.popitem(last=False)
+
+    def delete_prefix(self, prefix: str) -> None:
+        """Drop every cached entry whose key starts with *prefix*."""
+        stale = [k for k in self._store if k.startswith(prefix)]
+        for k in stale:
+            del self._store[k]
 
 
 _CONTEXT_CACHE = _LRUCache(ttl=_CONTEXT_CACHE_TTL, maxsize=_CONTEXT_CACHE_MAX_SIZE)
@@ -135,28 +141,69 @@ class ContextBuilder:
             _CONTEXT_CACHE.set(key, data)
 
     # ------------------------------------------------------------------
+    # Invalidation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def invalidate_project(project_id: uuid.UUID) -> None:
+        """Drop all cached context for a project (synchronous, in-memory).
+
+        Must be called after a successful write so read tools (e.g.
+        ``read_full_project``) don't serve a stale skeleton from the shared
+        300s cache within the same turn.
+        """
+        prefix = _REDIS_CACHE_PREFIX + str(project_id) + ":"
+        _CONTEXT_CACHE.delete_prefix(prefix)
+
+    async def _invalidate_redis_project(self, project_id: uuid.UUID) -> None:
+        """Best-effort Redis cache invalidation for a project."""
+        if self._redis is None:
+            return
+        try:
+            pattern = _REDIS_CACHE_PREFIX + str(project_id) + ":*"
+            async for key in self._redis.scan_iter(match=pattern, count=100):
+                await self._redis.delete(key)
+        except Exception as exc:
+            logger.warning("Redis cache invalidation failed for project=%s: %s", project_id, exc)
+
+    async def ainvalidate_project(self, project_id: uuid.UUID) -> None:
+        """Invalidate both Redis and in-memory caches for a project."""
+        self.invalidate_project(project_id)
+        await self._invalidate_redis_project(project_id)
+
+    # ------------------------------------------------------------------
     # Shared project tree loader (used by both build_full and build_summary)
     # ------------------------------------------------------------------
 
-    async def _load_project_tree(self, project_id: uuid.UUID) -> dict:
+    async def _load_project_tree(self, project_id: uuid.UUID, limit_chapters: int = 200, limit_scenes: int = 1000) -> dict:
         acts_result = await self.db.execute(
             select(Act).where(Act.project_id == project_id).order_by(Act.sort_order)
         )
         acts = acts_result.scalars().all()
 
+        chapter_total_result = await self.db.execute(
+            select(func.count()).select_from(Chapter).where(Chapter.project_id == project_id)
+        )
+        chapter_total = chapter_total_result.scalar_one() or 0
         chapters_result = await self.db.execute(
-            select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order).limit(200)
+            select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order).limit(limit_chapters)
         )
         all_chapters = chapters_result.scalars().all()
+        chapter_truncated = chapter_total > len(all_chapters)
         chapters_by_act: dict[uuid.UUID, list] = {}
         for ch in all_chapters:
             chapters_by_act.setdefault(ch.act_id, []).append(ch)
 
         chapter_ids = [ch.id for ch in all_chapters]
+        scene_total_result = await self.db.execute(
+            select(func.count()).select_from(Scene).where(Scene.chapter_id.in_(chapter_ids))
+        )
+        scene_total = scene_total_result.scalar_one() or 0
         scenes_result = await self.db.execute(
-            select(Scene).where(Scene.chapter_id.in_(chapter_ids)).order_by(Scene.sort_order).limit(1000)
+            select(Scene).where(Scene.chapter_id.in_(chapter_ids)).order_by(Scene.sort_order).limit(limit_scenes)
         )
         all_scenes = scenes_result.scalars().all()
+        scene_truncated = scene_total > len(all_scenes)
         scenes_by_chapter: dict[uuid.UUID, list] = {}
         for sc in all_scenes:
             scenes_by_chapter.setdefault(sc.chapter_id, []).append(sc)
@@ -168,7 +215,23 @@ class ContextBuilder:
             "all_scenes": all_scenes,
             "scenes_by_chapter": scenes_by_chapter,
             "chapter_ids": chapter_ids,
+            "chapter_total": chapter_total,
+            "scene_total": scene_total,
+            "chapter_truncated": chapter_truncated,
+            "scene_truncated": scene_truncated,
         }
+
+    @staticmethod
+    def _truncation_note(tree: dict) -> str:
+        """Honest marker when the skeleton caps silently cut off chapters/scenes."""
+        if not (tree.get("chapter_truncated") or tree.get("scene_truncated")):
+            return ""
+        return (
+            f"（项目规模较大：共 {tree.get('chapter_total', '?')} 章 / "
+            f"{tree.get('scene_total', '?')} 场，本次仅列出前 "
+            f"{len(tree.get('all_chapters', []))} 章 / {len(tree.get('all_scenes', []))} 场，"
+            f"其余未在列表中显示）"
+        )
 
     # ------------------------------------------------------------------
     # Build full
@@ -178,7 +241,13 @@ class ContextBuilder:
         ck = self._cache_key(project_id, "full", "")
         cached = await self._cache_get(ck)
         if cached is not None:
-            return cached
+            # RAG is query-dependent — never serve it stale from the framework
+            # cache; refresh it fresh so cache hits still get relevant context.
+            result = dict(cached)
+            genre = (result.get("project") or {}).get("genre") or ""
+            rag_context = await self._get_rag_context_if_meaningful(query_hint, genre)
+            result["rag_context"] = rag_context or ""
+            return result
 
         proj = await self._get_project(project_id)
         if not proj:
@@ -196,12 +265,25 @@ class ContextBuilder:
         scene_ids = [sc.id for sc in all_scenes]
         content_by_scene: dict[uuid.UUID, str] = {}
         if scene_ids:
+            # Fetch only a 500-char preview per scene via SQL — pulling every
+            # full SceneContent row just to trim to [:500] was wasteful for
+            # large projects.
             sc_content_result = await self.db.execute(
-                select(SceneContent).where(SceneContent.scene_id.in_(scene_ids))
+                select(SceneContent.scene_id, func.substr(SceneContent.content, 1, 500))
+                .where(SceneContent.scene_id.in_(scene_ids))
             )
-            for sc in sc_content_result.scalars().all():
-                if sc.content:
-                    content_by_scene[sc.scene_id] = sc.content
+            for sc_id, snippet in sc_content_result.all():
+                if snippet:
+                    content_by_scene[sc_id] = snippet
+
+        themes_by_chapter: dict[uuid.UUID, list[str]] = defaultdict(list)
+        tc_result = await self.db.execute(
+            select(ThemeChapter.chapter_id, Theme.name)
+            .join(Theme, Theme.id == ThemeChapter.theme_id)
+            .where(Theme.project_id == project_id)
+        )
+        for ch_id, theme_name in tc_result.all():
+            themes_by_chapter[ch_id].append(theme_name)
 
         acts_data = []
         for act in acts:
@@ -210,10 +292,11 @@ class ContextBuilder:
                 scenes_data = []
                 for sc in scenes_by_chapter.get(ch.id, []):
                     sc_d = row_to_dict(sc)
-                    sc_d["content_preview"] = (content_by_scene.get(sc.id) or "")[:500]
+                    sc_d["content_preview"] = content_by_scene.get(sc.id) or ""
                     scenes_data.append(sc_d)
                 ch_d = row_to_dict(ch)
                 ch_d["scenes"] = scenes_data
+                ch_d["themes"] = themes_by_chapter.get(ch.id, [])
                 chapters_data.append(ch_d)
             act_d = row_to_dict(act)
             act_d["chapters"] = chapters_data
@@ -228,6 +311,7 @@ class ContextBuilder:
             select(CharacterRelation).where(CharacterRelation.project_id == project_id)
         )
         relations_data = [row_to_dict(r) for r in rels_result.scalars().all()]
+        relations_data = await self._decorate_relations(relations_data, project_id)
 
         themes_result = await self.db.execute(
             select(Theme).where(Theme.project_id == project_id).order_by(Theme.sort_order)
@@ -238,6 +322,7 @@ class ContextBuilder:
             select(ChapterEdge).where(ChapterEdge.project_id == project_id)
         )
         edges_data = [row_to_dict(e) for e in edges_result.scalars().all()]
+        edges_data = await self._decorate_edges(edges_data, project_id)
 
         available_skills = await self._get_available_skills()
 
@@ -254,6 +339,9 @@ class ContextBuilder:
             "available_skills": available_skills,
             "rag_context": rag_context or "",
         }
+        note = self._truncation_note(tree)
+        if note:
+            result["truncated_note"] = note
 
         await self._cache_set(ck, result)
         return result
@@ -273,7 +361,11 @@ class ContextBuilder:
         if not skip_cache:
             cached = await self._cache_get(ck)
             if cached is not None:
-                return cached
+                result = dict(cached)
+                genre = (result.get("project") or {}).get("genre") or ""
+                rag_context = await self._get_rag_context_if_meaningful(query_hint, genre)
+                result["rag_context"] = rag_context or ""
+                return result
 
         proj = await self._get_project(project_id)
         if not proj:
@@ -373,11 +465,13 @@ class ContextBuilder:
             select(CharacterRelation).where(CharacterRelation.project_id == project_id)
         )
         relations_data = [row_to_dict(r) for r in rels_result.scalars().all()]
+        relations_data = await self._decorate_relations(relations_data, project_id)
 
         edges_result = await self.db.execute(
             select(ChapterEdge).where(ChapterEdge.project_id == project_id)
         )
         edges_data = [row_to_dict(e) for e in edges_result.scalars().all()]
+        edges_data = await self._decorate_edges(edges_data, project_id)
 
         scene_count = sum(len(scenes_by_chapter.get(cid, [])) for cid in chapter_ids)
 
@@ -404,11 +498,16 @@ class ContextBuilder:
             "scene_count": scene_count,
         }
 
-        await self._cache_set(ck, result)
+        note = self._truncation_note(tree)
+        if note:
+            result["truncated_note"] = note
 
-        # RAG is query-dependent — always fetch fresh separately
+        # RAG is query-dependent — compute fresh, but keep the cached dict
+        # self-contained for other consumers.
         rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
         result["rag_context"] = rag_context or ""
+
+        await self._cache_set(ck, result)
 
         return result
 
@@ -725,6 +824,60 @@ class ContextBuilder:
         except Exception:
             logger.warning("Failed to load skills", exc_info=True)
             return []
+
+    async def _decorate_relations(self, relations_data: list[dict], project_id: uuid.UUID) -> list[dict]:
+        """Resolve character ids to names so relation rows are usable by the LLM."""
+        if not relations_data:
+            return relations_data
+        char_ids: set[str] = set()
+        for r in relations_data:
+            if r.get("character_id"):
+                char_ids.add(str(r["character_id"]))
+            if r.get("target_id"):
+                char_ids.add(str(r["target_id"]))
+        parsed = []
+        for c in char_ids:
+            try:
+                parsed.append(uuid.UUID(c))
+            except (ValueError, TypeError):
+                continue
+        names: dict[str, str] = {}
+        if parsed:
+            result = await self.db.execute(
+                select(Character.id, Character.name).where(Character.id.in_(parsed))
+            )
+            names = {str(k): v for k, v in result.all()}
+        for r in relations_data:
+            r["character_name"] = names.get(str(r.get("character_id")), "") or str(r.get("character_id", ""))
+            r["target_name"] = names.get(str(r.get("target_id")), "") or str(r.get("target_id", ""))
+        return relations_data
+
+    async def _decorate_edges(self, edges_data: list[dict], project_id: uuid.UUID) -> list[dict]:
+        """Resolve chapter ids to titles so edge rows are usable by the LLM."""
+        if not edges_data:
+            return edges_data
+        ch_ids: set[str] = set()
+        for e in edges_data:
+            if e.get("source_id"):
+                ch_ids.add(str(e["source_id"]))
+            if e.get("target_id"):
+                ch_ids.add(str(e["target_id"]))
+        parsed = []
+        for c in ch_ids:
+            try:
+                parsed.append(uuid.UUID(c))
+            except (ValueError, TypeError):
+                continue
+        titles: dict[str, str] = {}
+        if parsed:
+            result = await self.db.execute(
+                select(Chapter.id, Chapter.title).where(Chapter.id.in_(parsed))
+            )
+            titles = {str(k): v for k, v in result.all()}
+        for e in edges_data:
+            e["source_title"] = titles.get(str(e.get("source_id")), "") or str(e.get("source_id", ""))
+            e["target_title"] = titles.get(str(e.get("target_id")), "") or str(e.get("target_id", ""))
+        return edges_data
 
     async def _get_rag_context_if_meaningful(self, query_hint: str, genre: str) -> str:
         if not _is_meaningful_query(query_hint):

@@ -224,8 +224,10 @@ class RecoveryExecutor:
 
         elif decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
             from app.agent.context_compressor import compress_history  # noqa: F811
+            from app.config import settings
             compressed = compress_history(
-                state.get("messages", [])
+                state.get("messages", []),
+                model_limit=settings.llm_context_window or 120_000,
             )
             updates["messages"] = compressed
             recovery_state["context_compressed"] = True
