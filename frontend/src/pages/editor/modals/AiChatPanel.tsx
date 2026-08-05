@@ -568,8 +568,9 @@ export default function AiChatPanel({
           </button>
           {chat.conversationId && (
             <button onClick={() => setCompressConfirm(true)}
-              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-colors shrink-0"
-              title="压缩上下文，节省 token">压缩</button>
+              disabled={chat.loading}
+              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-colors shrink-0 disabled:opacity-30 disabled:cursor-default"
+              title={chat.loading ? 'AI 处理中，暂不可压缩' : '压缩上下文，节省 token'}>压缩</button>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">

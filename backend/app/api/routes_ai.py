@@ -65,6 +65,12 @@ async def ai_inline(
     if not scene:
         raise HTTPException(status_code=404, detail="Scene not found")
 
+    proj_owned = await db.execute(
+        select(Project.id).where(Project.id == project_id, Project.owner_id == current_user["id"])
+    )
+    if not proj_owned.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Scene not found")
+
     system_prompt = _INLINE_SYSTEM_PROMPTS[payload.action]
     user_prompt = (
         f"场景标题：{scene.title}\n\n"
@@ -116,6 +122,12 @@ async def ai_continue(
     result = await db.execute(select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id))
     scene = result.scalar_one_or_none()
     if not scene:
+        raise HTTPException(status_code=404, detail="Scene not found")
+
+    proj_owned = await db.execute(
+        select(Project.id).where(Project.id == project_id, Project.owner_id == current_user["id"])
+    )
+    if not proj_owned.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Scene not found")
 
     system_prompt = (
@@ -276,14 +288,9 @@ async def _write_project_to_db(db: AsyncSession, state: dict, owner_id: uuid.UUI
                 chap_id_map[(act_idx, ch_idx)] = chapter_result["id"]
 
         scene_sort_total = 0
-        per_chapter_count: dict[tuple[int, int], int] = {}
         for sc in sorted(state.get("scenes", []), key=lambda s: (s.get("act_idx", 0), s.get("chapter_idx", 0))):
-            cid = chap_id_map.get((sc["act_idx"], sc["chapter_idx"]))
+            cid = chap_id_map.get((sc.get("act_idx", 0), sc.get("chapter_idx", 0)))
             if not cid:
-                continue
-            key = (sc["act_idx"], sc["chapter_idx"])
-            per_chapter_count[key] = per_chapter_count.get(key, 0) + 1
-            if per_chapter_count[key] > 5:
                 continue
             scene_sort_total += 1
             await repo.create_entity(
