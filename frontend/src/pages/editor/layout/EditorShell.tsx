@@ -599,7 +599,17 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onClose={() => setConsistencyOpen(false)}
             onNavigate={(location) => {
               setConsistencyOpen(false)
-              if (location.chapter_id) {
+              if (location.scene_id) {
+                const chapter = data.chapters?.find(c => c.scenes.some(s => s.id === location.scene_id))
+                const scene = chapter?.scenes.find(s => s.id === location.scene_id)
+                if (scene) {
+                  if (chapter) {
+                    setSelectedChapter(chapter)
+                    views.switchView('narrative-plot')
+                  }
+                  setEditingScene(scene)
+                }
+              } else if (location.chapter_id) {
                 const idx = data.chapters?.findIndex(c => c.id === location.chapter_id)
                 if (idx >= 0 && data.chapters) {
                   setSelectedChapter(data.chapters[idx])
