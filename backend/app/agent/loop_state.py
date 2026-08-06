@@ -84,8 +84,12 @@ class LoopState:
     # Tracks consecutive write-only turns to catch infinite write loops
     write_only_turns: int = 0
 
-    # ── Context compression scan tracker ────────────────────────────
-    _last_scan_count: int = 0
+    # ── Context compression tracker ─────────────────────────────────
+    # Token level (estimate) right after the last compression.  Used as a
+    # debounce watermark: compression is re-attempted only when the current
+    # estimate has grown meaningfully past this level (token-based trigger,
+    # so a single huge tool result also trips it).  See loop.py Step 1.
+    _last_compress_tokens: int = 0
 
     # ── Lifecycle ───────────────────────────────────────────────────
     turn_count: int = 0
@@ -157,7 +161,7 @@ class LoopState:
             tool_only_turns=int(initial_state.get("tool_only_turns", 0) or 0),
             write_only_turns=int(initial_state.get("write_only_turns", 0) or 0),
             # Context compression tracker
-            _last_scan_count=int(initial_state.get("_last_scan_count", 0) or 0),
+            _last_compress_tokens=int(initial_state.get("_last_compress_tokens", 0) or 0),
             # Lifecycle
             turn_count=int(initial_state.get("_turn_count", 0) or 0),
             _context_loaded=bool(initial_state.get("_context_loaded", False)),
@@ -202,7 +206,7 @@ class LoopState:
             "_model_override": self._model_override,
             "tool_only_turns": self.tool_only_turns,
             "write_only_turns": self.write_only_turns,
-            "_last_scan_count": self._last_scan_count,
+            "_last_compress_tokens": self._last_compress_tokens,
             # Token budget
             "budget_total_estimated": self.budget_total_estimated,
             "budget_model_limit": self.budget_model_limit,

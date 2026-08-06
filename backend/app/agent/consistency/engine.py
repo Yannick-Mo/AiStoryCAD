@@ -127,6 +127,8 @@ class ConsistencyPipeline:
         self._concurrency = settings.consistency_max_concurrency
         self._block_chars = settings.consistency_block_chars
         self._skip_small = settings.consistency_skip_small_scene_chars
+        self._llm_failures = 0
+        self._llm_failure_sample = ""
 
     # ------------------------------------------------------------------
     # Progress + small helpers
@@ -138,6 +140,14 @@ class ConsistencyPipeline:
                 await self._progress_cb(stage, done, total, message)
             except Exception:
                 logger.debug("progress callback failed", exc_info=True)
+
+    def _record_llm_failure(self, detail: str) -> None:
+        """Count a failed LLM call so the report can tell it apart from
+        'nothing was found'. Failures used to be silently swallowed, which
+        turned an empty/overloaded backend into a bogus '未发现一致性问题'."""
+        self._llm_failures += 1
+        if not self._llm_failure_sample:
+            self._llm_failure_sample = (detail or "")[:300]
 
     async def _llm_json(
         self,
@@ -172,9 +182,11 @@ class ConsistencyPipeline:
         try:
             await asyncio.wait_for(_collect(), timeout=timeout)
         except asyncio.TimeoutError:
+            self._record_llm_failure(f"LLM call timed out after {timeout:.0f}s")
             logger.warning("LLM call timed out after %.0fs", timeout)
             return None
-        except Exception:
+        except Exception as exc:
+            self._record_llm_failure(str(exc))
             logger.warning("LLM call failed", exc_info=True)
             return None
         return _parse_json("".join(parts))
@@ -270,6 +282,8 @@ class ConsistencyPipeline:
             "extracted_scene_count": cache_stats["extracted"],
             "scene_count": cache_stats["total"],
             "fact_count": len(merged_facts),
+            "llm_failures": self._llm_failures,
+            "llm_failure_sample": self._llm_failure_sample,
             "stages": {
                 "rules": len(rules_issues),
                 "verify": len(verify_issues),
@@ -277,6 +291,11 @@ class ConsistencyPipeline:
             },
         }
         report.meta = meta
+        if self._llm_failures:
+            report.summary = (
+                f"{report.summary}（有 {self._llm_failures} 次 LLM 调用失败，"
+                f"结果为「未发现一致性问题」时仍可能不完整，请检查 API Key/余额）"
+            )
         try:
             await persist_report(self.db, pid, requested_by, report, meta)
             await self.db.flush()

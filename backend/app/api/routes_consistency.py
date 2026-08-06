@@ -66,6 +66,7 @@ async def check_consistency(
     project_id: uuid.UUID,
     request: Request,
     sync: bool = False,
+    force: bool = False,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -84,10 +85,14 @@ async def check_consistency(
     manager = get_job_manager()
 
     # Freshness shortcut: if nothing changed since the last report, serve it.
-    latest = await rebuild_report(db, pid_str)
-    if latest is not None and latest.timestamp is not None:
-        if not await content_stale_since(db, project_id, latest.timestamp):
-            return latest.model_dump(mode="json")
+    # `force` bypasses this so the user can actually request a fresh run
+    # (previously "重新检查" was a no-op that returned the cached report).
+    latest = None
+    if not force:
+        latest = await rebuild_report(db, pid_str)
+        if latest is not None and latest.timestamp is not None:
+            if not await content_stale_since(db, project_id, latest.timestamp):
+                return latest.model_dump(mode="json")
 
     # Reuse an in-flight job for the same project instead of double-running.
     running = manager.get_running_for_project(pid_str)

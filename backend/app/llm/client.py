@@ -14,6 +14,10 @@ from .registry import get as _get_model, get_ordered as _get_ordered
 from .tracker import TokenTracker
 
 RETRYABLE_STATUSES = {429, 500, 502, 503}
+# Account-level errors: auth failure / insufficient balance / forbidden.
+# All models share the same account and key, so retrying or falling back
+# to another model can never succeed — fail fast with a clear message.
+FATAL_STATUSES = {401, 402, 403}
 MAX_RETRIES = 3
 
 
@@ -35,6 +39,12 @@ class LLMNonRetryableError(LLMError):
 class LLMRetryExhaustedError(LLMError):
     """Raised after exhausting retries on the current model. The next
     fallback model is tried."""
+
+
+class LLMFatalError(LLMError):
+    """Raised for account-level errors (401/402/403). Retrying or switching
+    models is pointless — all models share the same account — so this error
+    propagates immediately without fallback."""
 
 
 _tracker = TokenTracker()
@@ -214,6 +224,8 @@ class LLMClient:
             if not stream:
                 try:
                     return await self._chat_non_streaming(url, headers, body, current_model, session_id=session_id)
+                except LLMFatalError:
+                    raise  # account-level: no point switching models
                 except (LLMNonRetryableError, LLMRetryExhaustedError) as e:
                     last_error = e
                     if current_model != models_to_try[-1]:
@@ -272,6 +284,8 @@ class LLMClient:
                     model=current_model,
                     finish_reason=finish_reason,
                 )
+            except LLMFatalError:
+                raise  # account-level: no point switching models
             except (LLMNonRetryableError, LLMRetryExhaustedError) as e:
                 last_error = e
                 if current_model != models_to_try[-1]:
@@ -296,6 +310,10 @@ class LLMClient:
                 data = resp.json()
                 return self._parse_response(data, model_name, session_id=session_id)
             except httpx.HTTPStatusError as e:
+                if e.response.status_code in FATAL_STATUSES:
+                    raise LLMFatalError(
+                        f"LLM API error {e.response.status_code}: {_sanitize_error(e.response.text)}"
+                    ) from e
                 if e.response.status_code not in RETRYABLE_STATUSES:
                     raise LLMNonRetryableError(
                         f"LLM API error {e.response.status_code}: {_sanitize_error(e.response.text)}"
@@ -337,6 +355,10 @@ class LLMClient:
                             err_text = body_bytes.decode(errors="replace")[:800]
                         except Exception:
                             err_text = "<unable to read response body>"
+                        if resp.status_code in FATAL_STATUSES:
+                            raise LLMFatalError(
+                                f"LLM API error {resp.status_code}: {_sanitize_error(err_text)}"
+                            )
                         if resp.status_code in RETRYABLE_STATUSES:
                             last_error = LLMRetryExhaustedError(
                                 f"LLM API error {resp.status_code}: {_sanitize_error(err_text)}"
@@ -437,6 +459,8 @@ class LLMClient:
                     if delta.get("content"):
                         yield delta["content"]
                 return
+            except LLMFatalError:
+                raise  # account-level: no point switching models
             except (LLMNonRetryableError, LLMRetryExhaustedError, LLMError) as e:
                 last_error = e
                 if current_model != models_to_try[-1]:
@@ -572,6 +596,8 @@ class LLMClient:
                         yield StreamChunk(content=delta["content"])
 
                 return
+            except LLMFatalError:
+                raise  # account-level: no point switching models
             except (LLMNonRetryableError, LLMRetryExhaustedError, LLMError) as e:
                 last_error = e
                 if current_model != models_to_try[-1]:

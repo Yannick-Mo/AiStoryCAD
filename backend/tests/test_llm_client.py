@@ -278,6 +278,37 @@ class TestLLMClientFallback:
         assert result.content == "tertiary OK"
         assert result.model == "tertiary"
 
+    @pytest.mark.asyncio
+    async def test_fatal_402_no_fallback_no_retries(self, fallback_client):
+        """402 (insufficient balance) is account-level: no retry, no fallback."""
+        err_402 = self._make_error_resp(402)
+        ok_resp = self._make_resp(200, {
+            "choices": [{"message": {"content": "should never be used"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+        # If fallback happened, the secondary would be called → ok_resp used
+        fallback_client._client.post = AsyncMock(side_effect=[err_402, ok_resp])
+
+        with pytest.raises(LLMError, match="402"):
+            await fallback_client.chat(messages=[Message(role="user", content="hi")])
+        assert fallback_client._client.post.call_count == 1  # never touched secondary
+
+    @pytest.mark.asyncio
+    async def test_fatal_401_stream_no_fallback(self, fallback_client):
+        """401 during streaming is also fatal: propagates without fallback."""
+        mock_stream = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.aread = AsyncMock(return_value=b'{"error":{"message":"Unauthorized"}}')
+        mock_stream.__aenter__.return_value = mock_resp
+        fallback_client._client.stream = MagicMock(return_value=mock_stream)
+
+        with pytest.raises(LLMError, match="401"):
+            await fallback_client.chat(
+                messages=[Message(role="user", content="hi")], stream=True,
+            )
+        assert fallback_client._client.stream.call_count == 1  # no second model
+
 
 class TestMessageType:
     def test_message_creation(self):

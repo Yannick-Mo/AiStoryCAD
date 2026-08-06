@@ -14,8 +14,10 @@ async def check_consistency(token: str, project_id: str) -> dict:
             checker = ConsistencyChecker(db)
             report = await checker.check_all(project_id, requested_by=user["id"])
             return report.model_dump(mode="json")
-        except Exception:
-            return {"error": "一致性检查失败", "issues": [], "summary": ""}
+        except Exception as e:
+            # Surface the real reason (balance / auth / LLM failure) instead
+            # of a canned "检查失败" that hides the root cause.
+            return {"error": f"一致性检查失败：{e}", "issues": [], "summary": ""}
 
 
 @mcp.tool()

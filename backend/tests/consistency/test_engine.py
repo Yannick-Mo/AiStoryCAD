@@ -38,6 +38,8 @@ class FakeLLM:
         return self
 
     async def chat_stream_tokens(self, messages, **kw):
+        if self.mode == "error":
+            raise RuntimeError("Insufficient Balance")
         user = next(m.content for m in messages if m.role == "user")
         self.calls.append({
             "max_tokens": kw.get("max_tokens"),
@@ -207,6 +209,15 @@ class TestPipelineEndToEnd:
         needs_review = [i for i in report["issues"] if i.get("verdict") == Verdict.NEEDS_REVIEW.value]
         assert needs_review, "garbage verify output must degrade to needs_review info issues"
         assert all(i["severity"] == "info" for i in needs_review)
+
+    async def test_llm_failures_are_reported_not_swallowed(self):
+        """LLM exceptions/timeouts must not vanish into a bogus 'no issues' report."""
+        db = _make_db()
+        llm = FakeLLM(mode="error")
+        report = await _run(db, llm)
+        assert report["meta"]["llm_failures"] > 0
+        assert report["meta"]["llm_failure_sample"]
+        assert "LLM 调用失败" in report["summary"]
 
 
 class TestParseJson:

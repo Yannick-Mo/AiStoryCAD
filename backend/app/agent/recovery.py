@@ -68,6 +68,15 @@ class ErrorClassifier:
         "reduce the length", "too many tokens",
     ]
 
+    # Account-level errors: retrying is pointless — all models share the
+    # same account, so the failure cannot resolve itself. Give up with a
+    # clear, actionable message instead of backoff-retrying into oblivion.
+    FATAL_PATTERNS: list[str] = [
+        "insufficient balance", "payment required",
+        "unauthorized", "invalid api key", "invalid key",
+        "authentication", "forbidden",
+    ]
+
     @classmethod
     def classify(
         cls,
@@ -86,6 +95,16 @@ class ErrorClassifier:
         """
         history = recovery_history or []
         error_lower = error.lower()
+
+        # ── Layer 0: Account-level error → give up immediately ──
+        if any(kw in error_lower for kw in cls.FATAL_PATTERNS):
+            return RecoveryDecision(
+                action=RecoveryAction.GIVE_UP,
+                message=(
+                    f"LLM API 认证或账户状态错误，请检查 API Key 是否有效、账户余额是否充足：{error[:200]}"
+                ),
+                context={"layer": "fatal"},
+            )
 
         # ── Layer 1: Transient / server error → backoff ──
         if any(kw in error_lower for kw in cls.TRANSIENT_PATTERNS):

@@ -18,6 +18,15 @@ from app.llm.types import Message
 # Summarize BEFORE that so long history is folded into a summary instead of
 # being truncated by the emergency path.  (MAX_HISTORY_TOKENS_EST used to be
 # 200K — larger than the window — so summarization never fired in time.)
+#
+# LAYER SEPARATION: this layer summarizes the *persisted* conversation
+# history (only user + final assistant messages are ever saved to the DB —
+# see conversation.py).  It is the "decision memory".  The loop's in-memory
+# message list, which additionally carries per-turn tool_calls / tool
+# execution messages, is compressed separately by context_compressor and is
+# never persisted.  Keep these two layers distinct: do NOT persist tool
+# messages into the DB history — they would bloat the 200-message cap, break
+# tool_calls↔tool pairing on reload, and add summary noise.
 _MODEL_CONTEXT_WINDOW = settings.llm_context_window or 120_000
 MAX_HISTORY_TOKENS_EST = int(_MODEL_CONTEXT_WINDOW * 0.75)
 MAX_HISTORY_TOKENS_HARD = _MODEL_CONTEXT_WINDOW

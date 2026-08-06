@@ -37,18 +37,10 @@ SAFETY_BUFFER_TOKENS = 100_000
 # Maximum tokens we budget for the model's response.
 MAX_RESPONSE_TOKENS = 8_192
 
-# Maximum tokens we budget for tool results produced this turn.
-MAX_TOOL_RESULT_TOKENS = 200_000
-
-# How many bytes of a tool result constitute "large" (triggers summary).
-LARGE_TOOL_RESULT_BYTES = 2_000
-
 # Default model limit (tokens), read from settings or fallback.
 _DEFAULT_MODEL_LIMIT = settings.llm_context_window or 120_000
 
 # ── Budget tracker dataclass ────────────────────────────────────────
-
-CONTINUATION_LIMIT = 3
 
 
 @dataclass
@@ -57,8 +49,6 @@ class TurnBudget:
 
     total_estimated_tokens: int = 0
     model_limit: int = _DEFAULT_MODEL_LIMIT
-    continuation_count: int = 0
-    last_delta_tokens: int = 0
     started_at: float = 0.0
 
 
@@ -86,6 +76,11 @@ def compute_budget(
         model_limit=model_limit,
         started_at=time.time(),
     )
+
+
+def estimate_tool_result_tokens(result: dict) -> int:
+    """Estimate the token weight of a single tool result dict."""
+    return estimate_text_tokens(str(result.get("data", ""))) + estimate_text_tokens(str(result.get("error", "")))
 
 
 def check_token_budget(budget: TurnBudget) -> dict:
@@ -122,37 +117,3 @@ def check_token_budget(budget: TurnBudget) -> dict:
 
     return {"warn": "", "message": "", "available": max(available, 0)}
 
-
-def check_turn_continuation(
-    budget: TurnBudget,
-    new_tokens: int,
-) -> dict:
-    """Check whether we should issue a continuation nudge.
-
-    Returns ``{"continue": bool, "nudge": str}``.
-    Mirrors Claude Code's ``checkTokenBudget()`` logic:
-    - Stop if we've had too many continuations already.
-    - Continue if the model is still producing substantial output.
-    - Stop on diminishing returns (small deltas after 3+ continuations).
-    """
-    delta = new_tokens - budget.total_estimated_tokens
-    is_first = budget.continuation_count == 0
-
-    if budget.continuation_count >= CONTINUATION_LIMIT:
-        return {"continue": False, "nudge": ""}
-
-    # Diminishing returns: if we've continued 3+ times and the last
-    # two deltas were tiny, stop.
-    if budget.continuation_count >= 2 and delta < 500 and budget.last_delta_tokens < 500:
-        return {"continue": False, "nudge": ""}
-
-    # Under budget and producing content — continue
-    used_pct = new_tokens / budget.model_limit if budget.model_limit else 0
-    if used_pct < 0.85 and delta > 200:
-        nudge = (
-            f"[Continue working. You were at {used_pct:.0%} of context. "
-            f"Do NOT summarise. Do NOT stop early.]"
-        )
-        return {"continue": True, "nudge": nudge}
-
-    return {"continue": False, "nudge": ""}

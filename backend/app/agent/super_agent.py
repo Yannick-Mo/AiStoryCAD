@@ -44,7 +44,7 @@ def _snapshot_to_dict(final_values: dict) -> dict:
         "budget_total_estimated", "budget_model_limit",
         "budget_continuation_count", "budget_last_delta", "budget_warn_level",
         "tool_only_turns", "write_only_turns",
-        "_last_scan_count", "_turn_count",
+        "_last_compress_tokens", "_turn_count",
         "_context_loaded", "_invalidated_sections",
     ):
         if key in final_values:

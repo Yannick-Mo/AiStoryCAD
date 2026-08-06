@@ -70,8 +70,12 @@ async function request(path: string, init: RequestInit = {}) {
  * `sync=true` or the project is unchanged since the last report) or a job
  * descriptor to follow over SSE/polling.
  */
-export async function checkConsistency(projectId: string, sync = false): Promise<ConsistencyReport | { job_id: string; state: string; reusing: boolean }> {
-  const resp = await request(`/consistency/projects/${projectId}/check${sync ? '?sync=true' : ''}`, { method: 'POST' })
+export async function checkConsistency(projectId: string, opts: { sync?: boolean; force?: boolean } = {}): Promise<ConsistencyReport | { job_id: string; state: string; reusing: boolean }> {
+  const params = new URLSearchParams()
+  if (opts.sync) params.set('sync', 'true')
+  if (opts.force) params.set('force', 'true')
+  const qs = params.toString()
+  const resp = await request(`/consistency/projects/${projectId}/check${qs ? `?${qs}` : ''}`, { method: 'POST' })
   return resp.json()
 }
 

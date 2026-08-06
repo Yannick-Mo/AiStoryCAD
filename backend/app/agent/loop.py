@@ -27,6 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.context_compressor import (
     async_compress_context,
     build_boundary_message,
+    estimate_tokens,
+    should_compress,
 )
 from app.agent.hooks import hook_registry
 from app.agent.id_registry import build_id_registry
@@ -36,11 +38,12 @@ from app.agent.interceptors import (
     build_confirmation_plan,
 )
 from app.agent.loop_state import LoopState
+from app.agent.middle_compress import middle_process_tool_result
 from app.agent.prompts.builder import get_prompt_builder
 from app.agent.token_budget import (
     check_token_budget,
-    check_turn_continuation,
     compute_budget,
+    estimate_tool_result_tokens,
 )
 from app.agent.tools import get_filtered_tools, get_tool_descriptions
 from app.agent.tools.base import BaseTool
@@ -68,6 +71,19 @@ def _get_tool_descriptions_cached(filtered_tools: dict) -> str:
     return _TOOL_DESC_CACHE[h]
 
 # ── Helpers ────────────────────────────────────────────────────────────
+
+
+async def _tool_message_content(result: dict, llm: LLMClient) -> str:
+    """Build the ``role=tool`` message body.
+
+    Large whitelisted tool results (``middle_compress.COMPRESSIBLE_TOOLS``)
+    are semantically compressed by a clean-context middle LLM; everything
+    else passes through verbatim.  ``tool_results`` keeps the original
+    payload for the id_registry and response builder — only the message
+    body the loop LLM sees is affected.
+    """
+    tool_name = result.get("tool", "")
+    return await middle_process_tool_result(tool_name, result, llm.chat)
 
 
 def _markdown_to_plain(md: str, max_len: int = 120) -> str:
@@ -350,15 +366,47 @@ def _render_framework_section(state: "LoopState") -> str:
     system prompt only *claimed* it was provided ("已在上下文中提供") without
     ever including it — so the model had no structure/character/theme data to
     reference and had to discover everything via tools.
+
+    Truncation is structural, not a raw byte cut: lines are appended while
+    they fit, and the cut always lands on a complete act/chapter/list boundary
+    (never mid-line).  When something is omitted, an accurate note lists the
+    remaining counts so the model knows exactly what to fetch via
+    ``read_project_overview``.
     """
     ctx = state.project_context or {}
     acts = ctx.get("acts", [])
     if not acts:
         return ""
+    budget = _FRAMEWORK_SECTION_MAX
     lines = ["# --- 项目框架 ---"]
+    used = len(lines[0])
+    truncated = False
+
+    total_chapters = sum(len(a.get("chapters", [])) for a in acts)
+    total_scenes = sum(
+        sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
+        for a in acts
+    )
+    shown_chapters = 0
+    shown_scenes = 0
+
+    def fits(text: str) -> bool:
+        return used + 1 + len(text) <= budget
+
+    def emit(text: str) -> None:
+        nonlocal used
+        lines.append(text)
+        used += 1 + len(text)
 
     for act in acts:
-        lines.append(f"## {act.get('sort_order')}. {act.get('name') or '未命名幕'} (act_id={act.get('id')})")
+        act_line = (
+            f"## {act.get('sort_order')}. {act.get('name') or '未命名幕'} "
+            f"(act_id={act.get('id')})"
+        )
+        if not fits(act_line):
+            truncated = True
+            break
+        emit(act_line)
         for ch in act.get("chapters", []):
             scenes = ch.get("scenes", [])
             ch_line = (
@@ -371,20 +419,30 @@ def _render_framework_section(state: "LoopState") -> str:
                     for s in scenes
                 )
                 ch_line += f" 场次: {scenes_txt}"
-            lines.append(ch_line)
+            if not fits(ch_line):
+                truncated = True
+                break
+            emit(ch_line)
+            shown_chapters += 1
+            shown_scenes += len(scenes)
+        if truncated:
+            break
 
+    # Entity lists — each appended whole or not at all
+    omitted_labels: list[str] = []
+    entity_blocks: list[tuple[str, str]] = []
     characters = ctx.get("characters", [])
     if characters:
         char_txt = "；".join(
             f"{c.get('name') or '?'}({c.get('role') or '角色'}, character_id={c.get('id')})"
             for c in characters[:60]
         )
-        lines.append(f"## 角色\n{char_txt}")
-
+        entity_blocks.append(("角色", f"## 角色\n{char_txt}"))
     themes = ctx.get("themes", [])
     if themes:
-        lines.append("## 主题\n" + "；".join(t.get("name", "?") for t in themes[:30]))
-
+        entity_blocks.append(
+            ("主题", "## 主题\n" + "；".join(t.get("name", "?") for t in themes[:30]))
+        )
     relations = ctx.get("relations", [])
     if relations:
         rel_lines = []
@@ -392,8 +450,7 @@ def _render_framework_section(state: "LoopState") -> str:
             src = r.get("character_name") or r.get("character_id") or "?"
             tgt = r.get("target_name") or r.get("target_id") or "?"
             rel_lines.append(f"- {src} → {r.get('label') or r.get('rel_type')} → {tgt}")
-        lines.append("## 关系\n" + "\n".join(rel_lines))
-
+        entity_blocks.append(("关系", "## 关系\n" + "\n".join(rel_lines)))
     edges = ctx.get("edges", [])
     if edges:
         edge_lines = []
@@ -401,16 +458,39 @@ def _render_framework_section(state: "LoopState") -> str:
             src = e.get("source_title") or e.get("source_id") or "?"
             tgt = e.get("target_title") or e.get("target_id") or "?"
             edge_lines.append(f"- {src} -[{e.get('edge_type')}]-> {tgt}")
-        lines.append("## 连线\n" + "\n".join(edge_lines))
+        entity_blocks.append(("连线", "## 连线\n" + "\n".join(edge_lines)))
 
-    truncated = ctx.get("truncated_note", "")
+    for label, block in entity_blocks:
+        if not truncated and fits(block):
+            emit(block)
+        else:
+            truncated = True
+            omitted_labels.append(label)
+
+    # Accurate structural truncation note
     if truncated:
-        lines.append(truncated)
+        parts: list[str] = []
+        # Count acts whose header line was actually emitted
+        shown_acts = sum(1 for ln in lines if ln.startswith("## "))
+        remaining_acts = len(acts) - shown_acts
+        if remaining_acts:
+            parts.append(f"{remaining_acts}幕")
+        remaining_ch = total_chapters - shown_chapters
+        if remaining_ch:
+            parts.append(f"{remaining_ch}章")
+        remaining_sc = total_scenes - shown_scenes
+        if remaining_sc:
+            parts.append(f"{remaining_sc}场")
+        if omitted_labels:
+            parts.append("、".join(omitted_labels) + "未列出")
+        note = f"... [项目框架较长，以下未完整列出: {'、'.join(parts) if parts else '部分章节'}。完整结构请调用 read_project_overview]"
+        lines.append(note)
 
-    text = "\n".join(lines)
-    if len(text) > _FRAMEWORK_SECTION_MAX:
-        text = text[:_FRAMEWORK_SECTION_MAX] + "\n... [项目框架过长已截断，完整结构请调用 read_project_overview]"
-    return text
+    truncated_note = ctx.get("truncated_note", "")
+    if truncated_note:
+        lines.append(truncated_note)
+
+    return "\n".join(lines)
 
 
 async def _build_turn_sections(
@@ -743,18 +823,11 @@ async def autonomous_loop(
                     yield _event_tool_done(result)
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
-                    # Build tool result message
-                    if result.get("success"):
-                        data = result.get("data", "")
-                        content = f"[操作成功]\n{data}"
-                    else:
-                        err_text = result.get('error', 'unknown')
-                        hint = result.get('correction_hint', '')
-                        content = f"[操作失败]\n错误: {err_text[:1000]}"
-                        if hint:
-                            content += f"\n修正提示: {hint}"
-
+                    # Build tool result message (large results are
+                    # semantically compressed — full data stays in tool_results)
                     new_tr = list(state.tool_results) + [result]
+                    content = await _tool_message_content(result, llm)
+
                     state = state.replace(
                         messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
                         tool_results=new_tr,
@@ -782,12 +855,26 @@ async def autonomous_loop(
                 # Fall through to LLM for response about rejection
 
         # ── Step 1: Context Management (proactive, with auto-escalation) ──
+        # Token-based trigger (not message-count): a single huge tool result
+        # must also trip compression.  should_compress() is cheap (CJK-aware
+        # estimate) and gives natural debouncing — after compression the ratio
+        # drops below the threshold, so it won't re-fire until messages regrow.
         original_count = len(state.messages)
-        if abs(original_count - state._last_scan_count) < 3:
-            compressed = list(state.messages)
-        else:
-            compressed = await async_compress_context(state.messages, llm.chat, model_limit=MODEL_CONTEXT_LIMIT)
-            state = state.replace(_last_scan_count=original_count)
+        compressed = list(state.messages)
+        if should_compress(state.messages, MODEL_CONTEXT_LIMIT):
+            # Anti-oscillation guard: if the context barely grew since the
+            # last compression, skip — avoids repeated LLM summaries near the
+            # 80% edge (compress → ratio just under → add 1 msg → re-fire).
+            est_now = estimate_tokens(state.messages, MODEL_CONTEXT_LIMIT)
+            if state._last_compress_tokens and est_now < state._last_compress_tokens * 1.05:
+                compressed = list(state.messages)
+            else:
+                compressed = await async_compress_context(
+                    state.messages, llm.chat, model_limit=MODEL_CONTEXT_LIMIT,
+                )
+                state = state.replace(
+                    _last_compress_tokens=estimate_tokens(compressed, MODEL_CONTEXT_LIMIT),
+                )
         if len(compressed) != original_count:
             reactive = len(compressed) < original_count * 0.3
             # Insert a user-visible boundary message so the model (and any
@@ -915,7 +1002,7 @@ async def autonomous_loop(
             # ── Reactive compression for 413 / context overflow ──
             error_lower = str(e).lower()
             if any(kw in error_lower for kw in ("context length", "too long", "413", "token limit", "prompt too long")):
-                from app.agent.context_compressor import estimate_tokens, reactive_compress
+                from app.agent.context_compressor import reactive_compress
                 tokens_before = estimate_tokens(state.messages, MODEL_CONTEXT_LIMIT)
                 compressed = reactive_compress(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
                 tokens_after = estimate_tokens(compressed, MODEL_CONTEXT_LIMIT)
@@ -1076,15 +1163,9 @@ async def autonomous_loop(
                     yield _event_tool_done(result)
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
-                    if result.get("success"):
-                        data = result.get("data", "")
-                        content = f"[操作成功]\n{data}"
-                    else:
-                        err_text = result.get('error', 'unknown')
-                        hint = result.get('correction_hint', '')
-                        content = f"[操作失败]\n错误: {err_text[:1000]}"
-                        if hint:
-                            content += f"\n修正提示: {hint}"
+                    # Build tool result message (compressed via middle LLM
+                    # for large whitelisted tools)
+                    content = await _tool_message_content(result, llm)
 
                     state = state.replace(
                         messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
@@ -1095,15 +1176,7 @@ async def autonomous_loop(
                     existing = safe_result_map.get(tool_use_id)
                     if existing:
                         state = _invalidate_after_write(state, tool_name, existing, filtered_tools)
-                        if existing.get("success"):
-                            data = existing.get("data", "")
-                            content = f"[操作成功]\n{data}"
-                        else:
-                            err_text = existing.get('error', 'unknown')
-                            hint = existing.get('correction_hint', '')
-                            content = f"[操作失败]\n错误: {err_text[:1000]}"
-                            if hint:
-                                content += f"\n修正提示: {hint}"
+                        content = await _tool_message_content(existing, llm)
                         state = state.replace(
                             messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
                         )

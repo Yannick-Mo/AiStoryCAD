@@ -7,6 +7,13 @@ Two compression layers, inspired by Claude Code's multi-layer pipeline
    ``head + summary + tail`` classic strategy.
 2. **reactive_compress** — last-resort, triggered on API 413 / context
    overflow.  More aggressive than proactive compress.
+
+NOTE — layer separation: this module operates on the loop's *in-memory*
+message list (which includes the per-turn assistant-with-tool_calls and
+``role=tool`` execution messages) and is NEVER persisted.  The long-term
+conversation history (user + final assistant messages only) lives in the DB
+and is summarized separately by ``history_manager.maybe_summarize``.  The two
+datasets are disjoint, so the two summaries are complementary, not redundant.
 """
 
 from __future__ import annotations
@@ -88,6 +95,37 @@ def _msg_role_label(role: str) -> str:
     return {"user": "用户", "assistant": "AI", "system": "系统"}.get(role, role)
 
 
+def _pair_safe_tail_start(
+    messages: list["Message"],
+    head_count: int,
+    tail_count: int,
+) -> int:
+    """Return the tail start index such that a leading ``tool`` message never
+    loses its preceding assistant-with-tool_calls.
+
+    The OpenAI/DeepSeek API requires every ``tool`` message to follow a prior
+    assistant message carrying the matching ``tool_call_id``.  If the naive
+    tail boundary lands on a ``tool`` message whose assistant would be
+    summarized away (it sits in the middle), pull the assistant into the tail
+    so the pair survives compression as a unit.
+    """
+    n = len(messages)
+    s = max(n - tail_count, 0)
+    while s < n and messages[s].role == "tool":
+        # Nearest preceding assistant message
+        a = s - 1
+        while a >= 0 and messages[a].role != "assistant":
+            a -= 1
+        if a < 0:
+            break  # orphaned even in source — caller strips later
+        if not getattr(messages[a], "tool_calls", None):
+            break  # assistant has no tool_calls — orphaned in source
+        if a < head_count:
+            break  # assistant is kept inside head — safe
+        s = a  # pull the assistant (and its tool replies) into the tail
+    return s
+
+
 def compress_history(
     messages: list["Message"],
     *,
@@ -121,8 +159,12 @@ def compress_history(
         return list(messages)
 
     head = messages[:h]
-    tail = messages[-t:]
-    middle = messages[h:-t]
+    tail_start = _pair_safe_tail_start(messages, h, t)
+    tail = messages[tail_start:]
+    middle = messages[h:tail_start]
+
+    if not middle:
+        return list(messages)
 
     summary_parts: list[str] = []
     for msg in middle:
@@ -319,8 +361,9 @@ async def async_compress_context(
         return list(messages)
 
     head = messages[:h]
-    tail = messages[-t:]
-    middle = messages[h:-t]
+    tail_start = _pair_safe_tail_start(messages, h, t)
+    tail = messages[tail_start:]
+    middle = messages[h:tail_start]
 
     if not middle:
         return list(messages)

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-v4-flash"
     llm_models: str = ""
     llm_fallback_models: str = ""
+    # Model used by the middle-LLM tool-result compressor/cleaner
+    # (app.agent.middle_compress). Empty → falls back to llm_model.
+    # Should be a fast/cheap model — its context is always clean.
+    llm_middle_model: str = ""
     llm_proxy: str = ""
     llm_max_sys_chars: int = 50000
     llm_max_rag_chars: int = 10000

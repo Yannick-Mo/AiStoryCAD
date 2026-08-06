@@ -41,14 +41,14 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
     }
   }, [])
 
-  const handleCheck = async () => {
+  const handleCheck = async (force = false) => {
     setRunning(true)
     setError(null)
     setStage('pending')
     setProgress(null)
     setMessage('')
     try {
-      const result = await checkConsistency(projectId)
+      const result = await checkConsistency(projectId, { force })
       if ('job_id' in result && result.job_id) {
         setStage('pending')
         await watchConsistencyJob(result.job_id, {
@@ -132,7 +132,7 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
               <p className="text-sm text-red-400 mb-4">{error}</p>
               <div className="flex items-center justify-center gap-3">
                 <button
-                  onClick={handleCheck}
+                  onClick={() => handleCheck(true)}
                   className="px-6 py-2 rounded-full text-sm bg-gradient-to-r from-amber-700/80 to-amber-600/80 border border-amber-500/50 text-white hover:from-amber-600 hover:to-amber-500 transition-all"
                 >
                   重试
@@ -149,7 +149,7 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
               <div className="flex items-start justify-between gap-2 mb-4 p-3 rounded-lg bg-gray-800/60">
                 <p className="text-sm text-gray-300">{report.summary}</p>
                 <button
-                  onClick={handleCheck}
+                  onClick={() => handleCheck(true)}
                   className="text-xs text-amber-500 hover:text-amber-400 whitespace-nowrap mt-0.5"
                 >
                   重新检查
