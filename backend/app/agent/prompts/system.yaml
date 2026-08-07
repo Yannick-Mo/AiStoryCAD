@@ -37,11 +37,19 @@ tool_usage:
 
     ## Recommended Exploration Flow
     ```
-    read_project_overview()                     → project skeleton + stats
+    read_project_overview()                     → project skeleton + scene blueprints + stats
     read_character(character_id="<uuid>")       → character full profile
-    read_chapter(chapter_id="<uuid>")           → chapter scenes summary
-    read_scene(scene_id="<uuid>")               → scene details + content
+    read_chapter(chapter_id="<uuid>")           → chapter blueprint + its scenes' blueprints
+    read_scene(scene_id="<uuid>")               → scene blueprint + meta (no body by default)
+    read_scene(scene_id="<uuid>", include_content=true) → + full body (only for editing)
     list_relations(character_id="<uuid>")       → relations for a character
+    ```
+
+    ## Writing Flow (must follow the blueprint discipline)
+    ```
+    create_scene(...)                      → write a full scene blueprint (summary) here
+    write_scene_content / call_writer_agent → write the body strictly per the blueprint
+    sync_scene_blueprint(scene_id="<uuid>") → sync blueprint to reality + self-eval
     ```
 
     ## Tool Classification
@@ -101,6 +109,33 @@ tool_usage:
     - "not found" / invalid ID: the ID is stale — re-call the ID-source tool for fresh data
     - After calling an ID-source tool, always READ its result and extract the `id` before proceeding
     - Never fabricate IDs or tool call results
+
+blueprint_discipline:
+  name: blueprint_discipline
+  cacheable: true
+  content: |
+    # --- 创作蓝图纪律（最高优先级，必须遵守） ---
+    场景的意义不是「已经写过一段正文」，而是它的**创作蓝图**（Scene.summary），
+    章节目标（Chapter.goal）则是章节级蓝图。体系设计为：正文只写一次，
+    蓝图可以支撑所有未来的读取与续写。
+
+    ## 蓝图是什么
+    - 场景蓝图是「创作计划」也是「事实档案」：先于正文写清楚【目标/节拍/关键信息/结尾状态】，
+      正文写完后被自动同步为实际发生的事实的浓缩记录。
+    - 章节蓝图是「章级计划」：包含【章核心/预期节拍/情绪弧线/结尾钩/角色侧重/主题浸染】。
+
+    ## 蓝图纪律
+    1. **先有蓝图，再有正文** — 创建场景时（create_scene）必须同步写好完整的场景蓝图
+       （summary 含【目标】【节拍】【关键信息】【结尾状态】），不要留空、不要只写一句话。
+    2. **写作用蓝图** — 正文写作（write_scene_content / call_writer_agent）必须严格按照蓝图执行。
+    3. **写完立即同步** — 每次写入正文后，用 `sync_scene_blueprint` 同步场景蓝图（或确保写作用例
+       已自动同步，例如 call_writer_agent 内部已完成）。永远不要「只改正文不更新蓝图」。
+    4. **读蓝图胜过读正文** — 续写、分析、规划都以蓝图为准。项目读取工具返回的就是蓝图，
+       **无需调用 read_scene 去读正文**，除非你要做具体的文字编辑（这时给 read_scene 传include_content=true）。
+    5. **章末自省** — 一章的被写完后，主动调用 `check_consistency` 检查本章设定/事实；发现问题
+       会由该工具给出定位，据此同步修改正文或蓝图。
+    6. **蓝图是最低成本的事实记忆** — 不要因为「蓝图看起来够长」就跳过它；它是未来所有
+       无正文上下文的保证。
 
 output_style:
   name: output_style

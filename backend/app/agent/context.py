@@ -263,18 +263,19 @@ class ContextBuilder:
         chapter_ids = tree["chapter_ids"]
 
         scene_ids = [sc.id for sc in all_scenes]
-        content_by_scene: dict[uuid.UUID, str] = {}
+        # Blueprints (Scene.summary) are the canonical story memory — the full
+        # context never carries body text.  Only a cheap "has body?" flag so
+        # the model knows a scene was written without reading it.
+        written_by_scene: dict[uuid.UUID, bool] = {}
         if scene_ids:
-            # Fetch only a 500-char preview per scene via SQL — pulling every
-            # full SceneContent row just to trim to [:500] was wasteful for
-            # large projects.
             sc_content_result = await self.db.execute(
-                select(SceneContent.scene_id, func.substr(SceneContent.content, 1, 500))
-                .where(SceneContent.scene_id.in_(scene_ids))
+                select(SceneContent.scene_id).where(
+                    SceneContent.scene_id.in_(scene_ids),
+                    SceneContent.content.isnot(None),
+                    SceneContent.content != "",
+                )
             )
-            for sc_id, snippet in sc_content_result.all():
-                if snippet:
-                    content_by_scene[sc_id] = snippet
+            written_by_scene = {sc_id: True for (sc_id,) in sc_content_result.all()}
 
         themes_by_chapter: dict[uuid.UUID, list[str]] = defaultdict(list)
         tc_result = await self.db.execute(
@@ -292,7 +293,7 @@ class ContextBuilder:
                 scenes_data = []
                 for sc in scenes_by_chapter.get(ch.id, []):
                     sc_d = row_to_dict(sc)
-                    sc_d["content_preview"] = content_by_scene.get(sc.id) or ""
+                    sc_d["written"] = written_by_scene.get(sc.id, False)
                     scenes_data.append(sc_d)
                 ch_d = row_to_dict(ch)
                 ch_d["scenes"] = scenes_data
@@ -379,15 +380,6 @@ class ContextBuilder:
         scenes_by_chapter = tree["scenes_by_chapter"]
         chapter_ids = tree["chapter_ids"]
 
-        scene_ids = [sc.id for sc in all_scenes]
-        content_by_scene: dict[uuid.UUID, str] = {}
-        if depth == "full" and scene_ids:
-            sc_content_result = await self.db.execute(
-                select(SceneContent).where(SceneContent.scene_id.in_(scene_ids))
-            )
-            for sc in sc_content_result.scalars().all():
-                content_by_scene[sc.scene_id] = sc.content or ""
-
         acts_data = []
         for act in acts:
             chapters_data = []
@@ -398,15 +390,13 @@ class ContextBuilder:
                         "id": str(sc.id),
                         "title": sc.title,
                         "sort_order": sc.sort_order,
-                        "summary": (sc.summary or "")[:200],
+                        "summary": (sc.summary or "")[:500],
                         "pov_character": sc.pov_character or "",
                     }
                     if depth in ("summary", "framework"):
                         entry["setting"] = sc.setting or ""
                         entry["scene_time"] = sc.scene_time or ""
                         entry["summary"] = (sc.summary or "")[:1000]
-                    if depth == "full":
-                        entry["content"] = (content_by_scene.get(sc.id) or "")[:1000]
                     scenes_data.append(entry)
 
                 ch_entry: dict[str, Any] = {

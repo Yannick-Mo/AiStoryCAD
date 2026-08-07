@@ -152,13 +152,20 @@ class TestFrameworkStructuralTruncation:
 
 class TestMiddleCompressWhitelist:
     def test_whitelisted_small_result_verbatim_no_llm(self):
-        # read_scene with a typical 2K-char scene → below threshold, passthrough
-        result = {"tool": "read_scene", "success": True, "data": "正文" * 600}
-        assert not should_middle_process("read_scene", result)
+        # web_fetch with a typical 2K-char page → below threshold, passthrough
+        result = {"tool": "web_fetch", "success": True, "data": {"url": "https://x.com", "content": "正文" * 600}}
+        assert not should_middle_process("web_fetch", result)
 
     def test_whitelisted_large_result_triggers(self):
-        result = {"tool": "read_scene", "success": True, "data": "正文" * (LLM_COMPRESS_MIN_CHARS + 100)}
-        assert should_middle_process("read_scene", result)
+        result = {"tool": "web_fetch", "success": True, "data": {"url": "https://x.com", "content": "正文" * (LLM_COMPRESS_MIN_CHARS + 100)}}
+        assert should_middle_process("web_fetch", result)
+
+    def test_project_query_tools_never_compress(self):
+        # DB project-query results (outline/framework + scene/character data)
+        # are always injected verbatim — the loop LLM needs exact structure.
+        for tool in ("read_scene", "read_project_overview", "read_full_project"):
+            result = {"tool": tool, "success": True, "data": "数据" * (LLM_COMPRESS_MIN_CHARS + 100)}
+            assert not should_middle_process(tool, result), tool
 
     def test_id_list_tools_never_compress(self):
         # list_* results are navigation maps for tool chaining — never compressed
@@ -170,26 +177,27 @@ class TestMiddleCompressWhitelist:
         assert not should_middle_process("web_search", small)
 
     def test_failed_result_never_processed(self):
-        err = {"tool": "read_full_project", "success": False, "error": "boom"}
-        assert not should_middle_process("read_full_project", err)
+        err = {"tool": "web_fetch", "success": False, "error": "boom"}
+        assert not should_middle_process("web_fetch", err)
 
 
 class TestMiddleCompressValidation:
     def test_id_loss_rejected(self):
-        original = {"scenes": [{"id": str(uuid4())}, {"id": str(uuid4())}]}
-        out = "只保留了一个"  # no UUIDs at all → IDs lost
-        assert _validate("read_full_project", original, out) is not None
+        id1, id2 = str(uuid4()), str(uuid4())
+        original = {"url": "https://a.com/x", "content": f"关键事实 {id1} 与 {id2} 的关联"}
+        out = "关键事实"  # dropped all UUIDs
+        assert _validate("web_fetch", original, out) is not None
 
     def test_no_compression_rejected(self):
         data = "字" * 30_000
         out = "字" * 24_000  # 80% of input → not compressed enough
-        assert _validate("read_scene", data, out) is not None
+        assert _validate("web_fetch", data, out) is not None
 
     def test_compressed_output_with_all_ids_accepted(self):
         id1, id2 = str(uuid4()), str(uuid4())
-        original = {"scenes": [{"id": id1, "summary": "长" * 500}, {"id": id2, "summary": "长" * 500}]}
-        out = f"场景1(id={id1})：摘要；场景2(id={id2})：摘要"
-        assert _validate("read_full_project", original, out) is None
+        original = {"url": "https://x.com/y", "content": f"甲：{id1} 乙：{id2} " + "长" * 500}
+        out = f"甲：{id1} 乙：{id2} 摘要"
+        assert _validate("web_fetch", original, out) is None
 
     def test_web_search_url_loss_rejected(self):
         original = [{"title": "a", "url": "https://a.com/x"}, {"title": "b", "url": "https://b.com/y"}]
@@ -203,7 +211,7 @@ class TestMiddleCompressValidation:
         assert _validate("web_search", original, out) is None
 
     def test_fold_fallback_keeps_marker(self):
-        out = _fold_fallback({"tool": "read_full_project", "success": True, "data": "字" * 60_000})
+        out = _fold_fallback({"tool": "web_fetch", "success": True, "data": "字" * 60_000})
         assert "压缩失败" in out or "仅保留" in out
 
 
@@ -214,11 +222,11 @@ class TestMiddleCompressEndToEnd:
         async def fake_chat(messages, **kwargs):
             assert len(messages) == 2  # system + user, no history
             assert messages[0].role == "system"
-            return type("R", (), {"content": "压缩后的场景内容，保留了所有剧情关键点"})
+            return type("R", (), {"content": "清洗后的网页内容"})
 
-        result = {"tool": "read_scene", "success": True, "data": "正文" * (LLM_COMPRESS_MIN_CHARS + 100)}
-        out = await middle_process_tool_result("read_scene", result, fake_chat)
-        assert out == "压缩后的场景内容，保留了所有剧情关键点"
+        result = {"tool": "web_fetch", "success": True, "data": {"url": "https://x.com", "content": "正文" * (LLM_COMPRESS_MIN_CHARS + 100)}}
+        out = await middle_process_tool_result("web_fetch", result, fake_chat)
+        assert out == "清洗后的网页内容"
 
     async def test_llm_failure_falls_back_to_verbatim(self):
         from app.agent.middle_compress import middle_process_tool_result
@@ -227,8 +235,8 @@ class TestMiddleCompressEndToEnd:
             raise RuntimeError("middle LLM down")
 
         data = "字" * 20_000
-        result = {"tool": "read_scene", "success": True, "data": data}
-        out = await middle_process_tool_result("read_scene", result, broken_chat)
+        result = {"tool": "web_fetch", "success": True, "data": {"url": "https://x.com", "content": data}}
+        out = await middle_process_tool_result("web_fetch", result, broken_chat)
         assert out.startswith("[操作成功]")
         assert data in out  # verbatim, not folded (under FOLD_FALLBACK_CHARS)
 
@@ -239,8 +247,8 @@ class TestMiddleCompressEndToEnd:
             raise RuntimeError("middle LLM down")
 
         data = "字" * 60_000
-        result = {"tool": "read_full_project", "success": True, "data": data}
-        out = await middle_process_tool_result("read_full_project", result, broken_chat)
+        result = {"tool": "web_fetch", "success": True, "data": {"url": "https://x.com", "content": data}}
+        out = await middle_process_tool_result("web_fetch", result, broken_chat)
         assert "仅保留" in out or "压缩失败" in out
         assert data not in out
 
@@ -251,9 +259,9 @@ class TestMiddleCompressEndToEnd:
             return type("R", (), {"content": "简短回复"})  # dropped all IDs
 
         id1, id2 = str(uuid4()), str(uuid4())
-        data = {"scenes": [{"id": id1, "summary": "长" * 100}, {"id": id2, "summary": "长" * 100}]}
-        result = {"tool": "read_full_project", "success": True, "data": data}
-        out = await middle_process_tool_result("read_full_project", result, hallucinating_chat)
+        data = {"url": "https://a.com", "content": f"甲：{id1} 乙：{id2} " + "长" * 100}
+        result = {"tool": "web_fetch", "success": True, "data": data}
+        out = await middle_process_tool_result("web_fetch", result, hallucinating_chat)
         assert "简短回复" not in out  # rejected
         assert "长" in out  # original injected
 
@@ -270,6 +278,22 @@ class TestMiddleCompressEndToEnd:
         out = await middle_process_tool_result("update_chapter", result, fake_chat)
         assert not called["flag"]
         assert out.startswith("[操作成功]")
+
+    async def test_project_query_tools_verbatim_no_llm_called(self):
+        from app.agent.middle_compress import middle_process_tool_result
+
+        called = {"flag": False}
+
+        async def fake_chat(messages, **kwargs):
+            called["flag"] = True
+            return type("R", (), {"content": "nope"})
+
+        for tool in ("read_scene", "read_project_overview", "read_full_project"):
+            result = {"tool": tool, "success": True, "data": "数据" * (LLM_COMPRESS_MIN_CHARS + 100)}
+            out = await middle_process_tool_result(tool, result, fake_chat)
+            assert not called["flag"], tool
+            assert out.startswith("[操作成功]")
+            assert "数据" in out  # full original data injected verbatim
 
 
 class TestRecoveryFatalAccountErrors:

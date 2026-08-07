@@ -43,7 +43,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
     )
     from .skill_tool import InvokeSkillTool
-    from .writer_tool import CallWriterAgentTool
+    from .writer_tool import CallWriterAgentTool, SyncSceneBlueprintTool
     from .word_count_tools import RecalcWordCountsTool
     classes = [
         ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
@@ -64,6 +64,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
         InvokeSkillTool,
         CallWriterAgentTool,
+        SyncSceneBlueprintTool,
         RecalcWordCountsTool,
     ]
     registry: dict[str, BaseTool] = {}

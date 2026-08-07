@@ -83,12 +83,13 @@ class ReadChapterTool(BaseTool):
 class ReadSceneTool(BaseTool):
     meta = ToolMeta(
         name="read_scene",
-        description="获取场景内容，包括 SceneContent（场景ID可在 list_scenes 返回或结构概览 [sc:xxx] 中找到）",
+        description="获取场景蓝图与元数据（标题、蓝图、POV、地点、时间、是否已写正文）。scene_id 来自 list_scenes 或 read_full_project。默认不含正文——续写/分析以蓝图为依据即可；仅当需要做文字级编辑（expand_selection/compress_selection/rewrite 等）时才传 include_content=true 读取正文",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
             "properties": {
                 "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 返回结果或 read_full_project 结构概览"},
+                "include_content": {"type": "boolean", "description": "是否包含场景正文本（默认 false）"},
             },
             "required": ["scene_id"],
         },
@@ -105,10 +106,16 @@ class ReadSceneTool(BaseTool):
             if not scene:
                 return self._not_found("Scene")
             await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
+            data = row_to_dict(scene)
+            include_content = bool(kwargs.get("include_content", False))
             content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
             sc_content = content_result.scalar_one_or_none()
-            data = row_to_dict(scene)
-            data["content"] = sc_content.content if sc_content else ""
+            body = sc_content.content if sc_content else ""
+            data["written"] = bool(body and body.strip())
+            if include_content:
+                data["content"] = body
+            else:
+                data["content"] = None
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
@@ -126,7 +133,7 @@ class CreateSceneTool(BaseTool):
                 "chapter_id": {"type": "string", "description": "所属章节ID，来自 list_chapters 或 read_full_project"},
                 "title": {"type": "string", "description": "场景标题"},
                 "sort_order": {"type": "integer", "description": "排序序号"},
-                "summary": {"type": "string", "description": "场景梗概"},
+                "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
                 "content": {"type": "string", "description": "场景正文"},
                 "pov_character": {"type": "string", "description": "POV角色"},
                 "setting": {"type": "string", "description": "场景地点"},
@@ -179,7 +186,7 @@ class UpdateSceneTool(BaseTool):
             "properties": {
                 "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
                 "title": {"type": "string", "description": "场景标题"},
-                "summary": {"type": "string", "description": "场景梗概"},
+                "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
                 "content": {"type": "string", "description": "场景正文"},
                 "pov_character": {"type": "string", "description": "POV角色"},
                 "setting": {"type": "string", "description": "场景地点"},
@@ -273,13 +280,13 @@ class ReadFullProjectTool(BaseTool):
 class SetChapterGoalTool(BaseTool):
     meta = ToolMeta(
         name="set_chapter_goal",
-        description="设置章节的写作目标",
+        description="设置章节的创作蓝图（章级创作目标）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
                 "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
-                "goal": {"type": "string", "description": "章节目标文本"},
+                "goal": {"type": "string", "description": "章节蓝图（含【章核心】【预期节拍】【情绪弧线】【结尾钩】【角色侧重】【主题浸染】）"},
             },
             "required": ["chapter_id", "goal"],
         },
@@ -319,7 +326,7 @@ class UpdateChapterTool(BaseTool):
                 "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
                 "title": {"type": "string", "description": "章节标题"},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
-                "goal": {"type": "string", "description": "章节目标"},
+                "goal": {"type": "string", "description": "章节蓝图（章级创作计划）"},
             },
             "required": ["chapter_id"],
         },

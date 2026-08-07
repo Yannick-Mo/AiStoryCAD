@@ -8,6 +8,11 @@ Design (agreed with product):
   confirmations, and internal-LLM products like ``analyze_*``) passes
   through untouched — compressing those would break tool-call chaining
   (hallucinated IDs) or double-process LLM answers.
+* Project/DB query tools (``read_scene``, ``read_project_overview``,
+  ``read_full_project``) are deliberately NOT whitelisted: their data is
+  the story outline/framework the loop LLM must see verbatim (truncating
+  or summarizing it risks losing the exact structure/IDs the model relies
+  on for navigation), and their size is bounded by the outline fields.
 * Thresholds: results under ``LLM_COMPRESS_MIN_CHARS`` are injected
   verbatim (typical scene content 1-3K chars stays fully visible).
   15K-50K → semantic compression (target ``TARGET_SEMANTIC_CHARS``);
@@ -39,9 +44,7 @@ logger = logging.getLogger(__name__)
 
 # ── Whitelist: tools whose results may be sent to the middle LLM ─────
 # Everything else is injected verbatim, always.
-COMPRESSIBLE_TOOLS = frozenset(
-    {"read_scene", "read_character", "read_project_overview", "read_full_project", "web_fetch"}
-)
+COMPRESSIBLE_TOOLS = frozenset({"web_fetch"})
 CLEANABLE_TOOLS = frozenset({"web_search"})
 
 # ── Thresholds (chars, on the stringified data) ──────────────────────

@@ -68,6 +68,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "rewrite_scene": "重写场景",
     "expand_selection": "展开选中内容",
     "compress_selection": "压缩选中内容",
+    "sync_scene_blueprint": "同步场景蓝图",
     # Knowledge / Web
     "search_knowledge": "搜索知识库",
     "web_search": "联网搜索",

@@ -186,7 +186,8 @@ def _section_for_tool(tool_name: str) -> str:
                      "set_chapter_goal"):
         return "structure"
     if tool_name in ("write_scene_content", "continue_scene", "rewrite_scene",
-                     "expand_selection", "compress_selection"):
+                     "expand_selection", "compress_selection",
+                     "call_writer_agent", "sync_scene_blueprint"):
         return "content"
     if tool_name in ("create_character", "update_character", "delete_character",
                      "update_relation", "delete_relation"):
@@ -523,7 +524,9 @@ async def _build_turn_sections(
             "# --- 写作行为规则 ---\n"
             "- 仅在用户明确请求或确认计划后调用写作工具\n"
             "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
-            "- 你可以根据用户的思路提供完整段落草稿作为示范或起点"
+            "- 你可以根据用户的思路提供完整段落草稿作为示范或起点\n"
+            "- 场景蓝图先行：创建/规划场景时必须写好完整的场景蓝图（summary 含【目标】【节拍】【关键信息】【结尾状态】）\n"
+            "- 写完正文后必须调用 sync_scene_blueprint 同步场景蓝图并做自评；一章收尾后调用 check_consistency 做事实检查"
         )
     else:
         sections.append(
@@ -674,7 +677,8 @@ async def autonomous_loop(
 
     # ── Build static system prompt (once, outside loop) ─────────────
     base_sections = ["identity", "output_style", "tool_usage",
-                     "writing_advice", "prohibited_behaviors", "style_guide"]
+                     "writing_advice", "blueprint_discipline",
+                     "prohibited_behaviors", "style_guide"]
     if state.mode == "chat":
         base_sections.append("chat_mode_restrictions")
 
@@ -684,7 +688,12 @@ async def autonomous_loop(
     base_system += """
 # --- 项目数据访问规则（必须遵守） ---
 - 项目框架数据（幕/章/场景结构、角色档案、主题、关系）已在上下文中提供，可直接引用。
-- 场景正文内容不包含在上下文中——需要使用场景读取工具获取。
+- 场景蓝图（Scene.summary）是每场戏的创作计划与事实档案；它随框架数据提供，是续写、
+  分析与规划的优先依据，不需要调用 read_scene 读正文。
+- 场景正文内容不包含在上下文中——需要使用读取工具获取（read_scene 默认只返回蓝图；
+  如需正文做文字编辑，请传 include_content=true）。
+- 写入正文后必须同步场景蓝图：call_writer_agent 会自动同步；直接写正文的工具
+  （write_scene_content 等）之后请调用 sync_scene_blueprint。
 - 在进行写入操作之前，先通过读取工具获取最新数据。
 - 不要编造角色、章节、场景或关系数据。
 """

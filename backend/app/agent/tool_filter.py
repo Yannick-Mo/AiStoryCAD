@@ -38,6 +38,7 @@ COWRITER_TOOLS: set[str] = {
     # Writing
     "write_scene_content", "continue_scene", "rewrite_scene",
     "expand_selection", "compress_selection",
+    "sync_scene_blueprint",
     # Word count
     "recalc_word_counts",
     # Agents

@@ -64,7 +64,7 @@ class CreateChapterTool(BaseTool):
             "properties": {
                 "act_id": {"type": "string", "description": "所属幕ID，来自 read_full_project 结构概览"},
                 "title": {"type": "string", "description": "章节标题"},
-                "goal": {"type": "string", "description": "章节写作目标"},
+                "goal": {"type": "string", "description": "章节蓝图（章级创作计划：含【章核心】【预期节拍】【情绪弧线】【结尾钩】【角色侧重】【主题浸染】）"},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
             },
             "required": ["act_id"],

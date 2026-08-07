@@ -230,7 +230,7 @@ class BaseTool(ABC):
             "url": "必须提供要抓取的URL地址",
             "query": "必须提供搜索关键词或查询内容",
             "skill_name": "必须提供要启用的技能名称，见可用技能列表",
-            "goal": "必须提供章节写作目标",
+            "goal": "必须提供章节蓝图",
             "original_text": "必须提供原始文本（用于定位要替换的段落）",
             "expanded_text": "必须提供扩写后的完整段落",
             "compressed_text": "必须提供压缩后的文本",

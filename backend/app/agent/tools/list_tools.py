@@ -113,7 +113,7 @@ class ListScenesTool(BaseTool):
                     "title": sc.title,
                     "chapter_id": str(sc.chapter_id),
                     "sort_order": sc.sort_order,
-                    "summary": (sc.summary or "")[:200],
+                    "summary": (sc.summary or "")[:500],
                     "pov_character": sc.pov_character or "",
                     "setting": sc.setting or "",
                     "scene_time": sc.scene_time or "",
@@ -287,7 +287,7 @@ class SearchNodesTool(BaseTool):
                         "id": str(sc.id),
                         "title": sc.title,
                         "chapter_id": str(sc.chapter_id),
-                        "summary": (sc.summary or "")[:200],
+                        "summary": (sc.summary or "")[:500],
                         "type": "scene",
                     }
                     for sc in scenes
