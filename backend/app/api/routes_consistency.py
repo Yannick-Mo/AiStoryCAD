@@ -22,6 +22,7 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.consistency_jobs import SSE_PING_INTERVAL, ConsistencyJob, get_job_manager
@@ -187,6 +188,65 @@ async def get_reports(
         }
         for r in records
     ]
+
+
+@router.post("/projects/{project_id}/reconcile")
+async def reconcile(
+    project_id: uuid.UUID,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger hash reconcile + candidate reconcile (§9.1, §14.6).
+
+    运营/调试用。返回核对统计与本次漂移场景数。
+    """
+    await _verify_project_owner(db, project_id, user)
+    from app.agent.consistency.reconcile import (
+        reconcile_project,
+        reconcile_project_hash,
+    )
+
+    hash_stats = await reconcile_project_hash(db, project_id)
+    stats = await reconcile_project(db, project_id)
+    facts_active = 0
+    from app.agent.consistency.orm import ConsistencyFact
+    from app.agent.consistency.reconcile import project_queue_depth
+
+    await db.commit()
+    fact_row = await db.execute(
+        select(func.count()).select_from(ConsistencyFact).where(
+            ConsistencyFact.project_id == project_id,
+            ConsistencyFact.is_active.is_(True),
+        )
+    )
+    facts_active = int(fact_row.scalar_one_or_none() or 0)
+
+    return {
+        "ok": True,
+        "stats": {
+            "facts_active": facts_active,
+            "clusters": stats.get("clusters", 0),
+            "pairs_created": stats.get("pairs_seen", 0),
+            "pairs_archived": stats.get("pairs_archived", 0),
+            "drift_enqueued": hash_stats.get("drift", 0),
+        },
+    }
+
+
+@router.get("/projects/{project_id}/live")
+async def live_hints(
+    project_id: uuid.UUID,
+    scene_id: uuid.UUID | None = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """编辑期间内联提示:返回该场景的写时探查命中(§9.2)。"""
+    from datetime import datetime, timezone
+
+    await _verify_project_owner(db, project_id, user)
+    checker = ConsistencyChecker(db)
+    hints = await checker.live_hint(str(project_id), str(scene_id), None)
+    return {"scene_id": str(scene_id), "candidates": hints}
 
 
 @router.post("/issues/{issue_id}/resolve")

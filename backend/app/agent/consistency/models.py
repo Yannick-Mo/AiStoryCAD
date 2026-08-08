@@ -79,6 +79,26 @@ class ConflictCandidate(BaseModel):
         return out
 
 
+class CandidateView(BaseModel):
+    """One conflict-candidate row as seen by the judge stage (v3, §14.3).
+
+    Carries the two normalised values plus their evidence snapshots and
+    provenance — exactly what ``build_judge_pair_prompt`` renders.
+    """
+
+    id: str | None = None
+    entity: str
+    attribute: str
+    value_a: str
+    value_b: str
+    evidence_a: str = ""
+    evidence_b: str = ""
+    scene_a: str | None = None
+    scene_b: str | None = None
+    chapter_a: str | None = None
+    chapter_b: str | None = None
+
+
 class Verdict(str, Enum):
     """Stage-3 judgement for a conflict candidate."""
 
@@ -103,6 +123,8 @@ class ConsistencyIssue(BaseModel):
     # v2 extras — provenance and judgement from the verify stage.
     verdict: Verdict | None = None
     evidence: list[str] | None = None
+    # v3 — linkage back to the conflict-candidate row that produced this issue.
+    candidate_id: str | None = None
 
 
 class ConsistencyReport(BaseModel):

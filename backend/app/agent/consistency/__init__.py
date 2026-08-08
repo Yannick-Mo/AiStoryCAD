@@ -1,13 +1,24 @@
 from .checker import ConsistencyChecker
-from .engine import ConsistencyPipeline
-from .models import ConsistencyIssue, ConsistencyReport, Fact, ConflictCandidate, Verdict
+from .models import (
+    ConflictCandidate,
+    ConsistencyIssue,
+    ConsistencyReport,
+    Fact,
+    Verdict,
+)
+from .facts import normalise_value
+from .utils import hash_content
+from .worker import FactWorker, Inbox, get_worker, register_worker
 
 __all__ = [
     "ConsistencyChecker",
-    "ConsistencyPipeline",
     "ConsistencyIssue",
     "ConsistencyReport",
     "Fact",
     "ConflictCandidate",
     "Verdict",
+    "FactWorker",
+    "Inbox",
+    "normalise_value",
+    "hash_content",
 ]

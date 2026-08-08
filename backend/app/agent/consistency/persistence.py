@@ -1,72 +1,31 @@
-"""Persistence helpers for the consistency engine v2.
+"""Persistence helpers for the consistency engine v3.
 
-Keeps the SQL out of the engine so the pipeline stays readable and the
-caching rules are centralised and testable.
+v2's scene-fact cache is gone — the ledger tables are written by
+:mod:`app.agent.consistency.worker` and reconciled by
+:mod:`app.agent.consistency.reconcile`. What remains here is the *check-side*
+persistence: report rows, issue linkage, resolve flow.
+
+Design rule (§14.5): ``check_all`` gathers everything in ONE transaction and
+commits in 阶段5 — no half-written reports. Report persistence therefore does
+not commit; the caller (checker) commits.
 """
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.consistency.models import ConsistencyIssue, ConsistencyReport
-from app.agent.consistency.orm import ConsistencyLog, ConsistencyReportRecord, SceneFactCache
+from app.agent.consistency.models import ConsistencyIssue, ConsistencyReport, Verdict
+from app.agent.consistency.orm import (
+    ConflictCandidateRecord,
+    ConsistencyLog,
+    ConsistencyReportRecord,
+)
 
-
-# ---------------------------------------------------------------------------
-# Scene fact cache
-# ---------------------------------------------------------------------------
-
-async def load_scene_fact_cache(
-    db: AsyncSession,
-    project_id,
-    scene_ids: list[str],
-) -> dict[str, dict]:
-    """Load cached facts for the given scene ids, keyed by ``str(scene_id)``.
-
-    Returns ``{scene_id_str: {"content_hash": ..., "facts": [...], "error": ...}}``.
-    """
-    if not scene_ids:
-        return {}
-    result = await db.execute(
-        select(SceneFactCache).where(
-            SceneFactCache.project_id == project_id,
-            SceneFactCache.scene_id.in_(scene_ids),
-        )
-    )
-    out: dict[str, dict] = {}
-    for row in result.scalars().all():
-        out[str(row.scene_id)] = {
-            "content_hash": row.content_hash,
-            "facts": row.facts or [],
-            "error": row.error,
-        }
-    return out
-
-
-async def save_scene_fact_cache(
-    db: AsyncSession,
-    project_id,
-    entries: list[dict],
-) -> None:
-    """Upsert scene fact cache rows.
-
-    Each entry: ``{"scene_id", "content_hash", "facts", "error"}``. Only
-    scenes with a non-empty content hash are written (empty scenes carry no
-    extractable body and don't belong in the cache).
-    """
-    for entry in entries:
-        if not entry.get("content_hash"):
-            continue
-        cached = await db.get(SceneFactCache, entry["scene_id"])
-        if cached is None:
-            cached = SceneFactCache(scene_id=entry["scene_id"], project_id=project_id)
-            db.add(cached)
-        cached.content_hash = entry["content_hash"]
-        cached.facts = entry.get("facts") or []
-        cached.error = entry.get("error")
-        cached.updated_at = datetime.now(timezone.utc)
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +36,7 @@ async def latest_report(db: AsyncSession, project_id) -> ConsistencyReportRecord
     result = await db.execute(
         select(ConsistencyReportRecord)
         .where(ConsistencyReportRecord.project_id == project_id)
-        .order_by(ConsistencyReportRecord.created_at.desc())
+        .order_by(ConsistencyReportRecord.created_at.desc(), ConsistencyReportRecord.id.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()
@@ -91,7 +50,7 @@ async def list_reports(
     result = await db.execute(
         select(ConsistencyReportRecord)
         .where(ConsistencyReportRecord.project_id == project_id)
-        .order_by(ConsistencyReportRecord.created_at.desc())
+        .order_by(ConsistencyReportRecord.created_at.desc(), ConsistencyReportRecord.id.desc())
         .limit(limit)
     )
     return list(result.scalars().all())
@@ -143,6 +102,10 @@ async def persist_report(
     report: ConsistencyReport,
     meta: dict,
 ) -> ConsistencyReportRecord:
+    """One report row + its issue rows, then link judged candidates via
+    ``issue_id`` so ``resolve`` can flip them (阶段5, §9.1). Does NOT commit —
+    caller commits at the end of the check.
+    """
     record = ConsistencyReportRecord(
         project_id=project_id,
         requested_by=requested_by,
@@ -153,7 +116,19 @@ async def persist_report(
     db.add(record)
     await db.flush()
     for issue in report.issues:
-        db.add(_issue_to_log(project_id, record.id, issue))
+        log = _issue_to_log(project_id, record.id, issue)
+        db.add(log)
+        await db.flush()
+        candidate_id = getattr(issue, "candidate_id", None)
+        if candidate_id:
+            try:
+                await db.execute(
+                    update(ConflictCandidateRecord)
+                    .where(ConflictCandidateRecord.id == candidate_id)
+                    .values(issue_id=log.id)
+                )
+            except Exception:
+                logger.warning("failed to link issue to candidate %s", candidate_id, exc_info=True)
     return record
 
 
@@ -161,10 +136,13 @@ def _issue_to_log(project_id, report_id, issue: ConsistencyIssue) -> Consistency
     entity_id = None
     if issue.entity_id:
         try:
-            import uuid
             entity_id = uuid.UUID(issue.entity_id.split(",")[0].strip())
         except (ValueError, AttributeError):
             entity_id = None
+    candidate_id = getattr(issue, "candidate_id", None)
+    evidence = issue.evidence
+    if candidate_id is not None and evidence is None:
+        evidence = []
     return ConsistencyLog(
         project_id=project_id,
         report_id=report_id,
@@ -175,7 +153,7 @@ def _issue_to_log(project_id, report_id, issue: ConsistencyIssue) -> Consistency
         description=issue.description,
         suggestion=issue.suggestion,
         verdict=issue.verdict.value if issue.verdict else None,
-        evidence=issue.evidence,
+        evidence=evidence,
     )
 
 
@@ -184,6 +162,17 @@ async def resolve_issue(db: AsyncSession, issue_id: str, resolved: bool = True) 
     if row is None:
         return False
     row.is_resolved = resolved
+    # 联动: flip the candidate that produced this issue so it never
+    # resurrects as pending (§9.1).
+    await db.execute(
+        update(ConflictCandidateRecord)
+        .where(ConflictCandidateRecord.issue_id == issue_id)
+        .values(
+            resolved=resolved,
+            status=("dismissed" if resolved else "verified"),
+            resolved_at=datetime.now(timezone.utc) if resolved else None,
+        )
+    )
     return True
 
 
@@ -192,13 +181,7 @@ async def get_issue(db: AsyncSession, issue_id: str) -> ConsistencyLog | None:
 
 
 async def rebuild_report(db: AsyncSession, project_id) -> ConsistencyReport | None:
-    """Reconstruct the latest full report from its persisted issue rows.
-
-    Used to serve a fresh report directly (HTTP 200) without re-running the
-    pipeline when nothing has changed since the last check.
-    """
-    from app.agent.consistency.models import Verdict
-
+    """Reconstruct the latest full report from its persisted issue rows."""
     record = await latest_report(db, project_id)
     if record is None:
         return None
