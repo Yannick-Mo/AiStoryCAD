@@ -5,6 +5,22 @@
 StoryCAD 是一个专为小说作者打造的 AI 辅助创作平台。它不是简单的文本生成器，而是一个**深度理解叙事结构**的创作伙伴——从你脑海中的模糊想法，到完整的故事大纲、章节、场景、角色关系，它全程参与。
 
 ---
+## 界面截图
+
+<div align="center">
+  <img src="img-ui/网站首页.png" alt="网站首页" width="45%" />
+  <img src="img-ui/幕.png" alt="幕" width="45%" />
+</div>
+<div align="center">
+  <img src="img-ui/章节点.png" alt="章节点" width="45%" />
+  <img src="img-ui/ai助手.png" alt="AI 助手" width="45%" />
+</div>
+<div align="center">
+  <img src="img-ui/灵感生成.png" alt="灵感生成" width="45%" />
+  <img src="img-ui/灵感生成-故事开头.png" alt="灵感生成-故事开头" width="45%" />
+</div>
+
+---
 
 ## 为什么需要 StoryCAD？
 
@@ -139,22 +155,7 @@ LLM 流式响应 + 工具调用 → 流式执行器调度工具
 
 ---
 
-## 界面截图
 
-<div align="center">
-  <img src="img-ui/网站首页.png" alt="网站首页" width="45%" />
-  <img src="img-ui/幕.png" alt="幕" width="45%" />
-</div>
-<div align="center">
-  <img src="img-ui/章节点.png" alt="章节点" width="45%" />
-  <img src="img-ui/ai助手.png" alt="AI 助手" width="45%" />
-</div>
-<div align="center">
-  <img src="img-ui/灵感生成.png" alt="灵感生成" width="45%" />
-  <img src="img-ui/灵感生成-故事开头.png" alt="灵感生成-故事开头" width="45%" />
-</div>
-
----
 
 ## 技术栈
 
