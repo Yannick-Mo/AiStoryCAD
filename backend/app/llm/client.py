@@ -85,14 +85,32 @@ def _resolve_fallback_models() -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
-def _resolve_models(requested: str) -> list[str]:
+def _resolve_models(
+    requested: str,
+    fallback_models: list[str] | None = None,
+) -> list[str]:
+    """Resolve the ordered model chain to try for a request.
+
+    When explicit ``fallback_models`` are configured, they take precedence
+    (``[requested] + fallbacks``, deduplicated) regardless of registry order.
+    Otherwise fall back to registry order: keep the requested model first,
+    then any downstream models.  An unregistered requested model yields
+    ``[requested]`` — this lets recovery's model override (an unregistered
+    model name) take effect instead of silently retrying a different one.
+    """
+    if fallback_models:
+        chain = [requested]
+        for m in fallback_models:
+            if m != requested and m not in chain:
+                chain.append(m)
+        return chain
     ordered = _get_ordered()
     if not ordered:
         return [requested]
     if requested in ordered:
         idx = ordered.index(requested)
         return ordered[idx:]  # keep the requested model first, then downstream
-    return ordered
+    return [requested]
 
 
 class LLMClient:
@@ -109,6 +127,7 @@ class LLMClient:
         self.api_key = api_key or settings.llm_api_key
         self.base_url = base_url or settings.llm_base_url
         self.fallback_models = fallback_models or _resolve_fallback_models()
+        self._timeout = timeout
         if _client is not None:
             self._client = _client
             self._owns_client = False
@@ -192,12 +211,8 @@ class LLMClient:
         request_id: str = "",
         session_id: str | None = None,
     ) -> ChatResult:
-        resolved = _resolve_models(model or self.model)
-        if self.fallback_models:
-            primary = model or self.model
-            models_to_try = [primary] + [m for m in self.fallback_models if m != primary]
-        else:
-            models_to_try = resolved
+        resolved = _resolve_models(model or self.model, self.fallback_models)
+        models_to_try = resolved
         last_error: Exception | None = None
 
         logger.bind(request_id=request_id).info("LLM chat | model={} | stream={}", model or self.model, stream)
@@ -344,8 +359,18 @@ class LLMClient:
         yielded_any = False
         for attempt in range(MAX_RETRIES):
             try:
+                # Per-request timeout: streaming reads may legitimately idle
+                # (writing tools) far longer than the client's read timeout.
+                # The construction-time timeout is kept for non-stream calls.
+                request_timeout = httpx.Timeout(
+                    connect=10.0,
+                    read=max(self._timeout, 600.0),
+                    write=30.0,
+                    pool=10.0,
+                )
                 async with self._client.stream(
                     "POST", url, headers=headers, json=body,
+                    timeout=request_timeout,
                 ) as resp:
                     # Check status code manually so we can read the error
                     # body while the connection is still open.
@@ -419,7 +444,7 @@ class LLMClient:
         If *tools* is provided, ``tool_choice`` is set to ``"none"`` so the
         model sees tool definitions but is forced to respond in plain text.
         """
-        models_to_try = _resolve_models(model or self.model)
+        models_to_try = _resolve_models(model or self.model, self.fallback_models)
         last_error: Exception | None = None
 
         logger.bind(request_id=request_id).info("LLM stream | model={}", model or self.model)
@@ -489,7 +514,7 @@ class LLMClient:
 
         This enables executing tools during streaming rather than after.
         """
-        models_to_try = _resolve_models(model or self.model)
+        models_to_try = _resolve_models(model or self.model, self.fallback_models)
         last_error: Exception | None = None
 
         logger.bind(request_id=request_id).info(
@@ -609,7 +634,10 @@ class LLMClient:
     def _parse_response(self, data: dict, model_name: str, session_id: str | None = None) -> ChatResult:
         choice = data["choices"][0]
         msg = choice.get("message", {})
-        content = msg.get("content")
+        # OpenAI-compatible API: content must be null when tool_calls are
+        # present.  Some providers echo both — null it defensively so the
+        # caller never treats tool-call turns as plain text.
+        content = None if msg.get("tool_calls") else msg.get("content")
 
         tool_calls: list[ToolCall] | None = None
         if msg.get("tool_calls"):

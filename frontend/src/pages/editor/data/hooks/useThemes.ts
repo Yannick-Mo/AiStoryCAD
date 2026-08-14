@@ -21,27 +21,27 @@ export function useThemes(
       id, name: name ?? `新主题 ${data.themes.length + 1}`, color: color ?? '#d4a373',
       proposition: proposition ?? '', chapterIndices: [], connections: [],
     }
-    setData((d: any) => d ? { ...d, themes: [...d.themes, newTheme] } : d)
+    setData(d => d ? { ...d, themes: [...d.themes, newTheme] } : d)
     enqueueChange({ entity: 'themes', op: 'create', data: { id, project_id: projectId, name: newTheme.name, color: newTheme.color, proposition: newTheme.proposition } })
     return newTheme
   }, [data, projectId, enqueueChange, setData])
 
   const deleteTheme = useCallback((themeId: string) => {
     if (!data) return
-    setData((d: any) => d ? { ...d, themes: d.themes.filter((t: any) => t.id !== themeId) } : d)
+    setData(d => d ? { ...d, themes: d.themes.filter(t => t.id !== themeId) } : d)
     enqueueChange({ entity: 'themes', op: 'delete', id: themeId })
   }, [data, enqueueChange, setData])
 
   const updateTheme = useCallback((id: string, updates: Partial<Pick<ThemeItem, 'name' | 'color' | 'proposition'>>) => {
-    setData((d: any) => d ? { ...d, themes: d.themes.map((t: any) => t.id === id ? { ...t, ...updates } : t) } : d)
+    setData(d => d ? { ...d, themes: d.themes.map(t => t.id === id ? { ...t, ...updates } : t) } : d)
     enqueueChange({ entity: 'themes', op: 'update', data: { id, ...updates } })
   }, [enqueueChange, setData])
 
   const addThemeChapterIndex = useCallback((themeId: string, chapterIdx: number) => {
     if (!data) return
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      themes: d.themes.map((t: any) => t.id === themeId ? {
+      themes: d.themes.map(t => t.id === themeId ? {
         ...t, chapterIndices: [...t.chapterIndices, chapterIdx],
       } : t),
     } : d)
@@ -54,10 +54,10 @@ export function useThemes(
 
   const removeThemeChapterIndex = useCallback((themeId: string, chapterIdx: number) => {
     if (!data) return
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      themes: d.themes.map((t: any) => t.id === themeId ? {
-        ...t, chapterIndices: t.chapterIndices.filter((i: number) => i !== chapterIdx),
+      themes: d.themes.map(t => t.id === themeId ? {
+        ...t, chapterIndices: t.chapterIndices.filter(i => i !== chapterIdx),
       } : t),
     } : d)
     const chapterId = _getChapterId(chapterIdx)

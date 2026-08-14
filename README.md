@@ -178,29 +178,47 @@ LLM 流式响应 + 工具调用 → 流式执行器调度工具
 - Docker & Docker Compose v2
 - 一个 OpenAI 兼容的 LLM API Key（DeepSeek / OpenAI / 其他）
 
-### 启动
+### 启动（生产/日常使用）
 
 ```bash
 # 1. 配置环境变量
 cp .env.example .env
-# 编辑 .env，至少设置 JWT_SECRET_KEY 和 LLM_API_KEY
+# 编辑 .env，至少设置 JWT_SECRET_KEY、LLM_API_KEY、SEARXNG_SECRET_KEY
 
-# 2. 启动全部服务
-docker compose up -d
+# 2. 构建并启动全部 5 个服务（db / redis / backend / searxng / frontend）
+docker compose up -d --build
 
 # 3. 访问
-#   前端:  http://localhost:5173
-#   API:   http://localhost:8000
-#   Swagger: http://localhost:8000/docs
+#   前端:      http://localhost:5173   （nginx 托管静态产物，/api 与 /mcp 反代到后端）
+#   API:       http://localhost:8000
+#   Swagger:   http://localhost:8000/docs
 ```
 
-### 本地开发
+生产配置**不挂载源码**：backend 镜像只含运行时依赖，frontend 由 nginx 托管构建产物。
+
+### 本地开发（源码热重载）
+
+```bash
+# 叠加 docker-compose.dev.yml：backend 挂载源码 + uvicorn --reload，
+# frontend 跑 vite dev server（对外端口 8080，代理 /api、/mcp 到 backend）
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+# 访问 http://localhost:8080 （vite dev server）
+```
+
+在容器里跑后端测试：
+
+```bash
+docker compose exec -T backend pytest tests -q
+```
+
+不使用 Docker 的本机开发：
 
 ```bash
 # 后端
 cd backend
 python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt   # 含测试依赖
 # 确保 PostgreSQL + pgvector + Redis 已运行
 uvicorn app.main:app --reload --port 8000
 
@@ -220,12 +238,13 @@ npm run dev
 |---|---|---|
 | `JWT_SECRET_KEY` | JWT 签名密钥（必填） | — |
 | `LLM_API_KEY` | LLM API 密钥（必填） | — |
-| `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com` |
-| `LLM_MODEL` | 模型名称 | `deepseek-chat` |
+| `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com/v1` |
+| `LLM_MODEL` | 模型名称 | `deepseek-v4-flash` |
+| `SEARXNG_SECRET_KEY` | SearXNG 会话签名密钥（生产必填随机值） | — |
 | `DATABASE_URL` | PostgreSQL 连接串 | `postgresql+asyncpg://postgres:postgres@db:5432/storyforge` |
 | `REDIS_URL` | Redis 连接串 | `redis://redis:6379/0` |
 
-完整配置项见 `backend/app/config.py`。
+完整配置项见 `backend/app/config.py`。后端依赖锁定在 `backend/requirements.lock`（主要依赖精确版本），可用 `pip install -r requirements.lock` 复现生产依赖；测试依赖见 `backend/requirements-dev.txt`（仅 CI 与本地开发安装，不进生产镜像）。CI 配置见 `.github/workflows/ci.yml`（后端 pytest + 前端 typecheck/build）。
 
 ---
 
@@ -249,17 +268,23 @@ StoryCAD/
 │   │   ├── mcp/                 # MCP 协议服务器
 │   │   └── user/                # 用户认证
 │   ├── alembic/                 # 数据库迁移
-│   └── requirements.txt
+│   ├── requirements.txt         # 生产依赖
+│   ├── requirements-dev.txt     # 测试依赖（pytest 等）
+│   ├── requirements.lock        # 主要依赖精确版本锁定
+│   └── tests/                   # 后端测试
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/               # 页面（主页/编辑器/登录）
 │   │   ├── api/                 # API 客户端
 │   │   ├── context/             # React 上下文
 │   │   └── hooks/               # 自定义 Hooks
+│   ├── nginx.conf               # 生产 nginx 配置（托管静态产物 + 反代 /api、/mcp）
 │   └── package.json
-├── docker-compose.yml           # 服务编排
+├── docker-compose.yml           # 生产编排（5 服务）
+├── docker-compose.dev.yml       # 本地开发覆盖（源码挂载 + 热重载）
 ├── .env.example                 # 环境变量模板
-└── searxng/                     # SearXNG 配置
+├── searxng/                     # SearXNG 配置
+└── .github/workflows/ci.yml     # CI：后端 pytest + 前端 typecheck/build
 ```
 
 ---

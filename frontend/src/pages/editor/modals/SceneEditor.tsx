@@ -250,7 +250,8 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
               onSelect={handleSelect}
               onMouseUp={handleSelect}
               onKeyUp={handleSelect}
-              className="w-full h-full bg-gray-950 border border-gray-700 rounded-xl p-6 text-base text-gray-200 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-600"
+              disabled={!!diffState}
+              className="w-full h-full bg-gray-950 border border-gray-700 rounded-xl p-6 text-base text-gray-200 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="在这里写小说正文..."
             />
           </div>

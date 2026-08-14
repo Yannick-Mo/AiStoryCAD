@@ -12,27 +12,27 @@ export function useCharacters(
   const addCharacter = useCallback((name?: string) => {
     if (!data) throw new Error("Store not initialized")
     const id = crypto.randomUUID()
-    const newChar = {
+    const newChar: Character = {
       id, name: name ?? `新角色 ${data.characters.length + 1}`,
       role: 'ally', personality: '', appearance: '', background: '', motivation: '', relations: [],
     }
-    setData((d: any) => d ? { ...d, characters: [...d.characters, newChar] } : d)
+    setData(d => d ? { ...d, characters: [...d.characters, newChar] } : d)
     enqueueChange({ entity: 'characters', op: 'create', data: { id, project_id: projectId, name: newChar.name, role: newChar.role } })
     return newChar
   }, [data, projectId, enqueueChange, setData])
 
   const deleteCharacter = useCallback((charId: string) => {
     if (!data) return
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      characters: d.characters.filter((c: any) => c.id !== charId).map((c: any) => ({ ...c, relations: c.relations.filter((r: any) => r.targetId !== charId) })),
+      characters: d.characters.filter(c => c.id !== charId).map(c => ({ ...c, relations: c.relations.filter(r => r.targetId !== charId) })),
     } : d)
     enqueueChange({ entity: 'characters', op: 'delete', id: charId })
     clearSelection()
   }, [data, enqueueChange, clearSelection, setData])
 
   const updateCharacter = useCallback((id: string, updates: Partial<Pick<Character, 'name' | 'role' | 'personality' | 'appearance' | 'background' | 'motivation'>>) => {
-    setData((d: any) => d ? { ...d, characters: d.characters.map((c: any) => c.id === id ? { ...c, ...updates } : c) } : d)
+    setData(d => d ? { ...d, characters: d.characters.map(c => c.id === id ? { ...c, ...updates } : c) } : d)
     const backendData: Record<string, unknown> = { id }
     if (updates.name !== undefined) backendData.name = updates.name
     if (updates.role !== undefined) backendData.role = updates.role
@@ -46,10 +46,10 @@ export function useCharacters(
   const addRelation = useCallback((sourceId: string, targetId: string) => {
     if (!data) return
     const id = crypto.randomUUID()
-    const newRel = { id, targetId, type: '关联', label: '', description: '' }
-    setData((d: any) => d ? {
+    const newRel: CharacterRelation = { id, targetId, type: '关联', label: '', description: '', trust: 50, threat: 50, attraction: 50 }
+    setData(d => d ? {
       ...d,
-      characters: d.characters.map((c: any) => c.id === sourceId ? { ...c, relations: [...c.relations, newRel] } : c),
+      characters: d.characters.map(c => c.id === sourceId ? { ...c, relations: [...c.relations, newRel] } : c),
     } : d)
     enqueueChange({ entity: 'character_relations', op: 'create', data: { id, project_id: projectId, character_id: sourceId, target_id: targetId, rel_type: '关联' } })
     return newRel
@@ -57,20 +57,20 @@ export function useCharacters(
 
   const deleteRelation = useCallback((characterId: string, relationId: string) => {
     if (!data) return
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      characters: d.characters.map((c: any) => c.id === characterId ? { ...c, relations: c.relations.filter((r: any) => r.id !== relationId) } : c),
+      characters: d.characters.map(c => c.id === characterId ? { ...c, relations: c.relations.filter(r => r.id !== relationId) } : c),
     } : d)
     enqueueChange({ entity: 'character_relations', op: 'delete', id: relationId })
     clearSelection()
   }, [data, enqueueChange, clearSelection, setData])
 
   const updateRelation = useCallback((id: string, updates: Partial<Pick<CharacterRelation, 'type' | 'label' | 'description'>>) => {
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      characters: d.characters.map((ch: any) => ({
+      characters: d.characters.map(ch => ({
         ...ch,
-        relations: ch.relations.map((r: any) => r.id === id ? { ...r, ...updates } : r),
+        relations: ch.relations.map(r => r.id === id ? { ...r, ...updates } : r),
       })),
     } : d)
     const backendData: Record<string, unknown> = { id }

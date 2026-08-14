@@ -32,6 +32,8 @@ def _msg_to_dict(m: Message) -> dict[str, Any]:
     d: dict[str, Any] = {"role": m.role}
     if m.content is not None:
         d["content"] = m.content
+    if m.reasoning_content:
+        d["reasoning_content"] = m.reasoning_content
     if m.tool_calls:
         d["tool_calls"] = [
             {"id": tc.id, "type": tc.type, "function": tc.function}
@@ -51,6 +53,7 @@ def _dict_to_msg(d: dict) -> Message:
         tool_calls=[ToolCall(**tc) for tc in d.get("tool_calls", [])] if d.get("tool_calls") else None,
         tool_call_id=d.get("tool_call_id"),
         name=d.get("name"),
+        reasoning_content=d.get("reasoning_content"),
     )
 
 
@@ -148,10 +151,12 @@ class ConversationMemory:
                 logger.debug("conv cache set add failed: {}", exc)
         return str(conv.id)
 
-    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+    async def rename_conversation(self, conversation_id: str, title: str, user_id: str | None = None) -> None:
         cid = _canonical_id(conversation_id)
         conv = await self._get_conversation(cid)
         if conv is None:
+            return
+        if user_id is not None and str(conv.user_id) != str(_to_uuid(user_id)):
             return
         conv.title = title
         await self.db.commit()
@@ -180,8 +185,12 @@ class ConversationMemory:
 
     # ── Messages ──────────────────────────────────────────────────────
 
-    async def get_history(self, conversation_id: str) -> list[Message]:
+    async def get_history(self, conversation_id: str, user_id: str | None = None) -> list[Message]:
         cid = _canonical_id(conversation_id)
+        if user_id is not None:
+            conv = await self._get_conversation(cid)
+            if conv is None or str(conv.user_id) != str(_to_uuid(user_id)):
+                return []
         # Cache hit path
         if self._redis:
             try:
@@ -208,10 +217,14 @@ class ConversationMemory:
         )
         return list(result.scalars().all())
 
-    async def save_message(self, conversation_id: str, message: Message) -> None:
+    async def save_message(self, conversation_id: str, message: Message, user_id: str | None = None) -> None:
         cid = _canonical_id(conversation_id)
         if _to_uuid(cid).int == 0:
             return
+        if user_id is not None:
+            conv = await self._get_conversation(cid)
+            if conv is None or str(conv.user_id) != str(_to_uuid(user_id)):
+                return
         # Trim to the newest MAX_HISTORY_MESSAGES in the DB as well.
         count = await self._count_messages(cid)
         if count >= MAX_HISTORY_MESSAGES:
@@ -253,10 +266,14 @@ class ConversationMemory:
                 delete(ConversationMessage).where(ConversationMessage.id.in_(ids))
             )
 
-    async def replace_history(self, conversation_id: str, messages: list[Message]) -> None:
+    async def replace_history(self, conversation_id: str, messages: list[Message], user_id: str | None = None) -> None:
         cid = _canonical_id(conversation_id)
         if _to_uuid(cid).int == 0:
             return
+        if user_id is not None:
+            conv = await self._get_conversation(cid)
+            if conv is None or str(conv.user_id) != str(_to_uuid(user_id)):
+                return
         await self.db.execute(
             delete(ConversationMessage).where(ConversationMessage.conversation_id == _to_uuid(cid))
         )
@@ -314,6 +331,11 @@ class ConversationMemory:
                 for i, m in enumerate(messages)
             ],
         }
+
+    async def get_conversation_owner_id(self, conversation_id: str) -> str | None:
+        """Return the owning user_id of a conversation, or None if it does not exist."""
+        conv = await self._get_conversation(_canonical_id(conversation_id))
+        return str(conv.user_id) if conv is not None else None
 
     # ── Agent state ───────────────────────────────────────────────────
 

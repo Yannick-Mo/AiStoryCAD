@@ -58,8 +58,6 @@ class LoopState:
     # ── Planning ────────────────────────────────────────────────────
     pending_plan: dict = field(default_factory=dict)
     plan_confirmed: bool = False
-    planned_steps: list = field(default_factory=list)
-    current_step_index: int = 0
 
     # ── Recovery / errors ───────────────────────────────────────────
     errors: list = field(default_factory=list)
@@ -72,14 +70,18 @@ class LoopState:
     # ── Token budget ────────────────────────────────────────────────
     budget_total_estimated: int = 0
     budget_model_limit: int = 900_000
-    budget_continuation_count: int = 0
     budget_last_delta: int = 0
     budget_warn_level: str = ""  # "" | "warning" | "critical"
+
+    # ── LLM generation ──────────────────────────────────────────────
+    # max output tokens per completion; recovery escalates it to 32768
+    # when RETRY_ESCALATED_TOKENS fires so the model has room to answer.
+    max_tokens: int = 16384
 
     # ── Tool-only loop detection ────────────────────────────────────
     # Separate counter so error recovery (which uses retry_count) does
     # not pollute tool-only loop detection, and the retry_count=0 reset
-    # at loop.py:848 does not prevent accumulation.
+    # at loop.py:1241 does not prevent accumulation.
     tool_only_turns: int = 0
     # Tracks consecutive write-only turns to catch infinite write loops
     write_only_turns: int = 0
@@ -142,8 +144,6 @@ class LoopState:
             # Planning
             pending_plan=dict(initial_state.get("pending_plan", {}) or {}),
             plan_confirmed=bool(initial_state.get("plan_confirmed", False)),
-            planned_steps=list(initial_state.get("planned_steps", []) or []),
-            current_step_index=int(initial_state.get("current_step_index", 0) or 0),
             # Recovery
             errors=list(initial_state.get("errors", []) or []),
             retry_count=int(initial_state.get("retry_count", 0) or 0),
@@ -154,9 +154,10 @@ class LoopState:
             # Token budget
             budget_total_estimated=int(initial_state.get("budget_total_estimated", 0) or 0),
             budget_model_limit=int(initial_state.get("budget_model_limit", 900_000) or 900_000),
-            budget_continuation_count=int(initial_state.get("budget_continuation_count", 0) or 0),
             budget_last_delta=int(initial_state.get("budget_last_delta", 0) or 0),
             budget_warn_level=initial_state.get("budget_warn_level", "") or "",
+            # LLM generation
+            max_tokens=int(initial_state.get("max_tokens", 0) or 0) or 16384,
             # Tool-only loop detection
             tool_only_turns=int(initial_state.get("tool_only_turns", 0) or 0),
             write_only_turns=int(initial_state.get("write_only_turns", 0) or 0),
@@ -192,8 +193,6 @@ class LoopState:
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
             "current_options": self.current_options,
-            "planned_steps": self.planned_steps,
-            "current_step_index": self.current_step_index,
             "errors": self.errors,
             "pending_plan": self.pending_plan,
             "plan_confirmed": self.plan_confirmed,
@@ -210,7 +209,8 @@ class LoopState:
             # Token budget
             "budget_total_estimated": self.budget_total_estimated,
             "budget_model_limit": self.budget_model_limit,
-            "budget_continuation_count": self.budget_continuation_count,
             "budget_last_delta": self.budget_last_delta,
             "budget_warn_level": self.budget_warn_level,
+            # LLM generation
+            "max_tokens": self.max_tokens,
         }

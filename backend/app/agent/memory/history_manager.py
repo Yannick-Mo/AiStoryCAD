@@ -38,8 +38,12 @@ MIN_SUMMARIZE_INTERVAL = 10
 _SUMMARY_PREFIX = "conv:summary:"
 
 # Pattern to extract tool name from tool message content like:
-# "[工具执行结果: list_chapters]\n..." or "[工具执行失败: update_chapter]\n..."
-_TOOL_MSG_PATTERN = re.compile(r'^\[工具执行(?:结果|失败): (\w+)\]')
+#   "[工具执行结果: list_chapters]\n...", "[操作成功]\n...",
+#   "[操作失败]\n...", "[操作被拦截]\n...", "[操作等待确认]\n工具 {name} 已生成计划..."
+_TOOL_MSG_PATTERN = re.compile(
+    r'^\[(?:工具执行(?:结果|失败)|操作成功|操作失败|操作被拦截|操作等待确认)'
+    r'(?:[:：]\s*(\w+))?\]'
+)
 
 
 def _sanitize_for_summary(messages: list[Message]) -> list[Message]:
@@ -75,9 +79,13 @@ def _extract_tool_name(content: str) -> str | None:
     Matches:
       [工具执行结果: list_chapters]
       [工具执行失败: update_chapter]
+      [操作等待确认]\\n工具 update_chapter 已生成计划...
     """
     m = _TOOL_MSG_PATTERN.match(content)
-    return m.group(1) if m else None
+    if m and m.group(1):
+        return m.group(1)
+    m2 = re.search(r'工具\s+([A-Za-z_]\w*)', content or "")
+    return m2.group(1) if m2 else None
 
 
 class HistoryManager:

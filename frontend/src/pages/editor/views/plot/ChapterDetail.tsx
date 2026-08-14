@@ -42,6 +42,10 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
     }
   }, [chapter?.id, projectId])
 
+  useEffect(() => {
+    setEditGoal(chapter?.goal ?? '')
+  }, [chapter?.id])
+
   if (!chapter) return null
 
   const totalWords = chapter.scenes.reduce((s, sc) => s + sc.wordCount, 0)
@@ -113,9 +117,9 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
           <div className="text-[10px] text-gray-500 mb-1.5">📝 本章目标</div>
           <textarea
-            value={editGoal || chapter.goal}
+            value={editGoal}
             onChange={e => setEditGoal(e.target.value)}
-            onBlur={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal || chapter.goal) }}
+            onBlur={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal) }}
             placeholder="写一段话概括本章要完成什么..."
             className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
             rows={3}

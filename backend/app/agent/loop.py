@@ -43,7 +43,6 @@ from app.agent.prompts.builder import get_prompt_builder
 from app.agent.token_budget import (
     check_token_budget,
     compute_budget,
-    estimate_tool_result_tokens,
 )
 from app.agent.tools import get_filtered_tools, get_tool_descriptions
 from app.agent.tools.base import BaseTool
@@ -786,6 +785,27 @@ async def autonomous_loop(
             budget_last_delta=budget.total_estimated_tokens - state.budget_total_estimated,
         )
 
+        # ── Build system prompt (before compression so the context
+        #    estimate includes it — the system prompt occupies the same
+        #    window and must not be excluded from the compression trigger) ──
+        # Rebuild the merged ID registry from the persisted baseline + this
+        # request's tool-result window.  tool_results survive compression, so
+        # the registry stays available across turns without verbatim message
+        # preservation.
+        state = state.replace(
+            id_registry=build_id_registry(
+                state.tool_results,
+                persisted=state._id_registry_persisted,
+                version=state.id_registry_version,
+            )
+        )
+        dynamic_sections = _attach.build_system_sections(state)
+        sections = await _build_turn_sections(
+            state, cowriter_persona, dynamic_sections,
+            filtered_tool_desc, budget_check,
+        )
+        system_content = base_system + "\n\n" + "\n\n".join(sections)
+
         # ── Confirm/reject detection (before LLM call) ────────────
         if state.pending_plan and not state.plan_confirmed:
             last_user_msg = ""
@@ -873,8 +893,8 @@ async def autonomous_loop(
         if should_compress(state.messages, MODEL_CONTEXT_LIMIT):
             # Anti-oscillation guard: if the context barely grew since the
             # last compression, skip — avoids repeated LLM summaries near the
-            # 80% edge (compress → ratio just under → add 1 msg → re-fire).
-            est_now = estimate_tokens(state.messages, MODEL_CONTEXT_LIMIT)
+            # 70% edge (compress → ratio just under → add 1 msg → re-fire).
+            est_now = estimate_tokens(state.messages, MODEL_CONTEXT_LIMIT, system_prompt=system_content)
             if state._last_compress_tokens and est_now < state._last_compress_tokens * 1.05:
                 compressed = list(state.messages)
             else:
@@ -882,7 +902,7 @@ async def autonomous_loop(
                     state.messages, llm.chat, model_limit=MODEL_CONTEXT_LIMIT,
                 )
                 state = state.replace(
-                    _last_compress_tokens=estimate_tokens(compressed, MODEL_CONTEXT_LIMIT),
+                    _last_compress_tokens=estimate_tokens(compressed, MODEL_CONTEXT_LIMIT, system_prompt=system_content),
                 )
         if len(compressed) != original_count:
             reactive = len(compressed) < original_count * 0.3
@@ -897,24 +917,6 @@ async def autonomous_loop(
             logger.info("Compressed %d → %d messages", original_count, len(state.messages))
 
         # ── Step 2: Build messages for LLM ─────────────────────────
-        # Rebuild the merged ID registry from the persisted baseline + this
-        # request's tool-result window.  tool_results survive compression, so
-        # the registry stays available across turns without verbatim message
-        # preservation.
-        state = state.replace(
-            id_registry=build_id_registry(
-                state.tool_results,
-                persisted=state._id_registry_persisted,
-                version=state.id_registry_version,
-            )
-        )
-        dynamic_sections = _attach.build_system_sections(state)
-        sections = await _build_turn_sections(
-            state, cowriter_persona, dynamic_sections,
-            filtered_tool_desc, budget_check,
-        )
-        system_content = base_system + "\n\n" + "\n\n".join(sections)
-
         # Build final messages — strip orphaned tool messages that would
         # violate the OpenAI/DeepSeek API requirement (tool must follow
         # an assistant with tool_calls).
@@ -951,6 +953,8 @@ async def autonomous_loop(
                 temperature=0.7,
                 request_id=state.trace_id,
                 model=active_model,
+                max_tokens=state.max_tokens,
+                session_id=state.conversation_id,
             ):
                 if chunk.content:
                     assistant_text_parts.append(chunk.content)
@@ -1065,7 +1069,7 @@ async def autonomous_loop(
         # tool_call_id must land in safe_result_map so Step 6c can build the
         # mandatory role=tool message (API rejects orphan tool_calls).
         safe_results = await streaming_executor.await_pending_safe()
-        queued_excl, queued_barrier = streaming_executor.get_queued_tools()
+        queued_excl = streaming_executor.get_queued_tools()
 
         new_tool_results = list(state.tool_results)
         safe_result_map: dict[str, dict] = {}
@@ -1083,7 +1087,7 @@ async def autonomous_loop(
         if assistant_text.strip() or tool_call_objects:
             assistant_msg = Message(
                 role="assistant",
-                content=assistant_text or None,
+                content=None if tool_call_objects else (assistant_text or None),
                 reasoning_content=reasoning_text,
             )
             if tool_call_objects:
@@ -1093,7 +1097,7 @@ async def autonomous_loop(
             )
 
 
-        # ── Step 6: Interceptor Layer (BEFORE EXCL/BARRIER exec) ───
+        # ── Step 6: Interceptor Layer (BEFORE EXCL exec) ────────────
         if tool_blocks:
             intercept: InterceptResult = apply_interceptors(
                 tool_blocks,
@@ -1103,7 +1107,7 @@ async def autonomous_loop(
             )
 
             queued_ids: set[str] = {
-                tid for _, _, tid in queued_excl + queued_barrier
+                tid for _, _, tid in queued_excl
             }
 
             # 6a: Mode-gated blocks — feed back as tool errors, continue loop
@@ -1263,7 +1267,7 @@ async def autonomous_loop(
                     yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
                     break
         else:
-            state = state.replace(tool_only_turns=0)
+            state = state.replace(tool_only_turns=0, write_only_turns=0)
 
     # ── Final: Generate response ────────────────────────────────────
     yield _event_step("生成回复...")
@@ -1306,6 +1310,8 @@ async def autonomous_loop(
                 request_id=state.trace_id,
                 model=active_model,
                 tools=tool_schemas,
+                max_tokens=state.max_tokens,
+                session_id=state.conversation_id,
             ):
                 final_parts.append(token)
                 yield _event_token(token)
@@ -1375,6 +1381,16 @@ async def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
         recovery_state=state.recovery_state,
     )
     updates = await executor.apply(decision, state.to_dict())
+    # SWITCH_MODEL sets gave_up when no fallback models remain — surface it
+    # so the loop breaks instead of retrying the same broken model.
+    applied_recovery_state = updates.get("recovery_state", {}) or {}
+    if applied_recovery_state.get("gave_up"):
+        return {
+            "give_up": True,
+            "message": applied_recovery_state.get(
+                "gave_up_reason", "Recovery exhausted — all fallback models failed"
+            ),
+        }
     state_dict = state.to_dict()
     state_dict.update(updates)
     retry_state = LoopState.from_initial(state_dict).replace(

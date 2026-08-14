@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.project.models import Project, ProjectVersion, ProjectConfig
 
+_VERSION_RETENTION = 100  # newest versions kept per project
+
 
 class ProjectRepository:
     def __init__(self, db: AsyncSession):
@@ -63,6 +65,21 @@ class ProjectRepository:
         return True
 
     async def save_version(self, project_id: uuid.UUID, snapshot: dict) -> ProjectVersion:
+        pv = await self.append_version(project_id, snapshot)
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+        await self.db.refresh(pv)
+        return pv
+
+    async def append_version(self, project_id: uuid.UUID, snapshot: dict) -> ProjectVersion:
+        """Insert the next version row WITHOUT committing (caller owns the tx).
+
+        Used when the version write must be atomic with surrounding changes
+        (e.g. the editor sync path). Prunes to ``_VERSION_RETENTION`` rows.
+        """
         result = await self.db.execute(
             select(ProjectVersion)
             .where(ProjectVersion.project_id == project_id)
@@ -72,13 +89,27 @@ class ProjectRepository:
         version = (latest.version + 1) if latest else 1
         pv = ProjectVersion(project_id=project_id, version=version, snapshot=snapshot)
         self.db.add(pv)
-        try:
-            await self.db.commit()
-        except Exception:
-            await self.db.rollback()
-            raise
-        await self.db.refresh(pv)
+        await self.db.flush()
+        await self.db.execute(
+            ProjectVersion.__table__.delete().where(
+                ProjectVersion.project_id == project_id,
+                ProjectVersion.id.in_(
+                    select(ProjectVersion.id)
+                    .where(ProjectVersion.project_id == project_id)
+                    .order_by(desc(ProjectVersion.version))
+                    .offset(_VERSION_RETENTION)
+                ),
+            )
+        )
         return pv
+
+    async def latest_version(self, project_id: uuid.UUID) -> Optional[ProjectVersion]:
+        result = await self.db.execute(
+            select(ProjectVersion)
+            .where(ProjectVersion.project_id == project_id)
+            .order_by(desc(ProjectVersion.version)).limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def get_versions(self, project_id: uuid.UUID, limit: int = 50) -> list[ProjectVersion]:
         result = await self.db.execute(

@@ -222,7 +222,7 @@ function StarterCard({ starter, index, onApply }: { starter: StoryStarter; index
 
 function ChallengeTab() {
   const [difficultyFilter, setDifficultyFilter] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [, setError] = useState<string | null>(null)
   const [genreFilter, setGenreFilter] = useState('')
   const [challenges, setChallenges] = useState<CreativeChallenge[]>([])
   const [randomChallenge, setRandomChallenge] = useState<CreativeChallenge | null>(null)

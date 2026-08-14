@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Chapter, Act } from '../types'
 
 interface PreviewModalProps {
@@ -11,6 +11,14 @@ interface PreviewModalProps {
 export default function PreviewModal({ open, chapters, acts, onClose }: PreviewModalProps) {
   const [index, setIndex] = useState(0)
   const chapter = chapters[index]
+
+  useEffect(() => {
+    if (chapters.length === 0) {
+      setIndex(0)
+    } else if (index >= chapters.length) {
+      setIndex(chapters.length - 1)
+    }
+  }, [chapters.length, index])
 
   const prev = () => setIndex(i => Math.max(0, i - 1))
   const next = () => setIndex(i => Math.min(chapters.length - 1, i + 1))

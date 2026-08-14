@@ -127,6 +127,7 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
       wordCount: ch.total_words || 0,
       status: (ch.status as 'draft' | 'revising' | 'final') || 'draft',
       scenes: [],
+      sortOrder: ch.sort_order || 0,
     })
   }
 
@@ -177,7 +178,7 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
   }
 
   return {
-    projectTitle: (raw.project_title as string) || "",
+    projectTitle: (raw.project_title as unknown as string) || "",
     acts: acts.map(a => ({ id: a.id, name: a.name, order: a.sort_order || 0, color: a.color || "#8b5cf6" })),
     chapters: Array.from(chMap.values()),
     edges: edges.map(e => ({
@@ -206,7 +207,7 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
         }
       })
       .sort((a, b) => a.chapterIndex - b.chapterIndex),
-    themes: themes.map((t, i) => ({
+    themes: themes.map((t) => ({
       id: t.id,
       name: t.name,
       color: t.color || "#d4a373",

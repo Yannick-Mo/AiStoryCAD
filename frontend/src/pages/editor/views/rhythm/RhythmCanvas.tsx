@@ -32,7 +32,7 @@ function paceNote(words: number, intensity: number): string {
   return '适中'
 }
 
-export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selectedIndex, onSelectChapter, onSaveRhythm, autoAnalyze, onAnalysisDone }: RhythmCanvasProps) {
+export default function RhythmCanvas({ projectId, rhythms, chapters, selectedIndex, onSelectChapter, onSaveRhythm, autoAnalyze, onAnalysisDone }: RhythmCanvasProps) {
   const [editChapter, setEditChapter] = useState<{ id: string; title: string; values: any } | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<RhythmAnalysis | null>(null)
@@ -68,16 +68,6 @@ export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selec
     }
   }, [autoAnalyze])
 
-  if (!rhythms || rhythms.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
-        请先创建章节以查看节奏
-      </div>
-    )
-  }
-
-  const totalW = Math.max(rhythms.length * (BAR_W + GAP) + PAD_L + PAD_R, 400)
-
   const actBoundaries = useMemo(() => {
     const result: number[] = []
     let prevActId = ''
@@ -110,6 +100,16 @@ export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selec
     onSelectChapter(index)
   }, [rhythms, chapters, onSelectChapter])
 
+  if (!rhythms || rhythms.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+        请先创建章节以查看节奏
+      </div>
+    )
+  }
+
+  const totalW = Math.max(rhythms.length * (BAR_W + GAP) + PAD_L + PAD_R, 400)
+
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden p-4">
       {/* Chart — always visible */}
@@ -138,7 +138,6 @@ export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selec
           {rhythms.map((r, i) => {
             const barX = PAD_L + i * (BAR_W + GAP)
             const isSelected = selectedIndex === i
-            const segH = CHART_H / 4
             return (
               <g key={i} onClick={() => handleBarClick(i)} className="cursor-pointer">
                 {DIM_COLORS.map((color, di) => {

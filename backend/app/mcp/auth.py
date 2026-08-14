@@ -6,11 +6,19 @@ from app.config import settings
 from app.user.repository import UserRepository
 from app.project.models import Project
 
+_JWT_AUDIENCE = "storycad-api"
+
 
 async def get_current_user_mcp(token: str, db: AsyncSession) -> dict:
     """Validate JWT token and return user info. Used by MCP tools."""
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"], options={"verify_exp": True})
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=["HS256"],
+            audience=_JWT_AUDIENCE,
+            options={"verify_exp": True, "require": ["sub", "exp", "iss", "aud", "jti"]},
+        )
         user_id = uuid.UUID(payload["sub"])
     except jwt.ExpiredSignatureError:
         raise ValueError("Token has expired")

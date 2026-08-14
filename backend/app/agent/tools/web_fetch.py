@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import logging
 import re
 import time
 from collections import OrderedDict
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,39 +120,99 @@ def _validate_url(url: str) -> str | None:
     return None
 
 
-async def _fetch_url(url: str) -> tuple[str | None, str | None]:
-    """Fetch a URL and return (text_content, error)."""
+def _is_blocked_address(ip_str: str) -> bool:
+    """Reject private, loopback, link-local, reserved, multicast and unspecified
+    addresses (SSRF guard — metadata endpoints and internal services live here)."""
+    try:
+        addr = ipaddress.ip_address(ip_str.split("%")[0])
+    except ValueError:
+        return True
+    if addr.is_private or addr.is_loopback or addr.is_link_local:
+        return True
+    if addr.is_reserved or addr.is_multicast or addr.is_unspecified:
+        return True
+    if addr.version == 6 and addr.ipv4_mapped is not None:
+        return _is_blocked_address(str(addr.ipv4_mapped))
+    return False
 
+
+async def _resolve_and_check(hostname: str) -> str | None:
+    """Resolve a hostname and reject it if any resolved address is blocked.
+
+    IP literals (including IPv6 in brackets) are checked directly without DNS.
+    """
+    host = hostname.strip("[]")
+    try:
+        ipaddress.ip_address(host)
+        return None if not _is_blocked_address(host) else "URL resolves to a private or reserved address"
+    except ValueError:
+        pass
+    try:
+        infos = await asyncio.get_event_loop().getaddrinfo(host, None, type=0)
+    except Exception:
+        return "Invalid URL: hostname could not be resolved"
+    if not infos:
+        return "Invalid URL: hostname could not be resolved"
+    for info in infos:
+        ip_str = info[4][0]
+        if _is_blocked_address(ip_str):
+            return "URL resolves to a private or reserved address"
+    return None
+
+
+async def _validate_url_async(url: str) -> str | None:
+    """Full URL validation: syntax + DNS resolution + SSRF blocklist."""
     error = _validate_url(url)
     if error:
-        return None, error
+        return error
+    parsed = urlparse(url)
+    assert parsed.hostname is not None
+    return await _resolve_and_check(parsed.hostname)
 
+
+async def _fetch_url(url: str) -> tuple[str | None, str | None]:
+    """Fetch a URL and return (text_content, error)."""
     cache_key = f"fetch:{url}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached, None
 
+    redirects_left = 10
+    current_url = url
     try:
         async with httpx.AsyncClient(
             timeout=settings.web_fetch_timeout,
-            follow_redirects=True,
-            max_redirects=10,
+            follow_redirects=False,
         ) as client:
-            resp = await client.get(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; StoryCAD/1.0; +https://storycad.app)",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,en;q=0.9",
-                },
-            )
-            resp.raise_for_status()
+            while True:
+                error = await _validate_url_async(current_url)
+                if error:
+                    return None, error
+                resp = await client.get(
+                    current_url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; StoryCAD/1.0; +https://storycad.app)",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "zh-CN,en;q=0.9",
+                    },
+                )
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location")
+                    if not location:
+                        break
+                    redirects_left -= 1
+                    if redirects_left < 0:
+                        return None, "Too many redirects"
+                    current_url = urljoin(current_url, location)
+                    continue
+                resp.raise_for_status()
+                break
 
         content_type = resp.headers.get("content-type", "").lower()
         if "text/" not in content_type and "html" not in content_type:
             return None, f"Unsupported content type: {content_type}"
 
-        text = _extract_text(resp.text, url)
+        text = _extract_text(resp.text, current_url)
         if not text or len(text) < 20:
             return None, "Page has no readable content"
 

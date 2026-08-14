@@ -10,13 +10,17 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, field_validator
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context_compressor import async_compress_context, estimate_tokens
+from app.agent.memory.conversation import ConversationMemory
+from app.agent.memory.models import Conversation
 from app.agent.privacy import sanitise_event
 from app.agent.super_agent import SuperAgent
 from app.agent.tools.base import verify_project_owner as _verify_tool_owner
 from app.api.deps import get_db, get_current_user, get_redis
+from app.api.rate_limiter import rate_limiter
 from app.llm.client import get_shared_client, get_tracker
 
 router = APIRouter(prefix="/api/v2", tags=["AI v2"])
@@ -29,6 +33,13 @@ async def _verify_project_owner(db: AsyncSession, project_id: uuid.UUID, user: d
         await _verify_tool_owner(db, project_id, user["id"])
     except PermissionError:
         raise HTTPException(status_code=403, detail="Not authorized to access this project")
+
+
+async def _verify_conversation_owner(db: AsyncSession, conversation_id: str, user: dict) -> None:
+    """A conversation must belong to the current user, otherwise 404 (IDOR guard)."""
+    owner = await ConversationMemory(db).get_conversation_owner_id(conversation_id)
+    if owner is None or owner != str(user["id"]):
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
 
 def _format_sse(event: str, data: str) -> str:
@@ -133,6 +144,10 @@ async def chat(
     redis_client: Redis | None = Depends(get_redis),
 ):
     await _verify_project_owner(db, project_id, user)
+    if not await rate_limiter.check(f"ai_v2_chat:{user['id']}", max_attempts=30, window=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+    if req.conversation_id:
+        await _verify_conversation_owner(db, req.conversation_id, user)
     llm_client = get_shared_client().fork()
     agent = SuperAgent(db=db, redis_client=redis_client, llm_client=llm_client)
     return StreamingResponse(
@@ -159,9 +174,12 @@ async def compress_context(
     redis_client: Redis | None = Depends(get_redis),
 ):
     await _verify_project_owner(db, project_id, user)
+    await _verify_conversation_owner(db, req.conversation_id, user)
+    if not await rate_limiter.check(f"ai_v2_compress:{user['id']}", max_attempts=30, window=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     llm_client = get_shared_client().fork()
     agent = SuperAgent(db=db, redis_client=redis_client, llm_client=llm_client)
-    history = await agent.conv_memory.get_history(req.conversation_id)
+    history = await agent.conv_memory.get_history(req.conversation_id, user["id"])
     if not history:
         return {"compressed": False, "detail": "对话历史为空"}
 
@@ -202,9 +220,9 @@ async def compress_context(
             "saved_percent": 0,
         }
 
-    await agent.conv_memory.replace_history(req.conversation_id, compressed)
+    await agent.conv_memory.replace_history(req.conversation_id, compressed, user["id"])
     boundary = build_boundary_message(before_count, after_count)
-    await agent.conv_memory.save_message(req.conversation_id, boundary)
+    await agent.conv_memory.save_message(req.conversation_id, boundary, user["id"])
 
     return {
         "compressed": True,
@@ -274,9 +292,10 @@ async def rename_conversation(
     redis_client: Redis | None = Depends(get_redis),
 ):
     await _verify_project_owner(db, project_id, user)
+    await _verify_conversation_owner(db, conv_id, user)
     llm_client = get_shared_client()
     agent = SuperAgent(db=db, redis_client=redis_client, llm_client=llm_client)
-    await agent.conv_memory.rename_conversation(conv_id, req.title)
+    await agent.conv_memory.rename_conversation(conv_id, req.title, user["id"])
     return {"ok": True}
 
 
@@ -298,17 +317,48 @@ async def delete_conversation(
 
 
 @router.get("/usage")
-async def get_usage(user: dict = Depends(get_current_user)):
-    """Get global token usage statistics."""
-    return get_tracker().get_global_total()
+async def get_usage(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return token usage for the current user's own conversations.
+
+    The tracker records sessions (conversation ids); we aggregate only over
+    this user's conversations so no cross-user/global usage is leaked.
+    """
+    result = await db.execute(
+        select(Conversation.id).where(Conversation.user_id == uuid.UUID(user["id"]))
+    )
+    conv_ids = [str(cid) for cid in result.scalars().all()]
+    prompt = completion = total = 0
+    cost = 0.0
+    for cid in conv_ids:
+        agg = get_tracker().get_session_total(cid)
+        prompt += agg["prompt_tokens"]
+        completion += agg["completion_tokens"]
+        total += agg["total_tokens"]
+        cost += agg["cost"]
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+        "cost": round(cost, 6),
+    }
 
 
 @router.get("/usage/session/{session_id}")
 async def get_session_usage(
     session_id: uuid.UUID,
     user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get token usage for a specific session."""
-    total = get_tracker().get_session_total(str(session_id))
-    # If session has no records, tracker returns zero — no ownership leak
-    return total
+    """Get token usage for a session, but only if it belongs to the user."""
+    result = await db.execute(
+        select(Conversation.id).where(
+            Conversation.id == session_id,
+            Conversation.user_id == uuid.UUID(user["id"]),
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return get_tracker().get_session_total(str(session_id))

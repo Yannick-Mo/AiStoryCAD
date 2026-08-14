@@ -11,15 +11,17 @@ export function useChapters(
   const addChapter = useCallback((actId: string) => {
     if (!data) throw new Error("Store not initialized")
     const id = crypto.randomUUID()
+    const actChapters = data.chapters.filter(c => c.actId === actId)
+    const maxOrder = actChapters.reduce((m, c) => Math.max(m, c.sortOrder ?? 0), 0)
     const newCh: Chapter = {
       id, actId,
-      title: `第 ${data.chapters.filter(c => c.actId === actId).length + 1} 章`,
-      goal: '', wordCount: 0, status: 'draft', scenes: [],
+      title: `第 ${actChapters.length + 1} 章`,
+      goal: '', wordCount: 0, status: 'draft', scenes: [], sortOrder: maxOrder + 1,
     }
-    setData((d: any) => d ? { ...d, chapters: [...d.chapters, newCh] } : d)
+    setData(d => d ? { ...d, chapters: [...d.chapters, newCh] } : d)
     enqueueChange({
       entity: 'chapters', op: 'create',
-      data: { id, project_id: projectId, act_id: actId, title: newCh.title, sort_order: data.chapters.filter(c => c.actId === actId).length },
+      data: { id, project_id: projectId, act_id: actId, title: newCh.title, sort_order: maxOrder + 1 },
     })
     return newCh
   }, [data, projectId, enqueueChange, setData])
@@ -32,16 +34,16 @@ export function useChapters(
         enqueueChange({ entity: 'scenes', op: 'delete', id: scene.id })
       }
     }
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      chapters: d.chapters.filter((c: any) => c.id !== chapterId),
-      edges: d.edges.filter((e: any) => e.sourceId !== chapterId && e.targetId !== chapterId),
+      chapters: d.chapters.filter(c => c.id !== chapterId),
+      edges: d.edges.filter(e => e.sourceId !== chapterId && e.targetId !== chapterId),
     } : d)
     enqueueChange({ entity: 'chapters', op: 'delete', id: chapterId })
   }, [data, enqueueChange, setData])
 
   const updateChapter = useCallback((id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'status'>>) => {
-    setData((d: any) => d ? { ...d, chapters: d.chapters.map((c: any) => c.id === id ? { ...c, ...updates } : c) } : d)
+    setData(d => d ? { ...d, chapters: d.chapters.map(c => c.id === id ? { ...c, ...updates } : c) } : d)
     enqueueChange({ entity: 'chapters', op: 'update', data: { id, ...updates } })
   }, [enqueueChange, setData])
 
@@ -54,9 +56,9 @@ export function useChapters(
       id, chapter_id: chapterId,
       title: `场景 ${order}`, povCharacter: '', setting: '', time: '', summary: '', content: '', wordCount: 0,
     }
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      chapters: d.chapters.map((ch: any) => ch.id === chapterId ? { ...ch, scenes: [...ch.scenes, newScene] } : ch),
+      chapters: d.chapters.map(c => c.id === chapterId ? { ...c, scenes: [...c.scenes, newScene] } : c),
     } : d)
     enqueueChange({
       entity: 'scenes', op: 'create',
@@ -67,23 +69,23 @@ export function useChapters(
 
   const deleteScene = useCallback((chapterId: string, sceneId: string) => {
     if (!data) return
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      chapters: d.chapters.map((ch: any) => ch.id === chapterId ? {
+      chapters: d.chapters.map(ch => ch.id === chapterId ? {
         ...ch,
-        scenes: ch.scenes.filter((s: any) => s.id !== sceneId),
-        wordCount: ch.scenes.filter((s: any) => s.id !== sceneId).reduce((sum: number, s: any) => sum + s.wordCount, 0),
+        scenes: ch.scenes.filter(s => s.id !== sceneId),
+        wordCount: ch.scenes.filter(s => s.id !== sceneId).reduce((sum, s) => sum + s.wordCount, 0),
       } : ch),
     } : d)
     enqueueChange({ entity: 'scenes', op: 'delete', id: sceneId })
   }, [data, enqueueChange, setData])
 
   const updateScene = useCallback((chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => {
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      chapters: d.chapters.map((ch: any) => ch.id === chapterId ? {
+      chapters: d.chapters.map(ch => ch.id === chapterId ? {
         ...ch,
-        scenes: ch.scenes.map((s: any) => s.id === sceneId ? { ...s, ...updates } : s),
+        scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, ...updates } : s),
       } : ch),
     } : d)
     const backendData: Record<string, unknown> = { id: sceneId }

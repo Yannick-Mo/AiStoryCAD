@@ -14,26 +14,27 @@ export function useActs(
   const addAct = useCallback((name?: string) => {
     if (!data) throw new Error("Store not initialized")
     const id = crypto.randomUUID()
+    const maxOrder = data.acts.reduce((m, a) => Math.max(m, a.order), 0)
     const newAct: Act = {
       id, name: name ?? `第 ${data.acts.length + 1} 幕`,
-      order: data.acts.length + 1,
+      order: maxOrder + 1,
       color: COLORS[data.acts.length % COLORS.length],
     }
-    setData((d: any) => d ? { ...d, acts: [...d.acts, newAct] } : d)
+    setData(d => d ? { ...d, acts: [...d.acts, newAct] } : d)
     enqueueChange({ entity: 'acts', op: 'create', data: { id, project_id: projectId, name: newAct.name, sort_order: newAct.order, color: newAct.color } })
     return newAct
   }, [data, projectId, enqueueChange, setData])
 
   const deleteAct = useCallback((actId: string) => {
     if (!data) return
-    setData((d: any) => {
+    setData(d => {
       if (!d) return d
-      const chapterIds = new Set(d.chapters.filter((c: any) => c.actId === actId).map((c: any) => c.id))
+      const chapterIds = new Set(d.chapters.filter(c => c.actId === actId).map(c => c.id))
       return {
         ...d,
-        acts: d.acts.filter((a: any) => a.id !== actId),
-        chapters: d.chapters.filter((c: any) => c.actId !== actId),
-        edges: d.edges.filter((e: any) => !chapterIds.has(e.sourceId) && !chapterIds.has(e.targetId)),
+        acts: d.acts.filter(a => a.id !== actId),
+        chapters: d.chapters.filter(c => c.actId !== actId),
+        edges: d.edges.filter(e => !chapterIds.has(e.sourceId) && !chapterIds.has(e.targetId)),
       }
     })
     enqueueChange({ entity: 'acts', op: 'delete', id: actId })
@@ -41,12 +42,12 @@ export function useActs(
   }, [data, enqueueChange, clearSelection, setData])
 
   const updateAct = useCallback((id: string, updates: Partial<Pick<Act, 'name' | 'color'>>) => {
-    setData((d: any) => d ? { ...d, acts: d.acts.map((a: any) => a.id === id ? { ...a, ...updates } : a) } : d)
+    setData(d => d ? { ...d, acts: d.acts.map(a => a.id === id ? { ...a, ...updates } : a) } : d)
     enqueueChange({ entity: 'acts', op: 'update', data: { id, ...updates } })
   }, [enqueueChange, setData])
 
   const resizeAct = useCallback((actId: string, width: number, height: number) => {
-    setData((d: any) => d ? { ...d, acts: d.acts.map((a: any) => a.id === actId ? { ...a, width, height } : a) } : d)
+    setData(d => d ? { ...d, acts: d.acts.map(a => a.id === actId ? { ...a, width, height } : a) } : d)
     enqueueChange({ entity: 'acts', op: 'update', data: { id: actId, width, height } })
   }, [enqueueChange, setData])
 

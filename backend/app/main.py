@@ -1,16 +1,14 @@
 from contextlib import asynccontextmanager
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import settings
+from fastapi.responses import JSONResponse
+from app.config import settings, validate_jwt_secret
 from app.database import init_db
 from app.llm import configure_from_settings
 
 def _validate_config():
-    if not settings.jwt_secret_key:
-        raise ValueError(
-            "JWT_SECRET_KEY is not configured. Set it in .env file or JWT_SECRET_KEY environment variable."
-        )
+    validate_jwt_secret()
 _validate_config()
 
 
@@ -89,6 +87,16 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    return response
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "0.2.0"}
@@ -115,7 +123,73 @@ def register_routers():
     app.include_router(consistency_router)
 
     from app.mcp.server import mcp
-    app.mount("/mcp", mcp.sse_app())
+    _mount_secured_mcp(mcp)
+
+
+_MCP_MAX_CONNECTIONS_PER_USER = 5
+
+
+async def _extract_mcp_token(request: Request) -> str | None:
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:]
+    return request.query_params.get("token")
+
+
+async def _mcp_transport_auth(scope, receive, send, mcp_app):
+    """Transport-layer auth for the MCP SSE mount: valid JWT (Bearer header
+    or ?token= query) is required, plus a soft per-user connection cap.
+    Per-tool token checks in app.mcp.auth remain the second layer."""
+    if scope["type"] != "http":
+        await mcp_app(scope, receive, send)
+        return
+    from starlette.requests import Request as StarletteRequest
+
+    request = StarletteRequest(scope, receive)
+    token = await _extract_mcp_token(request)
+    if not token:
+        response = JSONResponse({"detail": "Missing authentication token"}, status_code=401)
+        await response(scope, receive, send)
+        return
+
+    from app.api.deps import decode_token, get_redis
+
+    payload = await decode_token(token)
+    if payload is None:
+        response = JSONResponse({"detail": "Invalid or revoked token"}, status_code=401)
+        await response(scope, receive, send)
+        return
+
+    redis = await get_redis()
+    conn_key = f"mcp:conn:{payload['sub']}"
+    if redis is not None:
+        try:
+            count = await redis.incr(conn_key)
+            await redis.expire(conn_key, 300)
+            if int(count) > _MCP_MAX_CONNECTIONS_PER_USER:
+                await redis.decr(conn_key)
+                response = JSONResponse({"detail": "Too many MCP connections"}, status_code=429)
+                await response(scope, receive, send)
+                return
+        except Exception:
+            redis = None
+    try:
+        await mcp_app(scope, receive, send)
+    finally:
+        if redis is not None:
+            try:
+                await redis.decr(conn_key)
+            except Exception:
+                pass
+
+
+def _mount_secured_mcp(mcp):
+    mcp_app = mcp.sse_app()
+
+    async def _secured_mcp(scope, receive, send):
+        await _mcp_transport_auth(scope, receive, send, mcp_app)
+
+    app.mount("/mcp", _secured_mcp)
 
 
 register_routers()

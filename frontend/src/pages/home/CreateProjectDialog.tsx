@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { FilePlus2, FolderUp, X } from "lucide-react"
 import { createProject } from "../../api/auth"
@@ -17,10 +17,24 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
   const [materialText, setMaterialText] = useState("")
   const [aiSteps, setAiSteps] = useState<ProgressEvent[]>([])
   const [aiGenerating, setAiGenerating] = useState(false)
+  const abortCreateRef = useRef<(() => void) | null>(null)
   const { addToast } = useToast()
   const navigate = useNavigate()
 
+  useEffect(() => {
+    return () => {
+      abortCreateRef.current?.()
+      abortCreateRef.current = null
+    }
+  }, [])
+
   if (!open) return null
+
+  const handleClose = () => {
+    abortCreateRef.current?.()
+    abortCreateRef.current = null
+    onClose()
+  }
 
   async function handleCreateEmpty() {
     if (!title.trim()) return
@@ -30,6 +44,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
       navigate(`/projects/${result.id}`)
     } catch {
       setBusy(false)
+      addToast("创建项目失败，请重试", "error")
     }
   }
 
@@ -51,7 +66,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
     setAiGenerating(true)
     setAiSteps([])
     const events: ProgressEvent[] = []
-    createFromMaterial(
+    const cancel = createFromMaterial(
       { title: title.trim(), material: materialText.trim() },
       (evt) => {
         events.push(evt)
@@ -65,10 +80,11 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
         setAiGenerating(false)
       },
     )
+    abortCreateRef.current = cancel
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleClose}>
       <div
         className="bg-gray-900 rounded-2xl p-8 w-full max-w-lg shadow-2xl border border-gray-800"
         onClick={(e) => e.stopPropagation()}
@@ -195,7 +211,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
           <>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-gray-100">AI 正在生成项目框架...</h2>
-              <button onClick={() => navigate("/")} className="text-gray-500 hover:text-white text-lg">✕</button>
+              <button onClick={() => { abortCreateRef.current?.(); abortCreateRef.current = null; navigate("/") }} className="text-gray-500 hover:text-white text-lg">✕</button>
             </div>
             <div className="space-y-2 mb-6">
               {["analyze_material", "plan_structure", "design_characters", "build_settings", "generate_all_scenes", "generate_edges", "validate"].map((step, idx) => {

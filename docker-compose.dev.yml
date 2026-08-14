@@ -1,0 +1,32 @@
+# 本地开发覆盖文件：与 docker-compose.yml 一起使用
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# - backend: 挂载源码 + 测试文件，uvicorn 热重载（DEV_MODE）
+# - frontend: 挂载 src，跑 vite dev server（对外端口 8080）
+# 生产部署请只使用 docker-compose.yml（无源码挂载、nginx 托管静态产物）。
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/tests:/app/tests
+      - ./backend/pytest.ini:/app/pytest.ini:ro
+    environment:
+      - DEV_MODE=1
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    ports:
+      - "8080:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+    environment:
+      - VITE_API_PROXY=http://backend:8000

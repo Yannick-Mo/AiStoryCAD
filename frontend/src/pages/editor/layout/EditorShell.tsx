@@ -105,10 +105,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     if (selectedChapter?.id === chapterId) setSelectedChapter({ ...selectedChapter, goal })
   }, [setData, selectedChapter])
 
-  const handleOpenSceneEditor = useCallback((scene: Scene) => {
-    setEditingScene(scene)
-  }, [])
-
   const handleOpenAiPanel = useCallback((contextView: string, contextId?: string) => {
     setAiContextView(contextView)
     setAiContextId(contextId)
@@ -155,6 +151,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const selectedEdge = store.selection.type === 'edge'
     ? data.edges.find(edge => edge.id === store.selection.id) ?? null
     : null
+
+  const selectedAct = selectedActId ? data.acts.find(a => a.id === selectedActId) ?? null : null
+  const activeChapter = selectedChapter ? data.chapters.find(c => c.id === selectedChapter.id) ?? null : null
+  const selectedChar = selectedCharacterId ? data.characters.find(c => c.id === selectedCharacterId) ?? null : null
 
   const renderCanvas = () => {
     switch (views.activeViewId) {
@@ -294,10 +294,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
           {/* Detail panels - Plot */}
           {views.activeViewId === 'narrative-plot' && (
-            selectedActId ? (
+            selectedAct ? (
               <ResizablePanel>
                 <ActDetail
-                  act={data.acts.find(a => a.id === selectedActId)!}
+                  act={selectedAct}
                   chapters={data.chapters.filter(c => c.actId === selectedActId)}
                   onClose={() => setSelectedActId(null)}
                   onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
@@ -338,10 +338,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                   onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
                 />
               </ResizablePanel>
-            ) : selectedChapter ? (
+            ) : activeChapter ? (
               <ResizablePanel>
                 <ChapterDetail
-                  chapter={data.chapters.find(c => c.id === selectedChapter.id) ?? selectedChapter}
+                  chapter={activeChapter}
                   projectId={projectId}
                   onClose={() => setSelectedChapter(null)}
                   onSceneSave={async (chapterId, sceneId, content) => {
@@ -402,10 +402,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
           {/* Detail panels - Character */}
           {views.activeViewId === 'narrative-char' && (
-            selectedCharacterId ? (
+            selectedChar ? (
               <ResizablePanel>
                 <CharacterDetail
-                  character={data.characters.find(c => c.id === selectedCharacterId)!}
+                  character={selectedChar}
                   onClose={() => setSelectedCharacterId(null)}
                   onUpdateCharacter={store.updateCharacter}
                 />
@@ -640,11 +640,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         }
         onConfirm={() => {
           if (!confirmDelete) return
-          if (confirmDelete.type === 'act') { store.deleteAct(confirmDelete.id); setSelectedActId(null) }
+          if (confirmDelete.type === 'act') { store.deleteAct(confirmDelete.id); setSelectedActId(null); setSelectedChapter(null) }
           else if (confirmDelete.type === 'scene') {
             store.deleteScene(confirmDelete.chapterId!, confirmDelete.id)
           }
-          else store.deleteChapter(confirmDelete.id)
+          else { store.deleteChapter(confirmDelete.id); setSelectedChapter(null) }
           setConfirmDelete(null)
         }}
         onCancel={() => setConfirmDelete(null)}

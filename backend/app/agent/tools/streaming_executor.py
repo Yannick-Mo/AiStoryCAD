@@ -7,7 +7,6 @@
 #   - Read-only (SAFE) tools execute immediately in parallel.
 #   - Write (EXCLUSIVE) tools queue and execute serially after SAFE tools
 #     complete.
-#   - BARRIER tools wait for all others (SAFE + EXCLUSIVE) before running.
 # ============================================================================
 from __future__ import annotations
 
@@ -250,8 +249,6 @@ class StreamingToolExecutor:
         is **not** safe for concurrent use.
       * EXCLUSIVE tools are queued and execute serially *after* all SAFE
         tools complete.
-      * BARRIER tools wait for SAFE + EXCLUSIVE to finish before running
-        (they see the final state).
     """
 
     def __init__(self, tools: dict[str, BaseTool], db: Any = None,
@@ -272,9 +269,6 @@ class StreamingToolExecutor:
 
         # Queued EXCLUSIVE tools: (tool_name, args, tool_use_id)
         self._queued_exclusive: list[tuple[str, dict, str]] = []
-
-        # Queued BARRIER tools: (tool_name, args, tool_use_id)
-        self._queued_barrier: list[tuple[str, dict, str]] = []
 
         self._discarded = False
 
@@ -339,8 +333,6 @@ class StreamingToolExecutor:
             self._pending[tool_use_id or tool_name] = (tool_name, task)
         elif concurrency == ConcurrencyMode.EXCLUSIVE:
             self._queued_exclusive.append((tool_name, args, tool_use_id))
-        elif concurrency == ConcurrencyMode.BARRIER:
-            self._queued_barrier.append((tool_name, args, tool_use_id))
         else:
             # Unknown concurrency mode – treat as EXCLUSIVE
             self._queued_exclusive.append((tool_name, args, tool_use_id))
@@ -380,9 +372,9 @@ class StreamingToolExecutor:
 
     # ── Split API for interceptor-aware execution ──────────────────────
     # The autonomous loop calls these in order:
-    #   1. add_tool() during streaming (SAFE runs immediately; EXCL/BARRIER queued)
+    #   1. add_tool() during streaming (SAFE runs immediately; EXCL queued)
     #   2. await_pending_safe() after stream — waits for in-flight SAFE tools
-    #   3. get_queued_tools() — returns queued EXCL/BARRIER tools (no execution)
+    #   3. get_queued_tools() — returns queued EXCL tools (no execution)
     #   4. interceptor decides which tools are allowed
     #   5. execute_tool() — public, called by loop for each allowed tool
     #   6. clear_queued() — discard tools blocked by interceptor
@@ -418,23 +410,21 @@ class StreamingToolExecutor:
         self._completed_yielded = len(self._completed)
         return [r for _, r in self._completed]
 
-    def get_queued_tools(self) -> tuple[list[tuple[str, dict, str]], list[tuple[str, dict, str]]]:
-        """Return queued EXCLUSIVE and BARRIER tools without executing them.
+    def get_queued_tools(self) -> list[tuple[str, dict, str]]:
+        """Return queued EXCLUSIVE tools without executing them.
 
         Returns:
-            ``(exclusive_list, barrier_list)`` where each list contains
-            ``(tool_name, args, tool_use_id)`` tuples.
+            List of ``(tool_name, args, tool_use_id)`` tuples.
         """
-        return list(self._queued_exclusive), list(self._queued_barrier)
+        return list(self._queued_exclusive)
 
     def clear_queued(self) -> None:
-        """Discard queued EXCLUSIVE/BARRIER tools without executing them.
+        """Discard queued EXCLUSIVE tools without executing them.
 
         Called when the interceptor blocks, needs confirmation, or captures
         options — the queued tools should not execute.
         """
         self._queued_exclusive.clear()
-        self._queued_barrier.clear()
 
     def discard(self) -> None:
         """Discard all pending and queued work.
@@ -448,7 +438,6 @@ class StreamingToolExecutor:
             task.cancel()
         self._pending.clear()
         self._queued_exclusive.clear()
-        self._queued_barrier.clear()
         self._completed.clear()
         self._completed_yielded = 0
 
@@ -531,6 +520,20 @@ class StreamingToolExecutor:
                         except Exception:
                             pass
                         return {"tool": name, "success": False, "error": f"工具执行超时（{timeout}秒），事务已回滚", "_tool_use_id": tool_use_id}
+                    except KeyError:
+                        # Missing-param KeyError is handled by the outer handler
+                        # so the result carries a correction_hint.
+                        raise
+                    except Exception as exc:
+                        # The failed tool.run() poisoned the shared session —
+                        # roll back INSIDE the lock so a concurrent SAFE tool
+                        # holding the same session is not aborted.
+                        logger.exception("Tool '%s' execution failed (shared session)", name)
+                        try:
+                            await self._db.rollback()
+                        except Exception:
+                            pass
+                        return {"tool": name, "success": False, "error": str(exc), "_tool_use_id": tool_use_id}
             else:
                 try:
                     result: ToolResult = await asyncio.wait_for(
@@ -565,6 +568,15 @@ class StreamingToolExecutor:
                     "_tool_use_id": tool_use_id}
         except Exception as exc:
             logger.exception("Tool '%s' execution failed", name)
+            # A failed tool.run() poisons the shared session.  SAFE+shared
+            # tools roll back inside the lock above; the remaining paths
+            # (EXCLUSIVE tools sharing the session) roll back here, while
+            # own-session tools never touch the shared session.
+            if not uses_own_session:
+                try:
+                    await self._db.rollback()
+                except Exception:
+                    pass
             return {"tool": name, "success": False, "error": str(exc), "_tool_use_id": tool_use_id}
 
 

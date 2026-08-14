@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_LIMIT = settings.llm_context_window or 100_000  # compression triggers at ~80% of this
 
 # ── Threshold ratios ────────────────────────────────────────────────
-COMPRESS_THRESHOLD = 0.80
+COMPRESS_THRESHOLD = 0.70
 AGGRESSIVE_THRESHOLD = 0.95
 
 # ── Message retention counts ───────────────────────────────────────
@@ -61,16 +61,31 @@ def estimate_text_tokens(text: str) -> int:
     return int(cjk * 1.5 + ascii_count * 0.25) + 1
 
 
-def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_LIMIT) -> int:
+def estimate_tokens(
+    messages: list["Message"],
+    model_limit: int = DEFAULT_MODEL_LIMIT,
+    system_prompt: str | None = None,
+) -> int:
     """Estimate the token count of a message list.
 
     Delegates to ``estimate_text_tokens`` per message (CJK-aware).
+    Also counts the system prompt (once), reasoning content, tool_call_id
+    fields and tool_call arguments — everything that actually occupies the
+    model's context window.
     Fast enough to run every turn, accurate enough for threshold-based decisions.
     """
     total = 0
+    if system_prompt:
+        total += estimate_text_tokens(system_prompt)
     for msg in messages:
         content = getattr(msg, "content", "") or ""
         total += estimate_text_tokens(content)
+        reasoning = getattr(msg, "reasoning_content", None) or None
+        if reasoning:
+            total += estimate_text_tokens(reasoning)
+        tool_call_id = getattr(msg, "tool_call_id", None) or None
+        if tool_call_id:
+            total += estimate_text_tokens(tool_call_id)
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 fn = getattr(tc, "function", {})
@@ -82,9 +97,10 @@ def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_
 def should_compress(
     messages: list["Message"],
     model_limit: int = DEFAULT_MODEL_LIMIT,
+    system_prompt: str = "",
 ) -> bool:
     """Return True if the message list should be compressed before the next call."""
-    tokens = estimate_tokens(messages, model_limit)
+    tokens = estimate_tokens(messages, model_limit, system_prompt=system_prompt)
     return tokens > int(model_limit * COMPRESS_THRESHOLD)
 
 

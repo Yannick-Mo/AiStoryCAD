@@ -4,7 +4,8 @@ WORKDIR /app
 
 RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 appuser
 
-# Install runtime deps only
+# Install runtime deps only (test deps live in requirements-dev.txt and are
+# installed by CI or the `dev` target below)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -18,3 +19,13 @@ EXPOSE 8000
 USER appuser
 
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 ${DEV_MODE:+--reload}"]
+
+# ── Dev stage: base + test dependencies (local development / tests) ───────
+FROM base AS dev
+
+USER root
+
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+USER appuser

@@ -164,10 +164,9 @@ export default function PlotCanvas({
       const a = getAbsPos(srcNode, initialNodes)
       const b = getAbsPos(tgtNode, initialNodes)
 
+      const isTimeline = e.type === 'timeline'
       const sourceHandle = e.sourceHandle ?? getBestHandle(a, b, isTimeline).sourceHandle
       const targetHandle = e.targetHandle ?? getBestHandle(a, b, isTimeline).targetHandle
-
-      const isTimeline = e.type === 'timeline'
       const isSelected = selection.type === 'edge' && selection.id === e.id
       return {
         id: e.id,

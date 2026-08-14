@@ -435,7 +435,6 @@ class ContextBuilder:
                 entry["motivation"] = c.motivation or ""
                 entry["background"] = c.background or ""
                 entry["appearance"] = c.appearance or ""
-                entry["arc"] = c.arc or ""
             characters_data.append(entry)
 
         themes_result = await self.db.execute(

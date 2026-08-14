@@ -29,7 +29,59 @@ class InMemoryRateLimiter:
             return True
 
 
-rate_limiter = InMemoryRateLimiter()
+class RedisRateLimiter:
+    """Fixed-window rate limiter backed by Redis (INCR + EXPIRE), with an
+    in-memory fallback so behaviour is preserved when Redis is unavailable.
+
+    Unlike the pure in-memory limiter this survives restarts and is shared
+    across workers, so login/registration/LLM quotas cannot be reset by
+    spinning up another process.
+    """
+
+    def __init__(self):
+        self._memory = InMemoryRateLimiter()
+        self._redis: object | None = None
+        self._redis_attempted = False
+        self._redis_lock = asyncio.Lock()
+
+    async def _get_redis(self):
+        if self._redis is None and not self._redis_attempted:
+            async with self._redis_lock:
+                if self._redis is None and not self._redis_attempted:
+                    try:
+                        from redis.asyncio import Redis
+                        from app.config import settings
+
+                        if settings.redis_url:
+                            self._redis = Redis.from_url(
+                                settings.redis_url,
+                                decode_responses=True,
+                                socket_connect_timeout=2,
+                                socket_timeout=2,
+                            )
+                            await self._redis.ping()
+                            logger.info("RateLimiter connected to Redis")
+                    except Exception as exc:
+                        logger.warning("RateLimiter Redis unavailable, using in-memory: %s", exc)
+                        self._redis = None
+                    self._redis_attempted = True
+        return self._redis
+
+    async def check(self, key: str, max_attempts: int = 5, window: int = 60) -> bool:
+        redis = await self._get_redis()
+        if redis is not None:
+            try:
+                rkey = f"rl:{key}"
+                count = await redis.incr(rkey)
+                if count == 1:
+                    await redis.expire(rkey, window)
+                return int(count) <= max_attempts
+            except Exception as exc:
+                logger.debug("RateLimiter Redis check failed, falling back: %s", exc)
+        return await self._memory.check(key, max_attempts, window)
+
+
+rate_limiter = RedisRateLimiter()
 
 
 # ── Shared singleton for agent guard ──────────────────────────────

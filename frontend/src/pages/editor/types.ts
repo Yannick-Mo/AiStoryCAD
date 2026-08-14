@@ -72,6 +72,7 @@ export interface Chapter {
   wordCount: number
   status: 'draft' | 'revising' | 'final'
   scenes: Scene[]
+  sortOrder?: number
 }
 
 export interface CharacterRelation {
@@ -80,6 +81,9 @@ export interface CharacterRelation {
   type: string
   label: string
   description: string
+  trust: number
+  threat: number
+  attraction: number
 }
 
 export interface Character {

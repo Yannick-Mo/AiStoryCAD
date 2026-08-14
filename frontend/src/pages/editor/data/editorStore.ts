@@ -30,17 +30,42 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   const changesRef = useRef<ChangeEntry[]>([])
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const periodTimerRef = useRef<ReturnType<typeof setInterval>>()
   const flushAttemptRef = useRef(0)
+  const inFlightRef = useRef(false)
+  const pendingFlushRef = useRef(false)
+  const mountedRef = useRef(false)
+  const projectIdRef = useRef(projectId)
+  projectIdRef.current = projectId
   const onFlushErrorRef = useRef<((msg: string) => void) | undefined>(onFlushError)
   onFlushErrorRef.current = onFlushError
 
   useEffect(() => {
     let cancelled = false
+    mountedRef.current = true
+    if (timerRef.current) clearTimeout(timerRef.current)
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    changesRef.current = []
+    flushAttemptRef.current = 0
+    setDirty(false)
     setLoading(true)
+    setError(null)
     loadEditorData(projectId)
-      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
-      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
-    return () => { cancelled = true; if (retryTimerRef.current) clearTimeout(retryTimerRef.current) }
+      .then(d => { if (!cancelled && mountedRef.current) { setData(d); setLoading(false) } })
+      .catch(e => { if (!cancelled && mountedRef.current) { setError(e.message); setLoading(false) } })
+    periodTimerRef.current = setInterval(() => {
+      if (changesRef.current.length > 0 && !inFlightRef.current) {
+        flushChangesRef.current?.()
+      }
+    }, 15000)
+    return () => {
+      cancelled = true
+      mountedRef.current = false
+      if (timerRef.current) clearTimeout(timerRef.current)
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+      if (periodTimerRef.current) clearInterval(periodTimerRef.current)
+      changesRef.current = []
+    }
   }, [projectId])
 
   const enqueueChange = useCallback((change: ChangeEntry) => {
@@ -54,7 +79,14 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   const flushChangesRef = useRef<() => Promise<boolean>>()
 
   const flushChanges = useCallback(async (): Promise<boolean> => {
+    if (!mountedRef.current) return true
+    if (inFlightRef.current) {
+      pendingFlushRef.current = true
+      return false
+    }
+    if (projectIdRef.current !== projectId) return true
     if (changesRef.current.length === 0) return true
+    inFlightRef.current = true
     setSaving(true)
     const entries = changesRef.current
     changesRef.current = []
@@ -92,7 +124,15 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
       }
       return false
     } finally {
-      setSaving(false)
+      inFlightRef.current = false
+      const rerun = pendingFlushRef.current
+      pendingFlushRef.current = false
+      if (rerun) {
+        if (!mountedRef.current) { setSaving(false) }
+        else setTimeout(() => { flushChangesRef.current?.() }, 0)
+      } else {
+        setSaving(false)
+      }
     }
   }, [projectId])
 
@@ -129,10 +169,10 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
         enqueueChange({ entity: 'scenes', op: 'delete', id: scene.id })
       }
     }
-    setData((d: any) => d ? {
+    setData(d => d ? {
       ...d,
-      chapters: d.chapters.filter((c: any) => c.id !== chapterId),
-      edges: d.edges.filter((e: any) => e.sourceId !== chapterId && e.targetId !== chapterId),
+      chapters: d.chapters.filter(c => c.id !== chapterId),
+      edges: d.edges.filter(e => e.sourceId !== chapterId && e.targetId !== chapterId),
     } : d)
     enqueueChange({ entity: 'chapters', op: 'delete', id: chapterId })
     if (selection.type === 'chapter' && selection.id === chapterId) {
@@ -142,7 +182,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
 
   const {
     addEdge, deleteEdge, changeEdgeType, reconnectEdge,
-    updateEdge, reSort,
+    updateEdge,
   } = useEdges(data, setData, projectId, enqueueChange)
 
   const {

@@ -3,11 +3,12 @@ import uuid
 import json as json_mod
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
 from app.api.rate_limiter import rate_limiter
+from app.agent.guard import InputGuard
 from app.project.models import Project, ProjectConfig
 from app.agent.project_creator.graph import run_pipeline
 from app.agent.project_creator.state import MaterialState
@@ -23,9 +24,28 @@ class AiInlineRequest(BaseModel):
     selected_text: str
     full_content: str = ""
 
+    @field_validator("selected_text")
+    @classmethod
+    def selected_text_length(cls, v):
+        if len(v) > 10000:
+            raise ValueError("selected_text must not exceed 10000 characters")
+        return v
+
 
 class ContinueSuggestionsRequest(BaseModel):
     content: str
+
+
+class CreateFromMaterialRequest(BaseModel):
+    title: str = "未命名项目"
+    material: str
+
+    @field_validator("material")
+    @classmethod
+    def material_length(cls, v):
+        if len(v) > 10000:
+            raise ValueError("material must not exceed 10000 characters")
+        return v
 
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["ai"])
@@ -59,6 +79,10 @@ async def ai_inline(
         raise HTTPException(status_code=400, detail=f"Invalid action: {payload.action}")
     if not payload.selected_text.strip():
         raise HTTPException(status_code=400, detail="selected_text cannot be empty")
+
+    guard_err = InputGuard().check(payload.selected_text)
+    if guard_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=guard_err)
 
     result = await db.execute(select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id))
     scene = result.scalar_one_or_none()
@@ -182,6 +206,8 @@ async def create_from_material(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not await rate_limiter.check(f"create_from_material:{current_user['id']}", max_attempts=10, window=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     material = payload.material.strip()
     if not material:
         raise HTTPException(status_code=400, detail="素材不能为空")
@@ -189,6 +215,10 @@ async def create_from_material(
         raise HTTPException(status_code=400, detail="素材至少需要10个字来表达基本创意")
     if len(material) > 5000:
         raise HTTPException(status_code=400, detail="素材不能超过5000字")
+
+    guard_err = InputGuard().check(material)
+    if guard_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=guard_err)
 
     async def event_stream():
         initial_state: MaterialState = {

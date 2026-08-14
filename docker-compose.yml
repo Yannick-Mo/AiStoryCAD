@@ -68,11 +68,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend/app:/app/app
-      - ./backend/alembic:/app/alembic
-      - ./backend/tests:/app/tests
-      - ./backend/pytest.ini:/app/pytest.ini:ro
     restart: unless-stopped
     stop_grace_period: 30s
     networks:
@@ -106,6 +101,7 @@ services:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
       - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY:-}
     restart: unless-stopped
     networks:
       - storycad
@@ -137,15 +133,10 @@ services:
     build:
       context: ./frontend
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
+      - "5173:80"
     depends_on:
-      - backend
-    environment:
-      - VITE_API_PROXY=http://backend:8000
-    entrypoint: sh -c "exec npx vite --host 0.0.0.0"
+      backend:
+        condition: service_healthy
     restart: unless-stopped
     stop_grace_period: 30s
     networks:

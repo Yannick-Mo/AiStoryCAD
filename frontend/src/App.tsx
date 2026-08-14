@@ -21,15 +21,15 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
+    <ToastProvider>
+      <AuthProvider>
         <Routes>
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/" element={<ProtectedRoute><ProjectListPage /></ProtectedRoute>} />
         <Route path="/projects/:id" element={<ProtectedRoute><ProjectPage /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      </ToastProvider>
-    </AuthProvider>
+      </AuthProvider>
+    </ToastProvider>
   )
 }

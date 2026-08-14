@@ -95,10 +95,12 @@ export async function watchConsistencyJob(
     onDone?: (data: { report: ConsistencyReport }) => void
     onError?: (data: { message: string }) => void
   },
+  signal?: AbortSignal,
 ): Promise<void> {
   const token = getToken()
   const resp = await fetch(`${API_BASE}/consistency/jobs/${jobId}/events`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal,
   })
   if (!resp.ok || !resp.body) throw new Error(`SSE error: ${resp.status}`)
 
@@ -116,6 +118,7 @@ export async function watchConsistencyJob(
 
   try {
     while (true) {
+      if (signal?.aborted) break
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
@@ -133,6 +136,9 @@ export async function watchConsistencyJob(
         onEvent(eventName, dataLines.join('\n'))
       }
     }
+  } catch (err) {
+    if (signal?.aborted) return
+    throw err
   } finally {
     reader.releaseLock()
   }

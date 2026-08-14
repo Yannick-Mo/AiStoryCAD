@@ -20,13 +20,14 @@ import json
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.consistency_jobs import SSE_PING_INTERVAL, ConsistencyJob, get_job_manager
 from app.api.deps import get_current_user, get_db
+from app.api.rate_limiter import rate_limiter
 from app.agent.consistency.checker import ConsistencyChecker
 from app.agent.consistency.models import ConsistencyReport
 from app.agent.consistency.persistence import (
@@ -72,6 +73,8 @@ async def check_consistency(
     db: AsyncSession = Depends(get_db),
 ):
     await _verify_project_owner(db, project_id, user)
+    if not await rate_limiter.check(f"consistency_check:{user['id']}", max_attempts=30, window=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     pid_str = str(project_id)
 
     # Synchronous path (tests / debugging / MCP-style callers).

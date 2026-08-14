@@ -23,7 +23,6 @@ async def init_db():
         ConflictCandidateRecord,
         ConsistencyFact,
         ConsistencyTimeCache,
-        EntityAlias,
         FactQueueItem,
         ConsistencyReportRecord,
         ConsistencyLog,

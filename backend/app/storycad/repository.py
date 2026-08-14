@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -16,6 +16,10 @@ from app.storycad.entity_map import ENTITY_MAP
 from app.utils import row_to_dict
 
 logger = logging.getLogger(__name__)
+
+# Editor autosaves are throttled to at most one version row per window, so
+# keystroke-level syncs stop flooding project_versions with empty snapshots.
+EDITOR_VERSION_THROTTLE_S = 300
 
 
 # Fields that clients must never be able to set via update_entity.
@@ -114,13 +118,23 @@ class StoryCADRepository:
         if not has_changes:
             return 0
 
+        # 编辑器变更 + 版本行在一个事务里提交:flush → recalc → version row →
+        # 统一 commit,失败统一回滚。
         await self.db.flush()
         await self._recalc_chapter_counts(project_id)
-        await self.db.commit()
 
         project_repo = ProjectRepository(self.db)
-        pv = await project_repo.save_version(project_id, {"type": "editor_sync"})
-        return pv.version
+        latest = await project_repo.latest_version(project_id)
+        now = datetime.now(timezone.utc)
+        if latest is None or (now - latest.created_at) > timedelta(seconds=EDITOR_VERSION_THROTTLE_S):
+            pv = await project_repo.append_version(
+                project_id, {"type": "editor_sync", "updated_at": now.isoformat()}
+            )
+            version = pv.version
+        else:
+            version = latest.version
+        await self.db.commit()
+        return version
 
     async def _recalc_chapter_counts(self, project_id: uuid.UUID):
         counts = await self.db.execute(

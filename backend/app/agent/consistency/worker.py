@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.consistency import prompts
 from app.agent.consistency.facts import (
+    chunk_text,
     dedup_facts,
     facts_from_extraction,
     find_cluster_candidates,
@@ -45,6 +46,7 @@ from app.storycad.models import Scene, SceneContent
 logger = logging.getLogger(__name__)
 
 _MAX_BACKOFF_MINUTES = 60  # cap for exponential backoff (1/2/4/8…min)
+_DEAD_RETRY_LIMIT = 5  # failed attempts before a queue row goes terminal (dead)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +286,9 @@ class FactWorker:
 
         Returns True when the caller should proceed with the pipeline. A row
         that is already ``done`` with this exact hash → False (nothing to do).
-        Failed/pending rows with the same hash are *retries* → True.
+        Failed rows with the same hash are *retries*: they only proceed once
+        their backoff (``next_retry_at``) has elapsed; ``dead`` rows never
+        proceed — only a content change resets the retry state.
         """
         row = await db.get(
             FactQueueItem,
@@ -292,16 +296,7 @@ class FactWorker:
             populate_existing=True,
         )
         if row is not None:
-            if row.content_hash == content_hash and row.status == "done":
-                return False
-            if row.content_hash == content_hash and row.status in ("pending", "processing"):
-                return True  # earlier attempt in flight or awaiting retry
-            row.content_hash = content_hash
-            row.status = "pending"
-            row.next_retry_at = datetime.now(timezone.utc)
-            row.last_error = None
-            await db.flush()
-            return True
+            return await self._gate_existing_row(db, row, content_hash)
         try:
             db.add(
                 FactQueueItem(
@@ -317,14 +312,39 @@ class FactWorker:
             await db.rollback()
             row = await db.get(FactQueueItem, (project_id, scene_id))
             if row is not None:
-                row.content_hash = content_hash
+                return await self._gate_existing_row(db, row, content_hash)
+            raise
+        return True
+
+    async def _gate_existing_row(
+        self, db: AsyncSession, row: FactQueueItem, content_hash: str
+    ) -> bool:
+        """Same-hash gating; reset retry state only when the content changed."""
+        if row.content_hash == content_hash:
+            if row.status in ("pending", "processing"):
+                return True  # earlier attempt in flight or awaiting retry
+            if row.status == "done":
+                return False
+            if row.status == "dead":
+                return False  # retries exhausted — only a content change revives
+            # failed: honour the backoff schedule instead of resetting it.
+            if row.next_retry_at <= datetime.now(timezone.utc):
                 row.status = "pending"
                 row.next_retry_at = datetime.now(timezone.utc)
-                row.last_error = None
                 await db.flush()
-            else:
-                raise
+                return True
+            return False
+        self._reset_for_new_content(row, content_hash)
+        await db.flush()
         return True
+
+    @staticmethod
+    def _reset_for_new_content(row: FactQueueItem, content_hash: str) -> None:
+        row.content_hash = content_hash
+        row.status = "pending"
+        row.next_retry_at = datetime.now(timezone.utc)
+        row.retry_count = 0
+        row.last_error = None
 
     async def _mark_done_after_deleted(self, db: AsyncSession, project_id, scene_id) -> None:
         row = await db.get(FactQueueItem, (project_id, scene_id))
@@ -362,10 +382,14 @@ class FactWorker:
                 if row is None:
                     raise
         backoff_min = min(60, 2 ** min(row.retry_count, 6))
-        row.status = "failed"
         row.retry_count += 1
-        row.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=backoff_min)
         row.last_error = str(exc)[:500]
+        if row.retry_count >= _DEAD_RETRY_LIMIT:
+            # 重试耗尽 → 终态 dead:audit/backlog 都不会再触碰,除非内容变化。
+            row.status = "dead"
+        else:
+            row.status = "failed"
+            row.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=backoff_min)
         await db.commit()
 
     async def _process_one_inner(
@@ -432,8 +456,7 @@ class FactWorker:
     async def _insert_and_probe(
         self, db: AsyncSession, project_id, scene_id, scene_dict: dict, rows: list[dict]
     ) -> None:
-        """Step 3–6 of §5.3: normalise → embed → insert → write-time probe."""
-        await self._embed_rows(rows)
+        """Step 3–6 of §5.3: normalise → insert → write-time probe."""
         result = await insert_facts_for_scene(
             db,
             project_id=project_id,
@@ -459,9 +482,15 @@ class FactWorker:
     async def _extract_rows(
         self, db: AsyncSession, scene: dict, chapter: dict | None, content: str
     ) -> list[dict] | None:
-        """Incremental extraction (§5.3 step 2). None → failed (retry)."""
+        """Incremental extraction (§5.3 step 2). None → failed (retry).
+
+        The whole scene content is extracted block by block
+        (``consistency_block_chars`` per block) so arbitrarily long scenes
+        never blow the context window; per-block results are merged with
+        ``dedup_facts`` before insertion.
+        """
         settings = self._settings
-        block = content[: min(settings.consistency_block_chars, len(content))]
+        blocks = chunk_text(content, settings.consistency_block_chars)
 
         from app.storycad.models import Character
 
@@ -474,32 +503,16 @@ class FactWorker:
         char_names = [r[0] for r in result.all()]
 
         chapter_title = (chapter.title if chapter else None) or ""
-        prompt = prompts.build_extractor_prompt(
-            chapter_title, scene, block, character_names=char_names
-        )
-
-        async with self._extract_sem:
-            payload = await llm_json(
-                self._client,
-                prompts.EXTRACTOR_SYSTEM_PROMPT,
-                prompt,
-                reasoning_effort="low",
-                temperature=0.0,
-                timeout=settings.consistency_extract_timeout_s,
+        all_facts = []
+        for block_index, block in enumerate(blocks):
+            prompt = prompts.build_extractor_prompt(
+                chapter_title, scene, block, character_names=char_names
             )
-            facts = facts_from_extraction(
-                payload or {},
-                scene["id"],
-                scene.get("chapter_id"),
-                source_type=SourceType.SCENE_CONTENT,
-            )
-            if not facts and payload is None:
-                # One retry with error feedback.
-                retry_user = prompt + "\n\n注意：上一次输出不是合法JSON。请只输出一个JSON对象，不要包含任何其他文字。"
+            async with self._extract_sem:
                 payload = await llm_json(
                     self._client,
                     prompts.EXTRACTOR_SYSTEM_PROMPT,
-                    retry_user,
+                    prompt,
                     reasoning_effort="low",
                     temperature=0.0,
                     timeout=settings.consistency_extract_timeout_s,
@@ -508,10 +521,30 @@ class FactWorker:
                     payload or {},
                     scene["id"],
                     scene.get("chapter_id"),
+                    block_index=block_index,
                     source_type=SourceType.SCENE_CONTENT,
                 )
-            if not facts:
-                return None  # 空 = 失败 → old snapshot preserved, backoff
+                if not facts and payload is None:
+                    # One retry with error feedback.
+                    retry_user = prompt + "\n\n注意：上一次输出不是合法JSON。请只输出一个JSON对象，不要包含任何其他文字。"
+                    payload = await llm_json(
+                        self._client,
+                        prompts.EXTRACTOR_SYSTEM_PROMPT,
+                        retry_user,
+                        reasoning_effort="low",
+                        temperature=0.0,
+                        timeout=settings.consistency_extract_timeout_s,
+                    )
+                    facts = facts_from_extraction(
+                        payload or {},
+                        scene["id"],
+                        scene.get("chapter_id"),
+                        block_index=block_index,
+                        source_type=SourceType.SCENE_CONTENT,
+                    )
+                if not facts:
+                    return None  # 空 = 失败 → old snapshot preserved, backoff
+            all_facts.extend(facts)
 
         rows = [
             {
@@ -522,7 +555,7 @@ class FactWorker:
                 "evidence": f.evidence,
                 "source_type": f.source_type.value,
             }
-            for f in dedup_facts(facts)
+            for f in dedup_facts(all_facts)
         ]
         rows.extend(self._scene_meta_rows(scene))
         return rows
@@ -548,31 +581,20 @@ class FactWorker:
             )
         return rows
 
-    async def _embed_rows(self, rows: list[dict]) -> None:
-        """Vectorise entity/value_norm; never blocks ledger writing (§5.3 step 4)."""
-        if not rows:
-            return
-        try:
-            from app.knowledge.embeddings import embed_batch
-
-            entities = sorted({r["entity"] for r in rows})
-            norms = sorted({r["value_norm"] for r in rows if r.get("value_norm")})
-            ev = await embed_batch(entities)
-            nv = await embed_batch(norms)
-            entity_vec = dict(zip(entities, ev)) if len(ev) == len(entities) else {}
-            norm_vec = dict(zip(norms, nv)) if len(nv) == len(norms) else {}
-            for r in rows:
-                r["entity_vec"] = entity_vec.get(r["entity"])
-                r["value_vec"] = norm_vec.get(r["value_norm"])
-        except Exception:
-            logger.warning("embedding failed; write proceeds without vectors", exc_info=True)
-
     async def _probe_new_facts(
         self, db: AsyncSession, project_id, scene_id, rows: list[dict]
     ) -> None:
-        """Write-time probe (§5.3 step 6): same cluster, different value → hint."""
+        """Write-time probe (§5.3 step 6): same cluster, different value → hint.
+
+        Scoped to the ``(entity, attribute)`` pairs of the incoming batch so
+        the cluster query uses ``ix_consistency_facts_proj_active_ent_attr``
+        instead of scanning the whole project ledger.
+        """
+        pairs = sorted({(r["entity"], r["attribute"]) for r in rows})
+        if not pairs:
+            return
         try:
-            clusters = await find_cluster_candidates(db, project_id, scene_id=None)
+            clusters = await find_cluster_candidates(db, project_id, pairs=pairs)
         except Exception:
             return
         per_key: dict[tuple[str, str], dict[str, tuple[str, str, str]]] = {}

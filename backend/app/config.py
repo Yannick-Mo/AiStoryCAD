@@ -49,7 +49,6 @@ class Settings(BaseSettings):
     consistency_evidence_chars: int = 80            # max evidence quote length
     consistency_setting_context_chars: int = 800    # judge setting-context cap
     consistency_role_list_n: int = 50               # role-list truncation in extractor
-    consistency_alias_threshold: float = 0.15       # θ_alias (vector cosine distance)
     consistency_global_projection_cap: int = 7000   # global projection chars; split above this
 
     # CORS configuration
@@ -84,3 +83,33 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# Placeholder / publicly-known secrets must never be accepted (issue #3).
+_JWT_PLACEHOLDER_SECRETS = {
+    "change-me-to-a-random-string",
+    "change-me",
+    "changeme",
+    "change_me",
+    "your-secret-key",
+    "your_jwt_secret",
+    "secret",
+    "jwt-secret",
+    "jwt_secret",
+    "please-change-me",
+}
+_JWT_MIN_SECRET_LENGTH = 32
+
+
+def validate_jwt_secret() -> None:
+    key = settings.jwt_secret_key
+    if not key:
+        raise ValueError(
+            "JWT_SECRET_KEY is not configured. Set it in .env file or JWT_SECRET_KEY environment variable."
+        )
+    if key.lower() in _JWT_PLACEHOLDER_SECRETS or len(key) < _JWT_MIN_SECRET_LENGTH:
+        raise ValueError(
+            "JWT_SECRET_KEY must be a strong random secret (at least "
+            f"{_JWT_MIN_SECRET_LENGTH} chars) and not a known placeholder. "
+            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+        )

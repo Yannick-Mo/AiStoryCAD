@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 SSE_PING_INTERVAL = 15
+MAX_KEPT_JOBS = 100
 
 
 @dataclass
@@ -54,6 +55,7 @@ class JobManager:
     def create(self, project_id: str, user_id: str) -> ConsistencyJob:
         job = ConsistencyJob(job_id=str(uuid.uuid4()), project_id=project_id, user_id=user_id)
         self._jobs[job.job_id] = job
+        self._prune()
         return job
 
     def get(self, job_id: str) -> ConsistencyJob | None:
@@ -71,12 +73,28 @@ class JobManager:
         job.report = report
         job.finished_at = datetime.now(timezone.utc)
         self._push(job, "done", {"job_id": job.job_id, "report": report})
+        self._prune()
 
     def mark_failed(self, job: ConsistencyJob, error: str) -> None:
         job.state = "failed"
         job.error = error
         job.finished_at = datetime.now(timezone.utc)
         self._push(job, "error", {"job_id": job.job_id, "message": error})
+        self._prune()
+
+    def _prune(self) -> None:
+        """Keep the most recent finished jobs, drop older ones (memory bound).
+
+        The report dict is already persisted to ``consistency_reports``, so a
+        pruned job loses nothing but its in-memory copy.
+        """
+        finished = sorted(
+            (j for j in self._jobs.values() if j.state in ("done", "failed")),
+            key=lambda j: j.finished_at or j.created_at,
+            reverse=True,
+        )
+        for job in finished[MAX_KEPT_JOBS:]:
+            self._jobs.pop(job.job_id, None)
 
     def update_progress(self, job: ConsistencyJob, stage: str, done: int, total: int, message: str) -> None:
         job.stage = stage

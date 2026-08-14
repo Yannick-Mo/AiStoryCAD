@@ -253,6 +253,10 @@ class RecoveryExecutor:
 
         elif decision.action == RecoveryAction.RETRY_ESCALATED_TOKENS:
             recovery_state["escalated_tokens"] = True
+            # Actually raise the output-token budget so the model has room
+            # to answer (previously this only set a flag nobody read).
+            current = int(state.get("max_tokens", 0) or 0)
+            updates["max_tokens"] = max(current, 32768)
 
         elif decision.action == RecoveryAction.SWITCH_MODEL:
             if self._current_model_index < len(self._fallback_models):
@@ -263,6 +267,8 @@ class RecoveryExecutor:
                 updates["_model_override"] = new_model
             else:
                 recovery_state["models_exhausted"] = True
+                recovery_state["gave_up"] = True
+                recovery_state["gave_up_reason"] = "All fallback models exhausted"
                 updates["errors"] = list(state.get("errors", [])) + [
                     "All fallback models exhausted"
                 ]

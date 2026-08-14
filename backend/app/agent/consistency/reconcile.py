@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -210,6 +210,11 @@ async def reconcile_project(
                 index_elements=_UNIQUE_CANDIDATE_COLS,
                 set_={
                     "last_seen_at": now,
+                    # 复活的候选:archived → pending;verified/dismissed 保留人工裁定。
+                    "status": case(
+                        (ConflictCandidateRecord.status == "archived", "pending"),
+                        else_=ConflictCandidateRecord.status,
+                    ),
                     "evidence_a": snap_a[0][:400],
                     "scene_a": snap_a[1],
                     "chapter_a": snap_a[2],

@@ -1,7 +1,9 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
-import { getToken, setToken, clearToken, isLoggedIn } from "../api/auth"
+import { useNavigate } from "react-router-dom"
+import { setToken, clearToken, isLoggedIn, setOnUnauthorized } from "../api/auth"
 import type { AuthUser, AuthResponse } from "../api/auth"
 import * as authApi from "../api/auth"
+import { useToast } from "../pages/editor/components/Toast"
 
 interface AuthContextValue {
   user: AuthUser | null
@@ -16,6 +18,17 @@ const AuthContext = createContext<AuthContextValue>(null!)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
+  const { addToast } = useToast()
+
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      setUser(null)
+      addToast('登录已过期，请重新登录', 'warning')
+      navigate('/login')
+    })
+    return () => setOnUnauthorized(null)
+  }, [navigate, addToast])
 
   useEffect(() => {
     if (isLoggedIn()) {

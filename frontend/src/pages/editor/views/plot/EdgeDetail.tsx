@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { Act, Chapter, ChapterEdge, EdgeType } from '../../types'
 
 interface EdgeDetailProps {

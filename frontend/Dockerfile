@@ -1,11 +1,37 @@
-﻿FROM node:20.18-alpine AS base
+﻿# ── Build stage: compile the Vite/React app ─────────────────────────────
+FROM node:20.18-alpine AS build
 
 WORKDIR /app
 
 RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 appuser
 
-COPY package.json ./
-RUN npm install --legacy-peer-deps && npm cache clean --force
+# Install locked deps (package-lock.json is committed). --legacy-peer-deps is
+# kept to avoid ERESOLVE failures from an unresolved real peer conflict;
+# TODO: drop the flag once the underlying peer deps are aligned.
+COPY package.json package-lock.json ./
+RUN npm ci --legacy-peer-deps --no-audit --no-fund && npm cache clean --force
+
+COPY . .
+
+RUN npm run build
+
+# ── Runtime stage: static hosting + API/MCP reverse proxy via nginx ──────
+FROM nginx:alpine AS runtime
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+# ── Dev stage: full node toolchain for `vite dev` (docker-compose.dev.yml) ─
+FROM node:20.18-alpine AS dev
+
+WORKDIR /app
+
+RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 appuser
+
+COPY package.json package-lock.json ./
+RUN npm ci --legacy-peer-deps --no-audit --no-fund && npm cache clean --force
 
 COPY . .
 

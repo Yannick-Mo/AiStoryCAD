@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   checkConsistency,
   watchConsistencyJob,
@@ -35,9 +35,12 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
 
   const stopRunning = useCallback(() => setRunning(false), [])
 
+  const abortRef = useRef<AbortController | null>(null)
+
   useEffect(() => {
     return () => {
-      // No-op; SSE connection self-terminates when the modal unmounts.
+      abortRef.current?.abort()
+      abortRef.current = null
     }
   }, [])
 
@@ -47,10 +50,13 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
     setStage('pending')
     setProgress(null)
     setMessage('')
+    abortRef.current?.abort()
     try {
       const result = await checkConsistency(projectId, { force })
       if ('job_id' in result && result.job_id) {
         setStage('pending')
+        const controller = new AbortController()
+        abortRef.current = controller
         await watchConsistencyJob(result.job_id, {
           onProgress: ({ stage, progress, message }) => {
             setStage(stage)
@@ -65,12 +71,13 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
             setError(message || '检查失败')
             stopRunning()
           },
-        })
+        }, controller.signal)
       } else {
         setReport(result as ConsistencyReport)
         stopRunning()
       }
     } catch (e) {
+      if (abortRef.current?.signal.aborted) return
       setError(e instanceof Error ? e.message : '检查失败')
       stopRunning()
     }
@@ -104,7 +111,7 @@ export default function ConsistencyCheckModal({ projectId, onClose, onNavigate }
             <div className="text-center py-8">
               <p className="text-sm text-gray-400 mb-4">检查角色一致性、时间线逻辑、世界观冲突</p>
               <button
-                onClick={handleCheck}
+                onClick={() => handleCheck()}
                 className="px-6 py-2 rounded-full text-sm bg-gradient-to-r from-amber-700/80 to-amber-600/80 border border-amber-500/50 text-white hover:from-amber-600 hover:to-amber-500 transition-all"
               >
                 开始检查

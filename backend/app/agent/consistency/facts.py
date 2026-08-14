@@ -12,7 +12,7 @@ import unicodedata
 import uuid
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.consistency.models import (
@@ -233,7 +233,7 @@ async def insert_facts_for_scene(
     """Deactivate old fact rows for the scene, then insert the new ones.
 
     ``rows`` items: ``{"entity", "attribute", "value", "value_norm",
-    "evidence", "source_type", "entity_vec", "value_vec"}`` (vectors optional).
+    "evidence", "source_type"}``.
 
     Deactivation and insertion run in one transaction (caller commits).
     Deactivation runs *even when rows is empty* (cleared-scene semantics,
@@ -250,11 +250,9 @@ async def insert_facts_for_scene(
                 scene_id=scene_id,
                 chapter_id=chapter_id,
                 entity=r["entity"],
-                entity_vec=r.get("entity_vec"),
                 attribute=r["attribute"],
                 value=r["value"],
                 value_norm=r.get("value_norm") or normalise_value(r["value"]),
-                value_vec=r.get("value_vec"),
                 evidence=r.get("evidence", "")[:200],
                 source_type=r.get("source_type", "scene_content"),
                 is_active=True,
@@ -294,13 +292,17 @@ async def find_cluster_candidates(
     db: AsyncSession,
     project_id: uuid.UUID,
     scene_id: uuid.UUID | None = None,
+    pairs: list[tuple[str, str]] | None = None,
 ) -> list[tuple[str, str, str, str, str, str]]:
     """Cluster discovery over active facts (shared by probe + reconcile).
 
     Returns ``[(entity, attribute, value_norm, evidence, scene_id, chapter_id), ...]``.
-    With *scene_id* set, only facts of that scene are considered (the
-    write-time probe gathers those for the incoming batch); without it the
-    whole project's active ledger is scanned (§14.3).
+    With *scene_id* set, only facts of that scene are considered; with
+    *pairs* set, only ``(entity, attribute)`` clusters in the list are
+    considered (so the write-time probe can use the
+    ``ix_consistency_facts_proj_active_ent_attr`` index instead of scanning
+    the whole project ledger). Without either, the whole project's active
+    ledger is scanned (§14.3).
     """
     stmt = (
         select(
@@ -318,6 +320,18 @@ async def find_cluster_candidates(
     )
     if scene_id is not None:
         stmt = stmt.where(ConsistencyFact.scene_id == scene_id)
+    if pairs:
+        stmt = stmt.where(
+            or_(
+                *[
+                    and_(
+                        ConsistencyFact.entity == entity,
+                        ConsistencyFact.attribute == attribute,
+                    )
+                    for entity, attribute in pairs
+                ]
+            )
+        )
     result = await db.execute(stmt)
     return [
         (row.entity, row.attribute, row.value_norm or "", row.evidence or "", str(row.scene_id), str(row.chapter_id or ""))

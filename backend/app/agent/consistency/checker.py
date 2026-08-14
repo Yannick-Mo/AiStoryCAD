@@ -273,6 +273,12 @@ class ConsistencyChecker:
                     temperature=0.2,
                     timeout=self._settings.consistency_judge_timeout_s,
                 )
+                if payload is None:
+                    # 判定失败(LLM 异常/超时):候选保持 pending,下次重判。
+                    self._record_failure("候选判定批次无响应，候选保持 pending 待下次重判")
+                    done += len(batch)
+                    await self._progress("judge", done, len(pending), "候选判定中(批次失败)", progress_cb)
+                    return
                 verdicts = self._parse_judge_verdicts(payload, len(batch))
                 for cand, v in zip(batch, verdicts):
                     cand.status = "verified"

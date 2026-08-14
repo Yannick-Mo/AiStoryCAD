@@ -7,7 +7,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css'
 import CharacterNode from './CharacterNode'
 import ContextMenu from '../plot/ContextMenu'
-import type { Character, CharacterRelation } from '../../types'
+import type { Character } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
 
 const nodeTypes: NodeTypes = { character: CharacterNode }

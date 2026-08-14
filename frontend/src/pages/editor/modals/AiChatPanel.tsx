@@ -74,6 +74,13 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   useEffect(() => { modeRef.current = mode }, [mode])
 
   useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+      abortRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     getConversations(projectId).then(data => setConversations(data.conversations)).catch(() => {})
   }, [projectId])
 
@@ -169,6 +176,18 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
         if (throttleTimer) cancelAnimationFrame(throttleTimer)
         throttleTimer = null
         setError(err.message)
+        if (/incomplete/i.test(err.message)) {
+          setMessages(prev => {
+            const next = [...prev]
+            for (let i = next.length - 1; i >= 0; i--) {
+              if (next[i].role === 'assistant') {
+                next[i] = { ...next[i], content: next[i].content + '（已中断）' }
+                break
+              }
+            }
+            return next
+          })
+        }
         loadingRef.current = false
         setLoading(false)
         setStep(null)
@@ -194,6 +213,16 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
     loadingRef.current = false
     setLoading(false)
     setStep(null)
+    setMessages(prev => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].role === 'assistant') {
+          next[i] = { ...next[i], content: next[i].content + '（已中断）' }
+          break
+        }
+      }
+      return next
+    })
   }, [])
 
   const addSystemMsg = useCallback((text: string) => {

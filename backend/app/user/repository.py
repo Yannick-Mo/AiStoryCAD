@@ -1,9 +1,11 @@
 import uuid
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.user.models import User
 from app.project.models import Project, ProjectConfig, ProjectVersion
+from app.agent.memory.models import Conversation, ConversationMessage
+from app.knowledge.models import KnowledgeChunk
 
 
 class UserRepository:
@@ -51,6 +53,20 @@ class UserRepository:
         if not user:
             return False
         try:
+            # Child rows first (FK-safe), then projects, then the user.
+            await self.db.execute(
+                delete(ConversationMessage).where(
+                    ConversationMessage.conversation_id.in_(
+                        select(Conversation.id).where(Conversation.user_id == user_id)
+                    )
+                )
+            )
+            await self.db.execute(
+                delete(Conversation).where(Conversation.user_id == user_id)
+            )
+            await self.db.execute(
+                delete(KnowledgeChunk).where(KnowledgeChunk.user_id == user_id)
+            )
             result = await self.db.execute(
                 select(Project).where(Project.owner_id == user_id)
             )

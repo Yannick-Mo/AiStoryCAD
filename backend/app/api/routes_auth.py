@@ -54,6 +54,18 @@ class LoginRequest(BaseModel):
 class UpdateProfileRequest(BaseModel):
     display_name: str | None = None
     password: str | None = None
+    old_password: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_new_password(cls, v):
+        if v is None:
+            return v
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password must not exceed 128 characters")
+        return v
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -91,7 +103,11 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 async def update_me(payload: UpdateProfileRequest, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     user_id = current_user["id"]
     service = UserService(db)
-    return await service.update_profile(user_id, display_name=payload.display_name, password=payload.password)
+    if payload.password is not None:
+        if not payload.old_password:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Old password is required")
+        return await service.update_password(user_id, payload.old_password, payload.password)
+    return await service.update_profile(user_id, display_name=payload.display_name)
 
 
 @router.post("/logout")
@@ -102,7 +118,7 @@ async def logout(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
     token = authorization[7:]
-    blacklist_token(token)
+    await blacklist_token(token)
     return {"ok": True}
 
 

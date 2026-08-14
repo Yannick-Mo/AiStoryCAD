@@ -7,13 +7,8 @@ final-response step.  Not a LangGraph node — a plain utility.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-
-import aiofiles
-import yaml
 
 from app.agent.context_compressor import estimate_text_tokens
 from app.agent.prompts.builder import get_prompt_builder
@@ -25,9 +20,6 @@ logger = logging.getLogger(__name__)
 
 MAX_SYSTEM_TOKENS = 30000
 MAX_RAG_CHARS = settings.llm_max_rag_chars or 5000
-
-_PERSONA_CACHE: str | None = None
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 
 # Short inline mode declarations (avoid builder dependency during module init)
 MODE_DECLARATION_CHAT = "# ——— 当前模式：对话模式（只读，不可写入）———"
@@ -53,47 +45,20 @@ def _get_static_section(name: str) -> str:
     return builder.get_static_section(name)
 
 
-_COWRITER_PERSONA_CACHE: str | None = None
+def _load_cowriter_persona() -> str:
+    """Render the cowriter persona via the shared prompt loader.
+
+    Single source of truth: ``render_prompt("cowriter")`` (same loader as
+    ``loop._render_cowriter_persona``) — no duplicate YAML parsing here.
+    """
+    from app.agent.prompts import render_prompt
+    return render_prompt("cowriter") or ""
 
 
-async def _load_cowriter_persona() -> str:
-    """Lazily load & cache the cowriter persona from cowriter.yaml."""
-    global _COWRITER_PERSONA_CACHE
-    if _COWRITER_PERSONA_CACHE is not None:
-        return _COWRITER_PERSONA_CACHE
-
-    cowriter_path = _PROMPT_DIR / "cowriter.yaml"
-    try:
-        async with aiofiles.open(cowriter_path, encoding="utf-8") as f:
-            content = await f.read()
-        data = await asyncio.to_thread(yaml.safe_load, content)
-        _COWRITER_PERSONA_CACHE = (data or {}).get("system", "")
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        _COWRITER_PERSONA_CACHE = ""
-    return _COWRITER_PERSONA_CACHE
-
-
-async def _load_persona() -> str:
-    """Lazily load & cache the persona prompt from persona.yaml (single source of truth)."""
-    global _PERSONA_CACHE
-    if _PERSONA_CACHE is not None:
-        return _PERSONA_CACHE
-
-    persona_path = _PROMPT_DIR / "persona.yaml"
-    try:
-        async with aiofiles.open(persona_path, encoding="utf-8") as f:
-            content = await f.read()
-        data = await asyncio.to_thread(yaml.safe_load, content)
-        _PERSONA_CACHE = (data or {}).get("system", "")
-        if not _PERSONA_CACHE:
-            _PERSONA_CACHE = "You are StoryCAD AI, a creative writing assistant."
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        _PERSONA_CACHE = ""
-    return _PERSONA_CACHE
+def _load_persona() -> str:
+    """Render the persona prompt via the shared prompt loader (single source of truth)."""
+    from app.agent.prompts import render_prompt
+    return render_prompt("persona") or "You are StoryCAD AI, a creative writing assistant."
 
 
 # ── Context trimming ───────────────────────────────────────────────────
@@ -175,7 +140,7 @@ def trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKEN
 
 async def build_fast_path_prompt(state: dict) -> str:
     """Simplified prompt for general questions without project context."""
-    persona = await _load_persona()
+    persona = _load_persona()
     system = f"""{persona}
 
 你正在和一位小说作者聊天。对方问的是一般性写作问题或闲聊，
@@ -262,7 +227,7 @@ async def build_system_prompt(state: dict) -> str:
     active_skills = state.get("active_skills", [])
     recent_hint = project_ctx.get("_recent_scenes_hint", "")
 
-    persona = await _load_persona()
+    persona = _load_persona()
     sections: list[_ContextSection] = []
 
     # Tier 0 — critical: persona, mode, project identity
@@ -363,7 +328,7 @@ async def build_system_prompt(state: dict) -> str:
 
     # Cowriter persona
     if cowriter_active:
-        persona_text = await _load_cowriter_persona()
+        persona_text = _load_cowriter_persona()
         if persona_text:
             sections.append(_ContextSection(tier=0, label="cowriter_persona", text=persona_text))
 

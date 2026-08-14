@@ -29,13 +29,12 @@ Thumbs.db
 .env
 .env.local
 
-# Superpowers
-.superpowers/
-.worktrees/
-docs/
-
 # Docker
 .docker/
 
 # Logs
 *.log
+
+docs/
+
+AGENT_GUIDE.md

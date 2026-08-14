@@ -2,11 +2,27 @@ import type { ProjectListItem } from "../types/project"
 
 const BASE = "/api/auth"
 
+let onUnauthorized: (() => void) | null = null
+let authLost = false
+
+export function setOnUnauthorized(cb: (() => void) | null) {
+  onUnauthorized = cb
+  authLost = false
+}
+
+function handleUnauthorized() {
+  clearToken()
+  if (authLost) return
+  authLost = true
+  onUnauthorized?.()
+}
+
 export function getToken(): string | null {
   return localStorage.getItem("storycad_token")
 }
 
 export function setToken(token: string) {
+  authLost = false
   localStorage.setItem("storycad_token", token)
 }
 
@@ -33,7 +49,7 @@ export async function apiGet<T>(url: string): Promise<T> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) {
-    if (res.status === 401) { clearToken(); window.location.href = "/login" }
+    if (res.status === 401) { handleUnauthorized() }
     const text = await res.text().catch(() => "")
     let detail = `HTTP ${res.status}`
     if (text) {
@@ -52,7 +68,7 @@ export async function apiPost<T>(url: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
-    if (res.status === 401) { clearToken(); window.location.href = "/login" }
+    if (res.status === 401) { handleUnauthorized() }
     const text = await res.text().catch(() => "")
     let detail = `HTTP ${res.status}`
     if (text) {
@@ -71,7 +87,7 @@ export async function apiPut<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   })
   if (!res.ok) {
-    if (res.status === 401) { clearToken(); window.location.href = "/login" }
+    if (res.status === 401) { handleUnauthorized() }
     const text = await res.text().catch(() => "")
     let detail = `HTTP ${res.status}`
     if (text) {
@@ -90,7 +106,7 @@ export async function apiPatch<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   })
   if (!res.ok) {
-    if (res.status === 401) { clearToken(); window.location.href = "/login" }
+    if (res.status === 401) { handleUnauthorized() }
     const text = await res.text().catch(() => "")
     let detail = `HTTP ${res.status}`
     if (text) {
@@ -108,7 +124,7 @@ export async function apiDelete<T = { ok: boolean }>(url: string): Promise<T> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) {
-    if (res.status === 401) { clearToken(); window.location.href = "/login" }
+    if (res.status === 401) { handleUnauthorized() }
     const text = await res.text().catch(() => "")
     let detail = `HTTP ${res.status}`
     if (text) {

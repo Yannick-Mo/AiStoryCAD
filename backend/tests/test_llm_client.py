@@ -498,6 +498,7 @@ class TestLLMClientSessionId:
         with patch("app.llm.client._tracker") as mock_tracker:
             result = await client.chat(
                 messages=[Message(role="user", content="hi")],
+                model="test-m",
                 stream=False,
                 session_id="from-chat",
             )

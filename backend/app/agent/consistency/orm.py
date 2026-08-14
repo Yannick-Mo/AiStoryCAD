@@ -3,20 +3,18 @@
 The v3 design (一致性分析引擎v3设计文档 §4) replaces the per-scene cache with
 a *write-time fact ledger*:
 
-  * ``consistency_facts``         — per-scene extraction product (vectorised)
+  * ``consistency_facts``         — per-scene extraction product
   * ``entity_aliases``            — alias resolution table (auto/manual)
   * ``conflict_candidates``       — judgement records anchored on value pairs
   * ``consistency_time_cache``    — project-level time-expression ordering
   * ``consistency_fact_queue``    — write-path task queue (persistent)
 
 ``consistency_reports`` / ``consistency_logs`` are kept from v2 (migration
-0013); ``scene_fact_cache`` is fully abandoned and will be dropped in a
-later migration.
+0013); ``scene_fact_cache`` is fully abandoned and dropped in migration 0016.
 """
 import uuid
 from datetime import datetime, timezone
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
@@ -45,11 +43,9 @@ class ConsistencyFact(Base):
     scene_id = Column(UUID(as_uuid=True), ForeignKey("scenes.id", ondelete="CASCADE"), nullable=False, index=True)
     chapter_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=True)
     entity = Column(String, nullable=False)
-    entity_vec = Column(Vector(1536), nullable=True)
     attribute = Column(String, nullable=False)
     value = Column(Text, nullable=False)
     value_norm = Column(Text, nullable=False)
-    value_vec = Column(Vector(1536), nullable=True)
     evidence = Column(Text, nullable=False)
     source_type = Column(String(30), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
@@ -58,19 +54,6 @@ class ConsistencyFact(Base):
     __table_args__ = (
         Index("ix_consistency_facts_proj_active_ent_attr", "project_id", "is_active", "entity", "attribute"),
         Index("ix_consistency_facts_scene", "scene_id", postgresql_where=text("is_active")),
-    )
-
-
-class EntityAlias(Base):
-    __tablename__ = "entity_aliases"
-
-    canonical_entity = Column(String, nullable=False)
-    alias = Column(String, nullable=False)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    auto = Column(Boolean, nullable=False, default=False, server_default=text("false"))
-
-    __table_args__ = (
-        PrimaryKeyConstraint("project_id", "alias"),
     )
 
 

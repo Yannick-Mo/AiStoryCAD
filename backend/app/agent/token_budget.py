@@ -78,11 +78,6 @@ def compute_budget(
     )
 
 
-def estimate_tool_result_tokens(result: dict) -> int:
-    """Estimate the token weight of a single tool result dict."""
-    return estimate_text_tokens(str(result.get("data", ""))) + estimate_text_tokens(str(result.get("error", "")))
-
-
 def check_token_budget(budget: TurnBudget) -> dict:
     """Check the current token budget and return a budget directive.
 

@@ -288,15 +288,44 @@ class RateLimiter:
             return True, len(queue)
 
     async def _check_redis(self, key: str, now: float) -> tuple[bool, int]:
+        # Atomic script: prune expired members, count, and (if under the
+        # limit) append + refresh TTL in one step — no interleaving between
+        # the old zremrangebyscore → zcard → zadd → expire sequence.
+        script = """
+        local min_score = tonumber(ARGV[1])
+        local max_requests = tonumber(ARGV[2])
+        local window = tonumber(ARGV[3])
+        local member = ARGV[4]
+        local now = tonumber(ARGV[5])
+        redis.call('zremrangebyscore', KEYS[1], 0, min_score)
+        local count = redis.call('zcard', KEYS[1])
+        if count >= max_requests then
+            return {0, count}
+        end
+        redis.call('zadd', KEYS[1], now, member)
+        redis.call('expire', KEYS[1], window)
+        return {1, count + 1}
+        """
         min_score = now - self.window
-        await self._redis.zremrangebyscore(key, 0, min_score)
-        count = await self._redis.zcard(key)
-        if count >= self.max_requests:
-            return False, count
-        member = f"{now}:{uuid.uuid4().hex[:8]}"
-        await self._redis.zadd(key, {member: now})
-        await self._redis.expire(key, self.window)
-        return True, count + 1
+        try:
+            res = await self._redis.eval(
+                script, 1, key, min_score, self.max_requests, self.window,
+                f"{now}:{uuid.uuid4().hex[:8]}", now,
+            )
+            if isinstance(res, (list, tuple)):
+                return bool(res[0]), int(res[1])
+            return True, 1
+        except Exception:
+            # Redis eval unavailable (e.g. older proxy) — fall back to the
+            # previous 3-step sequence.
+            await self._redis.zremrangebyscore(key, 0, min_score)
+            count = await self._redis.zcard(key)
+            if count >= self.max_requests:
+                return False, count
+            member = f"{now}:{uuid.uuid4().hex[:8]}"
+            await self._redis.zadd(key, {member: now})
+            await self._redis.expire(key, self.window)
+            return True, count + 1
 
 
 class InputGuard:
@@ -304,6 +333,7 @@ class InputGuard:
         self.rate_limiter = rate_limiter
 
     def check(self, content: str, rate_limit_key: str | None = None) -> str | None:
+        # NOTE: kept for the sync call sites in app/api/routes_ai.py.
         content = normalize_input(content)
         err = check_input_length(content)
         if err:

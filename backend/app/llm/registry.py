@@ -45,6 +45,15 @@ def configure_from_settings(settings) -> None:
             key = parts[1] if len(parts) > 1 else api_key
             url = parts[2] if len(parts) > 2 else base_url
             register(name, ModelDef(api_key=key, base_url=url.rstrip("/")))
+        # The raw branch bypassed the fallback registration below, so
+        # SWITCH_MODEL lookups for fallback models raised KeyError and the
+        # chain silently fell through.  Register them here too.
+        fallback_raw = settings.llm_fallback_models
+        if fallback_raw:
+            for name in fallback_raw.split(","):
+                name = name.strip()
+                if name:
+                    register(name, ModelDef(api_key=api_key, base_url=base_url))
         return
 
     name = settings.llm_model
