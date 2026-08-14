@@ -129,24 +129,31 @@ def register_routers():
 _MCP_MAX_CONNECTIONS_PER_USER = 5
 
 
-async def _extract_mcp_token(request: Request) -> str | None:
+async def _extract_mcp_token(request: Request, method: str, path: str) -> str | None:
     auth = request.headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth[7:]
-    return request.query_params.get("token")
+    # query token 仅允许用于 SSE 建连端点(GET /mcp/sse);
+    # POST /mcp/messages 等其它请求不允许携带 query token。
+    if method == "GET" and path.rstrip("/") == "/mcp/sse":
+        return request.query_params.get("token")
+    return None
 
 
 async def _mcp_transport_auth(scope, receive, send, mcp_app):
     """Transport-layer auth for the MCP SSE mount: valid JWT (Bearer header
-    or ?token= query) is required, plus a soft per-user connection cap.
-    Per-tool token checks in app.mcp.auth remain the second layer."""
+    or ?token= query for the SSE endpoint) is required, plus a soft per-user
+    connection cap. Per-tool token checks in app.mcp.auth remain the second
+    layer."""
     if scope["type"] != "http":
         await mcp_app(scope, receive, send)
         return
     from starlette.requests import Request as StarletteRequest
 
     request = StarletteRequest(scope, receive)
-    token = await _extract_mcp_token(request)
+    method = scope.get("method", "")
+    path = scope.get("path", "")
+    token = await _extract_mcp_token(request, method, path)
     if not token:
         response = JSONResponse({"detail": "Missing authentication token"}, status_code=401)
         await response(scope, receive, send)

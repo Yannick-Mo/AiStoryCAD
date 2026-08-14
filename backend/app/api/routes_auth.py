@@ -1,10 +1,11 @@
 import re
 import uuid
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user, blacklist_token
 from app.api.rate_limiter import rate_limiter
+from app.config import settings
 from app.user.service import UserService
 
 
@@ -71,27 +72,48 @@ class UpdateProfileRequest(BaseModel):
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _set_auth_cookie(response: Response, token: str) -> None:
+    """httpOnly JWT cookie(前端为 http://localhost:5173,无需 Secure)。"""
+    max_age = int(settings.jwt_expire_hours or 24) * 3600
+    response.set_cookie(
+        key="storycad_token",
+        value=token,
+        max_age=max_age,
+        path="/",
+        httponly=True,
+        samesite="lax",
+    )
+
+
 @router.post("/register")
-async def register(request: Request, payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(request: Request, payload: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)):
     client_ip = request.client.host if request.client else "unknown"
-    if not await rate_limiter.check(f"register:{client_ip}"):
+    if not await rate_limiter.check(f"register:{payload.email}:{client_ip}"):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     service = UserService(db)
     try:
-        return await service.register(payload.username, payload.email, payload.password)
+        result = await service.register(payload.username, payload.email, payload.password)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    _set_auth_cookie(response, result["token"])
+    return result
 
 
 @router.post("/login")
-async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(request: Request, payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     client_ip = request.client.host if request.client else "unknown"
-    if not await rate_limiter.check(f"login:{client_ip}"):
+    if not await rate_limiter.check(f"login:{payload.email}:{client_ip}"):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+    # 账号维度锁定:15 分钟内尝试次数达 10 次即临时锁定该账号(成功后重置)
+    if not await rate_limiter.check(f"login_lock:{payload.email}", max_attempts=10, window=900):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many failed login attempts. Please try again later.")
     if not payload.email or not payload.password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email and password are required")
     service = UserService(db)
-    return await service.login(payload.email, payload.password)
+    result = await service.login(payload.email, payload.password)
+    await rate_limiter.reset(f"login_lock:{payload.email}")
+    _set_auth_cookie(response, result["token"])
+    return result
 
 
 @router.get("/me")
@@ -112,13 +134,20 @@ async def update_me(payload: UpdateProfileRequest, current_user: dict = Depends(
 
 @router.post("/logout")
 async def logout(
+    request: Request,
     authorization: str | None = Header(None),
     current_user: dict = Depends(get_current_user),
+    response: Response = None,
 ):
-    if not authorization or not authorization.startswith("Bearer "):
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+    if not token:
+        token = request.cookies.get("storycad_token")
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
-    token = authorization[7:]
     await blacklist_token(token)
+    response.delete_cookie("storycad_token", path="/")
     return {"ok": True}
 
 

@@ -41,6 +41,10 @@ class VectorStore:
                 params["project_id"] = project_id
             else:
                 params["project_id"] = project_id
+        else:
+            # project_id 缺失时明确限定为全局知识 chunk(project_id IS NULL),
+            # 防止跨租户检索到其它用户私有知识,避免 RAG 数据泄露。
+            where_clauses.append("project_id IS NULL")
         where_sql = " AND ".join(where_clauses)
 
         sql = text(f"""
@@ -95,6 +99,10 @@ class VectorStore:
                 params["project_id"] = project_id
             else:
                 params["project_id"] = project_id
+        else:
+            # project_id 缺失时明确限定为全局知识 chunk(project_id IS NULL),
+            # 防止跨租户检索到其它用户私有知识,避免 RAG 数据泄露。
+            where_clauses.append("project_id IS NULL")
         where_sql = " AND ".join(where_clauses)
 
         sql = text(f"""

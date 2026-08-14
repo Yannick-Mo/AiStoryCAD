@@ -80,6 +80,18 @@ class RedisRateLimiter:
                 logger.debug("RateLimiter Redis check failed, falling back: %s", exc)
         return await self._memory.check(key, max_attempts, window)
 
+    async def reset(self, key: str) -> None:
+        """Clear the counter for a key (e.g. failed-login lockout on success)."""
+        redis = await self._get_redis()
+        if redis is not None:
+            try:
+                await redis.delete(f"rl:{key}")
+                return
+            except Exception as exc:
+                logger.debug("RateLimiter Redis reset failed, falling back: %s", exc)
+        async with self._memory._lock:
+            self._memory._attempts.pop(key, None)
+
 
 rate_limiter = RedisRateLimiter()
 

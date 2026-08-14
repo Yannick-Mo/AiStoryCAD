@@ -222,6 +222,18 @@ async def middle_process_tool_result(
         output = ""
 
     if output:
+        # 压缩/清洗的是外部网页内容,复用 guard 的注入/危险内容检测,
+        # 命中则丢弃,避免注入内容进入主循环。
+        from app.agent.guard import check_web_content_safety
+        injection_err = check_web_content_safety(output)
+        if injection_err:
+            logger.warning(
+                "Middle-LLM %s output blocked by web content check (%s) — falling back",
+                tool_name, injection_err,
+            )
+            output = ""
+
+    if output:
         return output
 
     # Fallbacks: verbatim if the result fits the window safely, else fold.

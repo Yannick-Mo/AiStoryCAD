@@ -5,7 +5,7 @@ from typing import AsyncGenerator, Optional
 from urllib.parse import urlparse
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 from app.config import settings
@@ -131,10 +131,15 @@ async def get_redis() -> Redis | None:
     return _redis_instance
 
 
-async def get_current_user(authorization: Optional[str] = Header(None), db: AsyncSession = Depends(get_db)) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
+async def get_current_user(authorization: Optional[str] = Header(None), request: Request = None, db: AsyncSession = Depends(get_db)) -> dict:
+    # token 来源优先级:Authorization: Bearer header → storycad_token cookie
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+    if not token and request is not None:
+        token = request.cookies.get("storycad_token")
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
-    token = authorization[7:]
     if await is_token_revoked(token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
     service = UserService(db)

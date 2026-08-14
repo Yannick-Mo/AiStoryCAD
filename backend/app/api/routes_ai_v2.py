@@ -95,14 +95,23 @@ async def _stream_chat(
 
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
 
+        async def _safe_put(item: tuple) -> None:
+            """客户端断开后队列可能被填满导致 put 永久阻塞,加超时兜底。"""
+            try:
+                await asyncio.wait_for(queue.put(item), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("SSE queue full; dropping event")
+            except asyncio.CancelledError:
+                raise
+
         async def _run_chat():
             try:
                 async for event in agent.chat_stream(project_id, user_id, message, conv_id, mode=mode, context_view=context_view, context_id=context_id):
-                    await queue.put(("event", event))
+                    await _safe_put(("event", event))
             except BaseException as exc:
-                await queue.put(("error", exc))
+                await _safe_put(("error", exc))
             finally:
-                await queue.put(("done", None))
+                await _safe_put(("done", None))
 
         chat_task = asyncio.create_task(_run_chat())
 

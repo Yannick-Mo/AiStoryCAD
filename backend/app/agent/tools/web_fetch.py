@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import re
+import socket
 import time
 from collections import OrderedDict
 from urllib.parse import urljoin, urlparse
@@ -136,38 +137,58 @@ def _is_blocked_address(ip_str: str) -> bool:
     return False
 
 
-async def _resolve_and_check(hostname: str) -> str | None:
-    """Resolve a hostname and reject it if any resolved address is blocked.
+async def _resolve_and_check(hostname: str) -> tuple[str | None, str | None]:
+    """Resolve a hostname to a concrete IP and reject it if blocked.
 
-    IP literals (including IPv6 in brackets) are checked directly without DNS.
+    Returns (error, resolved_ip). The resolved IP is reused for the actual
+    request so the DNS answer can't change between validation and connect
+    (DNS rebinding / TOCTOU). IP literals (including IPv6 in brackets) are
+    checked directly without DNS.
     """
     host = hostname.strip("[]")
     try:
-        ipaddress.ip_address(host)
-        return None if not _is_blocked_address(host) else "URL resolves to a private or reserved address"
+        addr = ipaddress.ip_address(host)
+        return (None if not _is_blocked_address(host) else "URL resolves to a private or reserved address",
+                host if addr.version == 4 else host)
     except ValueError:
         pass
     try:
-        infos = await asyncio.get_event_loop().getaddrinfo(host, None, type=0)
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None, type=0)
     except Exception:
-        return "Invalid URL: hostname could not be resolved"
+        return "Invalid URL: hostname could not be resolved", None
     if not infos:
-        return "Invalid URL: hostname could not be resolved"
+        return "Invalid URL: hostname could not be resolved", None
     for info in infos:
         ip_str = info[4][0]
         if _is_blocked_address(ip_str):
-            return "URL resolves to a private or reserved address"
-    return None
+            return "URL resolves to a private or reserved address", None
+    return None, infos[0][4][0]
 
 
-async def _validate_url_async(url: str) -> str | None:
-    """Full URL validation: syntax + DNS resolution + SSRF blocklist."""
+async def _validate_url_async(url: str) -> tuple[str | None, str | None]:
+    """Full URL validation: syntax + DNS resolution + SSRF blocklist.
+
+    Returns (error, resolved_ip)."""
     error = _validate_url(url)
     if error:
-        return error
+        return error, None
     parsed = urlparse(url)
     assert parsed.hostname is not None
     return await _resolve_and_check(parsed.hostname)
+
+
+def _build_target_url(parsed, pinned_ip: str) -> str:
+    """Build a URL that connects to *pinned_ip* while keeping the original
+    Host header semantics for the server."""
+    try:
+        if ipaddress.ip_address(pinned_ip).version == 6:
+            pinned_ip = f"[{pinned_ip}]"
+    except ValueError:
+        pass
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    return f"http://{pinned_ip}{path}"
 
 
 async def _fetch_url(url: str) -> tuple[str | None, str | None]:
@@ -185,17 +206,32 @@ async def _fetch_url(url: str) -> tuple[str | None, str | None]:
             follow_redirects=False,
         ) as client:
             while True:
-                error = await _validate_url_async(current_url)
+                error, pinned_ip = await _validate_url_async(current_url)
                 if error:
                     return None, error
-                resp = await client.get(
-                    current_url,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; StoryCAD/1.0; +https://storycad.app)",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "zh-CN,en;q=0.9",
-                    },
-                )
+                parsed = urlparse(current_url)
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (compatible; StoryCAD/1.0; +https://storycad.app)",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,en;q=0.9",
+                }
+                if parsed.scheme == "http":
+                    # 校验通过后直接对已解析 IP 发起请求并携带原始 Host 头,
+                    # 消除「校验用 DNS 解析」与「实际请求 DNS 解析」之间的
+                    # rebinding TOCTOU 窗口。
+                    headers["Host"] = parsed.hostname
+                    resp = await client.get(
+                        _build_target_url(parsed, pinned_ip),
+                        headers=headers,
+                    )
+                else:
+                    # HTTPS:为保留 SNI 与证书校验,仍需按主机名连接,无法完全
+                    # 固定 IP;这里在请求前二次解析并核对 IP 与校验时一致,
+                    # 缩小 TOCTOU 窗口(残余风险:两个解析之间仍可能被 rebinding)。
+                    _, recheck_ip = await _resolve_and_check(parsed.hostname)
+                    if recheck_ip is None or recheck_ip != pinned_ip:
+                        return None, "URL resolution changed between validation and request (possible DNS rebinding)"
+                    resp = await client.get(current_url, headers=headers)
                 if resp.status_code in (301, 302, 303, 307, 308):
                     location = resp.headers.get("location")
                     if not location:
@@ -212,7 +248,7 @@ async def _fetch_url(url: str) -> tuple[str | None, str | None]:
         if "text/" not in content_type and "html" not in content_type:
             return None, f"Unsupported content type: {content_type}"
 
-        text = _extract_text(resp.text, current_url)
+        text = await asyncio.to_thread(_extract_text, resp.text, current_url)
         if not text or len(text) < 20:
             return None, "Page has no readable content"
 
@@ -266,6 +302,17 @@ class WebFetchTool(BaseTool):
         content, error = await _fetch_url(url)
         if error:
             return ToolResult(success=False, error=error)
+
+        # 网页内容注入过滤:命中注入/危险内容模式时丢弃,返回无害占位。
+        from app.agent.guard import check_web_content_safety
+        injection_err = check_web_content_safety(content)
+        if injection_err:
+            logger.warning("web_fetch content filtered for %s: %s", url, injection_err)
+            return ToolResult(success=True, data={
+                "url": url,
+                "content": "[内容已过滤]",
+                "filtered_reason": injection_err,
+            })
 
         result = {"url": url, "content": content}
         if prompt:

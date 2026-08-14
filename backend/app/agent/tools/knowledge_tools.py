@@ -23,8 +23,10 @@ class SearchKnowledgeTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            if kwargs.get("project_id"):
-                await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
+            if not kwargs.get("project_id"):
+                # project_id 必填:缺失时不再放行,避免检索全局/他人知识
+                return ToolResult(success=False, error="project_id is required")
+            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
             engine = RAGEngine(db)
             result = await engine.retrieve_context(
                 project_id=kwargs.get("project_id"),

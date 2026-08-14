@@ -5,9 +5,10 @@ WORKDIR /app
 RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 appuser
 
 # Install runtime deps only (test deps live in requirements-dev.txt and are
-# installed by CI or the `dev` target below)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# installed by CI or the `dev` target below). requirements.lock pins exact
+# versions verified against a running container.
+COPY requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Copy source code
 COPY ./app ./app

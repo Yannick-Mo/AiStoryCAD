@@ -24,6 +24,10 @@ async def get_current_user_mcp(token: str, db: AsyncSession) -> dict:
         raise ValueError("Token has expired")
     except (jwt.PyJWTError, KeyError, ValueError, TypeError):
         raise ValueError("Invalid authentication token")
+    # 每次工具调用都校验 token 是否已被撤销(复用 API 层黑名单实现)
+    from app.api.deps import is_token_revoked
+    if await is_token_revoked(token):
+        raise ValueError("Token has been revoked")
     repo = UserRepository(db)
     user = await repo.get_by_id(user_id)
     if not user:
