@@ -24,6 +24,7 @@ export interface RhythmChapter {
 export async function analyzeRhythm(projectId: string): Promise<RhythmAnalysis> {
   const token = getToken()
   const resp = await fetch(`${API_BASE}/rhythm/projects/${projectId}/analyze`, {
+    credentials: 'include',
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
   if (!resp.ok) {

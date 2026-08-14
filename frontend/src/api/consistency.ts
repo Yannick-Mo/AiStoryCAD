@@ -50,6 +50,7 @@ async function request(path: string, init: RequestInit = {}) {
   const token = getToken()
   const resp = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -99,6 +100,7 @@ export async function watchConsistencyJob(
 ): Promise<void> {
   const token = getToken()
   const resp = await fetch(`${API_BASE}/consistency/jobs/${jobId}/events`, {
+    credentials: 'include',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     signal,
   })

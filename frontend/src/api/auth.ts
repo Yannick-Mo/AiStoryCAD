@@ -4,6 +4,7 @@ const BASE = "/api/auth"
 
 let onUnauthorized: (() => void) | null = null
 let authLost = false
+let memoryToken: string | null = null
 
 export function setOnUnauthorized(cb: (() => void) | null) {
   onUnauthorized = cb
@@ -18,16 +19,16 @@ function handleUnauthorized() {
 }
 
 export function getToken(): string | null {
-  return localStorage.getItem("storycad_token")
+  return memoryToken
 }
 
 export function setToken(token: string) {
   authLost = false
-  localStorage.setItem("storycad_token", token)
+  memoryToken = token
 }
 
 export function clearToken() {
-  localStorage.removeItem("storycad_token")
+  memoryToken = null
 }
 
 export function isLoggedIn(): boolean {
@@ -35,10 +36,14 @@ export function isLoggedIn(): boolean {
 }
 
 async function authRequest<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, options)
+  const res = await fetch(url, { credentials: 'include', ...options })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    throw new Error(text ? JSON.parse(text).detail : `Auth error: ${res.status}`)
+    let detail = `Auth error: ${res.status}`
+    if (text) {
+      try { detail = JSON.parse(text).detail ?? text } catch { detail = text.slice(0, 200) }
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
@@ -46,6 +51,7 @@ async function authRequest<T>(url: string, options?: RequestInit): Promise<T> {
 export async function apiGet<T>(url: string): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
+    credentials: 'include',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) {
@@ -64,6 +70,7 @@ export async function apiPost<T>(url: string, body?: unknown): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
     method: "POST",
+    credentials: 'include',
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   })
@@ -83,6 +90,7 @@ export async function apiPut<T>(url: string, body: unknown): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
     method: "PUT",
+    credentials: 'include',
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(body),
   })
@@ -102,6 +110,7 @@ export async function apiPatch<T>(url: string, body: unknown): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
     method: "PATCH",
+    credentials: 'include',
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(body),
   })
@@ -121,6 +130,7 @@ export async function apiDelete<T = { ok: boolean }>(url: string): Promise<T> {
   const token = getToken()
   const res = await fetch(url, {
     method: "DELETE",
+    credentials: 'include',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) {
@@ -167,18 +177,29 @@ export async function getMe(): Promise<AuthUser> {
   return apiGet(`${BASE}/me`)
 }
 
-export async function updateProfile(payload: { display_name?: string; password?: string }): Promise<AuthUser> {
-  return apiPatch(`${BASE}/me`, payload)
+export async function probeSession(): Promise<AuthUser | null> {
+  const token = getToken()
+  try {
+    const res = await fetch(`${BASE}/me`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
 }
 
 export async function logout(): Promise<void> {
-  const token = getToken()
-  if (!token) return
-  await fetch(`${BASE}/logout`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  clearToken()
+  try {
+    await fetch(`${BASE}/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+  } finally {
+    clearToken()
+  }
 }
 
 // Project CRUD

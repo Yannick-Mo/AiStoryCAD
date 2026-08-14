@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Search, Plus, LogOut, Trash2 } from "lucide-react"
 import { useAuth } from "../../context/AuthContext"
-import { getToken, clearToken } from "../../api/auth"
+import { apiDelete } from "../../api/auth"
 import ConfirmDialog from "../editor/components/ConfirmDialog"
 import { useToast } from "../editor/components/Toast"
 
@@ -20,13 +20,7 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
   async function handleDeleteAccount() {
     setDeleting(true)
     try {
-      const token = getToken()
-      const res = await fetch("/api/auth/me", {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error("注销失败")
-      clearToken()
+      await apiDelete("/api/auth/me")
       window.location.href = "/login"
     } catch {
       addToast("注销失败", "error")

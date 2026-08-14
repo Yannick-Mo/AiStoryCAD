@@ -24,6 +24,7 @@ export async function generateStarter(genre: string, style?: string, constraints
   const token = getToken()
   const resp = await fetch(`${API_BASE}/inspiration/starter`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ genre, style, constraints }),
   })
@@ -40,6 +41,7 @@ export async function batchGenerate(genres: string[], count?: number): Promise<S
   const token = getToken()
   const resp = await fetch(`${API_BASE}/inspiration/batch`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ genres, count }),
   })
@@ -59,6 +61,7 @@ export async function getChallenges(difficulty?: string, genre?: string): Promis
   if (genre) params.set('genre', genre)
   const qs = params.toString()
   const resp = await fetch(`${API_BASE}/inspiration/challenges${qs ? `?${qs}` : ''}`, {
+    credentials: 'include',
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
   if (!resp.ok) {
@@ -73,6 +76,7 @@ export async function getChallenges(difficulty?: string, genre?: string): Promis
 export async function getRandomChallenge(): Promise<CreativeChallenge> {
   const token = getToken()
   const resp = await fetch(`${API_BASE}/inspiration/challenges/random`, {
+    credentials: 'include',
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
   if (!resp.ok) {

@@ -29,6 +29,7 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const continueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentRef = useRef(content)
+  const lastContinueSnapshotRef = useRef('')
   const abortRef = useRef<AbortController | null>(null)
   const selectionRangeRef = useRef(selectionRange)
   const savedContentRef = useRef('')
@@ -39,12 +40,13 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
     if (scene.content) {
       setContent(scene.content)
       savedContentRef.current = scene.content
+      lastContinueSnapshotRef.current = scene.content
       return
     }
     setLoading(true)
     setLoadError(null)
     loadSceneContent(projectId, scene.id)
-      .then(text => { setContent(text); setLoading(false); savedContentRef.current = text })
+      .then(text => { setContent(text); setLoading(false); savedContentRef.current = text; lastContinueSnapshotRef.current = text })
       .catch(() => { setLoadError('加载场景内容失败'); setLoading(false) })
   }, [scene, projectId])
 
@@ -61,11 +63,11 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
 
     continueTimerRef.current = setTimeout(async () => {
       if (signal.aborted) return
-      if (content === contentRef.current) return
-      contentRef.current = content
+      if (contentRef.current === lastContinueSnapshotRef.current) return
+      lastContinueSnapshotRef.current = contentRef.current
 
       try {
-        const res = await aiContinue(projectId, scene.id, content)
+        const res = await aiContinue(projectId, scene.id, contentRef.current)
         if (signal.aborted) return
         setContinueSuggestions(
           res.suggestions.map((text, i) => ({ id: String(i), text }))

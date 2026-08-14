@@ -33,6 +33,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   const periodTimerRef = useRef<ReturnType<typeof setInterval>>()
   const flushAttemptRef = useRef(0)
   const inFlightRef = useRef(false)
+  const inFlightPromiseRef = useRef<Promise<boolean> | null>(null)
   const pendingFlushRef = useRef(false)
   const mountedRef = useRef(false)
   const projectIdRef = useRef(projectId)
@@ -64,7 +65,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
       if (timerRef.current) clearTimeout(timerRef.current)
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
       if (periodTimerRef.current) clearInterval(periodTimerRef.current)
-      changesRef.current = []
+      flushOnUnmount()
     }
   }, [projectId])
 
@@ -77,15 +78,11 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   }, [])
 
   const flushChangesRef = useRef<() => Promise<boolean>>()
+  const runFlushRef = useRef<() => Promise<boolean>>()
 
-  const flushChanges = useCallback(async (): Promise<boolean> => {
-    if (!mountedRef.current) return true
-    if (inFlightRef.current) {
-      pendingFlushRef.current = true
-      return false
-    }
-    if (projectIdRef.current !== projectId) return true
+  const runFlush = useCallback(async (): Promise<boolean> => {
     if (changesRef.current.length === 0) return true
+    if (inFlightRef.current) return false
     inFlightRef.current = true
     setSaving(true)
     const entries = changesRef.current
@@ -115,7 +112,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
       if (isClientError) {
         flushAttemptRef.current = 0
         onFlushErrorRef.current?.(`同步失败：${errorMsg}`)
-      } else {
+      } else if (mountedRef.current) {
         flushAttemptRef.current++
         const delay = Math.min(1000 * Math.pow(2, flushAttemptRef.current), 30000)
         if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
@@ -125,6 +122,35 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
       return false
     } finally {
       inFlightRef.current = false
+    }
+  }, [projectId])
+
+  runFlushRef.current = runFlush
+
+  const flushOnUnmount = useCallback(() => {
+    const inflight = inFlightPromiseRef.current
+    const fire = () => { runFlushRef.current?.() }
+    if (inflight) {
+      inflight.finally(fire)
+    } else {
+      fire()
+    }
+  }, [])
+
+  const flushChanges = useCallback(async (): Promise<boolean> => {
+    if (!mountedRef.current) return true
+    if (projectIdRef.current !== projectId) return true
+    if (changesRef.current.length === 0) return true
+    if (inFlightRef.current) {
+      pendingFlushRef.current = true
+      return false
+    }
+    const promise = runFlush()
+    inFlightPromiseRef.current = promise
+    try {
+      return await promise
+    } finally {
+      inFlightPromiseRef.current = null
       const rerun = pendingFlushRef.current
       pendingFlushRef.current = false
       if (rerun) {
@@ -134,7 +160,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
         setSaving(false)
       }
     }
-  }, [projectId])
+  }, [projectId, runFlush])
 
   flushChangesRef.current = flushChanges
 

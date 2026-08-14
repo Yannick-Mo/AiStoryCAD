@@ -21,7 +21,7 @@ export default function LeftDrawer({ open, acts, chapters, onClose, onSelectChap
           <h3 className="text-amber-600/80 text-xs uppercase tracking-wider">📋 全章节大纲</h3>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          {acts.sort((a, b) => a.order - b.order).map(act => {
+          {[...acts].sort((a, b) => a.order - b.order).map(act => {
             const actChs = chapters.filter(c => c.actId === act.id)
             return (
               <div key={act.id}>

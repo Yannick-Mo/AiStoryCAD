@@ -8,7 +8,7 @@ import type { Components } from 'react-markdown'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 function generateId(): string {
-  return Math.random().toString(36).slice(2, 11)
+  return crypto.randomUUID()
 }
 
 function normalizeMarkdown(text: string): string {

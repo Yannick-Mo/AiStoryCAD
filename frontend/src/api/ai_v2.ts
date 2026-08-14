@@ -123,6 +123,7 @@ export function sendMessage(options: SendMessageOptions): AbortController {
 
       const resp = await fetch(`${API_BASE}/api/v2/projects/${options.projectId}/chat`, {
         method: 'POST',
+        credentials: 'include',
         headers,
         body: JSON.stringify({
           message: options.message,
@@ -214,6 +215,7 @@ export interface PlanPayload {
 
 export async function getConversations(projectId: string): Promise<{ conversations: Conversation[] }> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations`, {
+    credentials: 'include',
     headers: await authHeaders(),
   })
   if (!resp.ok) throw new Error(await parseError(resp))
@@ -222,6 +224,7 @@ export async function getConversations(projectId: string): Promise<{ conversatio
 
 export async function getConversation(projectId: string, convId: string): Promise<ConversationDetail> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
+    credentials: 'include',
     headers: await authHeaders(),
   })
   if (!resp.ok) throw new Error(await parseError(resp))
@@ -231,6 +234,7 @@ export async function getConversation(projectId: string, convId: string): Promis
 export async function renameConversation(projectId: string, convId: string, title: string): Promise<void> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
     method: 'PATCH',
+    credentials: 'include',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify({ title }),
   })
@@ -240,6 +244,7 @@ export async function renameConversation(projectId: string, convId: string, titl
 export async function deleteConversation(projectId: string, convId: string): Promise<void> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
     method: 'DELETE',
+    credentials: 'include',
     headers: await authHeaders(),
   })
   if (!resp.ok) throw new Error(await parseError(resp))
@@ -248,6 +253,7 @@ export async function deleteConversation(projectId: string, convId: string): Pro
 export async function createConversation(projectId: string): Promise<{ conversation_id: string }> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations`, {
     method: 'POST',
+    credentials: 'include',
     headers: {
       ...(await authHeaders()),
       'Content-Type': 'application/json',
@@ -273,6 +279,7 @@ export interface CompressResult {
 export async function compressContext(projectId: string, conversationId: string): Promise<CompressResult> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/chat/compress`, {
     method: 'POST',
+    credentials: 'include',
     headers: {
       ...(await authHeaders()),
       'Content-Type': 'application/json',

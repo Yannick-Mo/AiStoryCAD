@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from "./auth"
+import { apiGet, apiPost, apiPut } from "./auth"
 import type { EditorMockData, Chapter, CharacterRelation, Character } from "../pages/editor/types"
 
 export interface SyncPayload {
@@ -82,24 +82,8 @@ export async function aiContinue(
 // Generic entity CRUD
 // ============================================================
 
-export async function listEntities(projectId: string, entityType: string): Promise<Record<string, unknown>[]> {
-  return apiGet(`/api/projects/${projectId}/${entityType}`)
-}
-
 export async function createEntity(projectId: string, entityType: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
   return apiPost(`/api/projects/${projectId}/${entityType}`, data)
-}
-
-export async function getEntity(projectId: string, entityType: string, entityId: string): Promise<Record<string, unknown>> {
-  return apiGet(`/api/projects/${projectId}/${entityType}/${entityId}`)
-}
-
-export async function updateEntity(projectId: string, entityType: string, entityId: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return apiPut(`/api/projects/${projectId}/${entityType}/${entityId}`, data)
-}
-
-export async function deleteEntity(projectId: string, entityType: string, entityId: string): Promise<{ok: boolean}> {
-  return apiDelete(`/api/projects/${projectId}/${entityType}/${entityId}`)
 }
 
 // ============================================================

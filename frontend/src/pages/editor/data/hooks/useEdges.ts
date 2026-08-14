@@ -67,15 +67,16 @@ export function useEdges(
     return !blocked
   }, [data, enqueueChange, setData])
 
-  const reconnectEdge = useCallback((edgeId: string, newSource?: string, newTarget?: string, sourceHandle?: string, targetHandle?: string) => {
-    if (!data) return
+  const reconnectEdge = useCallback((edgeId: string, newSource?: string, newTarget?: string, sourceHandle?: string, targetHandle?: string): boolean => {
+    if (!data) return false
+    let blocked = false
     setData(d => {
       if (!d) return d
       const edge = d.edges.find(e => e.id === edgeId)
       if (!edge) return d
       const source = newSource ?? edge.sourceId; const target = newTarget ?? edge.targetId
+      if (wouldCreateCycle(d.edges.filter(e => e.id !== edgeId), source, target)) { blocked = true; return d }
       if (edge.type === 'timeline') {
-        if (wouldCreateCycle(d.edges.filter(e => e.id !== edgeId), source, target)) return d
         const filtered = d.edges.filter(e => e.id === edgeId || !(e.type === 'timeline' && e.sourceId === source && e.targetId === target))
         return {
           ...d,
@@ -83,15 +84,17 @@ export function useEdges(
           chapters: reSort(d.chapters, filtered.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e)),
         }
       }
-      if (wouldCreateCycle(d.edges.filter(e => e.id !== edgeId), source, target)) return d
       return { ...d, edges: d.edges.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target, sourceHandle: sourceHandle ?? e.sourceHandle, targetHandle: targetHandle ?? e.targetHandle } : e) }
     })
-    const updates: Record<string, unknown> = { id: edgeId }
-    if (newSource) updates.source_id = newSource
-    if (newTarget) updates.target_id = newTarget
-    if (sourceHandle) updates.source_handle = sourceHandle
-    if (targetHandle) updates.target_handle = targetHandle
-    enqueueChange({ entity: 'edges', op: 'update', data: updates })
+    if (!blocked) {
+      const updates: Record<string, unknown> = { id: edgeId }
+      if (newSource) updates.source_id = newSource
+      if (newTarget) updates.target_id = newTarget
+      if (sourceHandle) updates.source_handle = sourceHandle
+      if (targetHandle) updates.target_handle = targetHandle
+      enqueueChange({ entity: 'edges', op: 'update', data: updates })
+    }
+    return !blocked
   }, [data, reSort, enqueueChange, setData])
 
   const updateEdge = useCallback((id: string, updates: Partial<Pick<ChapterEdge, 'label'>>) => {

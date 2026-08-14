@@ -200,7 +200,24 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           />
         )
       case 'narrative-rhythm':
-        return <RhythmCanvas projectId={projectId} rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => { const rhythmId = data.rhythms.find(r => r.chapterId === chapterId)?.id; store.setData(d => d ? { ...d, rhythms: d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r) } : d); if (rhythmId) store.enqueueChange({ entity: 'rhythms', op: 'update', id: rhythmId, data: values as Record<string, unknown> }) }} autoAnalyze={triggerRhythmAnalysis} onAnalysisDone={() => setTriggerRhythmAnalysis(false)} />
+        return <RhythmCanvas projectId={projectId} rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => {
+                const existing = data.rhythms.find(r => r.chapterId === chapterId)
+                const rhythmId = existing?.id ?? crypto.randomUUID()
+                store.setData(d => d ? {
+                  ...d,
+                  rhythms: d.rhythms.some(r => r.chapterId === chapterId)
+                    ? d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r)
+                    : (() => {
+                        const idx = d.chapters.findIndex(c => c.id === chapterId)
+                        return [...d.rhythms, { id: rhythmId, chapterId, chapterIndex: Math.max(idx, 0), label: idx >= 0 ? `第${idx + 1}章` : '?', ...values }]
+                      })()
+                } : d)
+                if (existing) {
+                  store.enqueueChange({ entity: 'rhythms', op: 'update', id: existing.id, data: values as Record<string, unknown> })
+                } else {
+                  store.enqueueChange({ entity: 'rhythms', op: 'create', data: { id: rhythmId, project_id: projectId, chapter_id: chapterId, ...values } })
+                }
+              }} autoAnalyze={triggerRhythmAnalysis} onAnalysisDone={() => setTriggerRhythmAnalysis(false)} />
       case 'narrative-theme':
         return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} onAddTheme={() => setShowAddTheme(true)} onDeleteTheme={(id) => setDeleteThemeId(id)} />
       default:

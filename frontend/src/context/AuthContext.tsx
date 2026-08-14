@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
-import { setToken, clearToken, isLoggedIn, setOnUnauthorized } from "../api/auth"
+import { setToken, clearToken, setOnUnauthorized, probeSession } from "../api/auth"
 import type { AuthUser, AuthResponse } from "../api/auth"
 import * as authApi from "../api/auth"
 import { useToast } from "../pages/editor/components/Toast"
@@ -31,14 +31,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [navigate, addToast])
 
   useEffect(() => {
-    if (isLoggedIn()) {
-      authApi.getMe()
-        .then(u => setUser(u))
-        .catch(() => clearToken())
-        .finally(() => setLoading(false))
-    } else {
-      setLoading(false)
-    }
+    let cancelled = false
+    probeSession()
+      .then(u => { if (!cancelled && u) setUser(u) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [])
 
   const login = useCallback(async (email: string, password: string) => {
@@ -54,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(() => {
+    authApi.logout()
     clearToken()
     setUser(null)
   }, [])

@@ -13,7 +13,7 @@ export default function ThemeDetail({ theme, chapter, onClose, onSaveNote }: The
 
   useEffect(() => {
     setNote(theme.note ?? '')
-  }, [theme.name])
+  }, [theme.id])
 
   return (
     <div className="h-full bg-gray-900/95 backdrop-blur-xl flex flex-col shadow-2xl">
