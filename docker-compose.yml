@@ -132,6 +132,7 @@ services:
   frontend:
     build:
       context: ./frontend
+      target: runtime
     ports:
       - "5173:80"
     depends_on:
