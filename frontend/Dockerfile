@@ -16,12 +16,12 @@ COPY . .
 RUN npm run build
 
 # ── Runtime stage: static hosting + API/MCP reverse proxy via nginx ──────
-FROM nginx:alpine AS runtime
+FROM nginxinc/nginx-unprivileged:alpine AS runtime
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
-EXPOSE 80
+EXPOSE 8080
 
 # ── Dev stage: full node toolchain for `vite dev` (docker-compose.dev.yml) ─
 FROM node:20.18-alpine AS dev

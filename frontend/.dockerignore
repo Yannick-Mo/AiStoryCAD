@@ -4,3 +4,5 @@ dist
 *.md
 Dockerfile
 .dockerignore
+scripts
+src/test_proxy.js

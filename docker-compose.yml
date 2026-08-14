@@ -134,7 +134,7 @@ services:
       context: ./frontend
       target: runtime
     ports:
-      - "5173:80"
+      - "5173:8080"
     depends_on:
       backend:
         condition: service_healthy
