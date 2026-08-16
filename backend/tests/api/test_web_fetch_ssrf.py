@@ -60,19 +60,23 @@ class TestUrlValidation:
             "https://[::1]/",
             "https://[fc00::1]/",
         ]:
-            error = await _validate_url_async(url)
+            error, _ = await _validate_url_async(url)
             assert error is not None, url
 
     async def test_public_ip_literal_allowed(self):
         for url in ["https://8.8.8.8/", "http://1.1.1.1/"]:
-            assert await _validate_url_async(url) is None, url
+            error, _ = await _validate_url_async(url)
+            assert error is None, url
 
     async def test_bad_scheme_rejected(self):
-        assert await _validate_url_async("ftp://8.8.8.8/file") is not None
-        assert await _validate_url_async("file:///etc/passwd") is not None
+        error, _ = await _validate_url_async("ftp://8.8.8.8/file")
+        assert error is not None
+        error, _ = await _validate_url_async("file:///etc/passwd")
+        assert error is not None
 
     async def test_credentials_rejected(self):
-        assert await _validate_url_async("https://user:pass@8.8.8.8/") is not None
+        error, _ = await _validate_url_async("https://user:pass@8.8.8.8/")
+        assert error is not None
 
     def test_syntax_only_validation(self):
         assert _validate_url("https://example.com/") is None
@@ -81,6 +85,7 @@ class TestUrlValidation:
         assert _validate_url("not a url") is not None
 
     async def test_hostname_with_bracket_ipv6(self):
-        error = await _resolve_and_check("[::1]")
+        error, _ = await _resolve_and_check("[::1]")
         assert error is not None
-        assert await _resolve_and_check("[2606:4700:4700::1111]") is None
+        error, _ = await _resolve_and_check("[2606:4700:4700::1111]")
+        assert error is None

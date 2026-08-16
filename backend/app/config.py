@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     jwt_secret_key: str = ""
     jwt_expire_hours: int = 24
+    # Set true only behind a TLS-terminating proxy; over plain http the
+    # browser would reject a Secure cookie (dev on http://localhost).
+    cookie_secure: bool = False
+    # JWT in ?token= URLs leaks into access logs; off by default. MCP
+    # clients should use Authorization: Bearer instead.
+    mcp_sse_query_token_allowed: bool = False
 
     # LLM configuration
     llm_api_key: str = ""

@@ -73,7 +73,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _set_auth_cookie(response: Response, token: str) -> None:
-    """httpOnly JWT cookie(前端为 http://localhost:5173,无需 Secure)。"""
+    """httpOnly JWT cookie;Secure 仅在部署走 TLS(cookie_secure)时开启,
+    开发环境 http://localhost 下不能带 Secure。"""
     max_age = int(settings.jwt_expire_hours or 24) * 3600
     response.set_cookie(
         key="storycad_token",
@@ -82,6 +83,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
         path="/",
         httponly=True,
         samesite="lax",
+        secure=settings.cookie_secure,
     )
 
 

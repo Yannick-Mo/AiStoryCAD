@@ -261,6 +261,9 @@ class StreamingToolExecutor:
         # Serialise SAFE tool access — AsyncSession is not coroutine-safe
         self._safe_lock = asyncio.Lock()
 
+        # 并发上限：限制每轮 SAFE 工具同时执行数量，防止资源耗尽
+        self._safe_semaphore = asyncio.Semaphore(8)
+
         # Pending async tasks (tool_use_id -> (tool_name, Task))
         self._pending: dict[str, tuple[str, asyncio.Task]] = {}
 
@@ -328,7 +331,7 @@ class StreamingToolExecutor:
 
         if concurrency == ConcurrencyMode.SAFE:
             task = asyncio.create_task(
-                self._execute_tool(tool_name, args, tool_use_id)
+                self._execute_tool_safe(tool_name, args, tool_use_id)
             )
             self._pending[tool_use_id or tool_name] = (tool_name, task)
         elif concurrency == ConcurrencyMode.EXCLUSIVE:
@@ -471,6 +474,16 @@ class StreamingToolExecutor:
     # Internal
     # ------------------------------------------------------------------
 
+    async def _execute_tool_safe(
+        self, name: str, args: dict, tool_use_id: str = ""
+    ) -> dict:
+        """执行 SAFE 工具前先获取并发信号量，限制每轮 SAFE 工具并发数。
+
+        EXCLUSIVE 工具仍通过自身的串行队列（lock）执行，不受此信号量约束。
+        """
+        async with self._safe_semaphore:
+            return await self._execute_tool(name, args, tool_use_id)
+
     async def _execute_tool(
         self, name: str, args: dict, tool_use_id: str = ""
     ) -> dict:
@@ -485,14 +498,15 @@ class StreamingToolExecutor:
 
         tool_use_id = self._coerce_tool_use_id(name, tool_use_id)
 
-        # Inject project_id and user_id into tool args if missing (LLM often
-        # omits them on chained tool calls).  The tool descriptions in the
-        # prompt also note that project_id is auto-injected.
+        # 安全：project_id/user_id 永远覆盖为会话身份值，绝不信任 LLM 传入的
+        # 身份（防止通过 tool-call JSON 传 user_id=null 或他人 (user_id, project_id)
+        # 绕过 / 伪造归属校验）。若会话 user_id 缺失，工具的 verify_project_owner
+        # 会抛出而非静默通过。
         merged = dict(args)
-        if self._project_id and "project_id" not in merged:
-            merged["project_id"] = self._project_id
-        if self._user_id and "user_id" not in merged:
-            merged["user_id"] = self._user_id
+        if self._project_id:
+            merged["project_id"] = str(self._project_id)
+        if self._user_id:
+            merged["user_id"] = str(self._user_id)
 
         timeout = tool._effective_timeout if tool._effective_timeout else 30
         uses_own_session = bool(getattr(tool, "_uses_own_session", False))

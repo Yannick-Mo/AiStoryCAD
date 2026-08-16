@@ -148,6 +148,10 @@ class CreateSceneTool(BaseTool):
             pid = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             ch_id = uuid.UUID(kwargs["chapter_id"])
+            # 安全：校验章节属于当前项目，防止跨项目创建场景（IDOR 写入）
+            chapter = await db.get(Chapter, ch_id)
+            if chapter is None or chapter.project_id != pid:
+                return ToolResult(success=False, error="章节不存在或不属于该项目")
             repo = StoryCADRepository(db)
             scene_data = {
                 "project_id": str(pid),

@@ -99,11 +99,14 @@ async def check_consistency(
                 return latest.model_dump(mode="json")
 
     # Reuse an in-flight job for the same project instead of double-running.
-    running = manager.get_running_for_project(pid_str)
-    if running is not None:
-        return {"job_id": running.job_id, "state": running.state, "reusing": True}
-
-    job = manager.create(pid_str, str(user["id"]))
+    # Atomic get-or-create under the registry lock: two concurrent requests
+    # can no longer both create a job (TOCTOU), and another user's job_id is
+    # never leaked — that case 429s instead.
+    job, status = await manager.get_or_create(pid_str, str(user["id"]))
+    if status == "busy":
+        raise HTTPException(status_code=429, detail="该项目已有进行中的检查，请稍后再试")
+    if status == "reused":
+        return {"job_id": job.job_id, "state": job.state, "reusing": True}
 
     async def _run_job() -> None:
         from app.database import async_session

@@ -39,6 +39,7 @@ from app.agent.interceptors import (
 )
 from app.agent.loop_state import LoopState
 from app.agent.middle_compress import middle_process_tool_result
+from app.agent.privacy import sanitise_error_text_for_client
 from app.agent.prompts.builder import get_prompt_builder
 from app.agent.token_budget import (
     check_token_budget,
@@ -1045,7 +1046,10 @@ async def autonomous_loop(
                         messages=state.messages + [Message(role="assistant", content=assistant_text)],
                         transition="error_give_up",
                     )
-                yield _event_token(f"\n\n[发生错误: {decision.get('message', str(e))}]")
+                # 放弃前先做客户端级净化:decision.message 里可能带原始异常文本
+                # (SQL 路径/API Key 片段),token 事件不走 privacy.sanitise_event,
+                # 必须在嵌入前净化,完整错误已由服务端日志记录。
+                yield _event_token(f"\n\n[发生错误: {sanitise_error_text_for_client(decision.get('message', str(e)))}]")
                 await hook_registry.run("post_turn", state=state, llm_client=llm,
                                          turn_start=turn_start)
                 break
@@ -1331,8 +1335,9 @@ async def autonomous_loop(
             logger.error("Final generate error: %s", e, exc_info=True)
             err_msg = str(e)
             # If we already had assistant text from streaming, don't overwrite
+            # 生成失败文本对客户端可见(token 事件不过 sanitise_event),嵌入前净化
             if not assistant_text_parts:
-                yield _event_token(f"\n\n[生成回复时出错: {err_msg[:200]}]")
+                yield _event_token(f"\n\n[生成回复时出错: {sanitise_error_text_for_client(err_msg)}]")
             else:
                 logger.warning("Final gen failed but partial response exists")
 

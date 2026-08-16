@@ -58,7 +58,10 @@ class ReadCharacterTool(BaseTool):
             char_id = uuid.UUID(char_id_val)
             pid = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, pid, kwargs.get("user_id"))
-            result = await db.execute(select(Character).where(Character.id == char_id))
+            # 安全：按项目过滤角色查询，防止跨项目按 UUID 读取（IDOR）
+            result = await db.execute(
+                select(Character).where(Character.id == char_id, Character.project_id == pid)
+            )
             char = result.scalar_one_or_none()
             if not char:
                 return self._not_found("Character")

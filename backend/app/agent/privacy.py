@@ -103,6 +103,36 @@ def _sanitise_error_text(text: str) -> str:
     return result
 
 
+# ── Client-bound error deep sanitisation ──────────────────────────────
+# 异常文本可能携带令牌/API Key/SQL 文件路径,发送给客户端前必须抹除。
+
+_REDACT_SECRET_RE = re.compile(
+    r"(?i)(?:bearer\s+[a-zA-Z0-9._\-]+|"
+    r"authorization\s*[:=]\s*[^\s,;]+|"
+    r"api[_-]?key\s*[:=]\s*[^\s,;]+|"
+    r"sk-[a-zA-Z0-9_\-]{8,})"
+)
+_REDACT_PATH_RE = re.compile(
+    r"/(?:home|app|Users|var|tmp)(?:/[^\s\"',;)\]}>]+)+"
+)
+
+
+def sanitise_error_text_for_client(text: str) -> str:
+    """深度净化即将发给客户端的错误文本。
+
+    抹除 Bearer/Authorization/API Key/sk- 密钥片段,隐藏 /home、/app、
+    /Users、/var、/tmp 绝对路径,压缩换行并截断到 300 字符,最后复用
+    _sanitise_error_text 做内部函数名映射。完整错误由服务端日志记录。
+    """
+    if not text:
+        return text
+    text = _REDACT_SECRET_RE.sub("[REDACTED]", text)
+    text = _REDACT_PATH_RE.sub("[路径已隐藏]", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = text[:300]
+    return _sanitise_error_text(text)
+
+
 def _short_user_error(text: str) -> str:
     """Shorten a technical error to a brief user-facing message.
 
@@ -224,11 +254,11 @@ def sanitise_event(event_type: str, data_raw: str) -> str:
             parsed = json.loads(data_raw)
             if isinstance(parsed, dict):
                 return json.dumps(
-                    {k: _sanitise_error_text(v) if isinstance(v, str) else v
+                    {k: sanitise_error_text_for_client(v) if isinstance(v, str) else v
                      for k, v in parsed.items()},
                     ensure_ascii=False,
                 )
         except (json.JSONDecodeError, TypeError):
             pass
-        return _sanitise_error_text(data_raw)
+        return sanitise_error_text_for_client(data_raw)
     return data_raw

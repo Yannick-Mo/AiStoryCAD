@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_BACKOFF_MINUTES = 60  # cap for exponential backoff (1/2/4/8…min)
 _DEAD_RETRY_LIMIT = 5  # failed attempts before a queue row goes terminal (dead)
+_AUDIT_BATCH_SIZE = 500  # keyset-paginated scan batch (bounded memory)
+_AUDIT_MAX_SCENES = 20000  # hard cap per audit run
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +88,9 @@ class Inbox:
 
 _live_hints: dict[tuple[str, str], list[dict]] = {}
 _live_lock = asyncio.Lock()
+# Hard cap on distinct (project, scene) keys — evict oldest when exceeded
+# (plain dicts preserve insertion order, so next(iter(...)) is the oldest).
+_LIVE_HINTS_MAX_KEYS = 5000
 
 
 async def push_live_hint(
@@ -126,6 +131,8 @@ async def push_live_hint(
         )
         if len(hits) > 100:
             del hits[:-100]
+        while len(_live_hints) > _LIVE_HINTS_MAX_KEYS:
+            del _live_hints[next(iter(_live_hints))]
 
 
 def read_live_hints(
@@ -240,20 +247,44 @@ class FactWorker:
         Scans ``scene_contents``, enqueues scenes whose content hash differs
         from the queue row (or that have no queue row), and clears queue rows
         whose scene no longer exists. Returns items enqueued.
+
+        The scan is keyset-paginated (``scene_id`` cursors) so the full table
+        is never loaded into memory at once; the run stops at
+        ``_AUDIT_MAX_SCENES`` scenes.
         """
         factory = session_factory or self.session_factory
         async with factory() as db:
             now = datetime.now(timezone.utc)
-            contents = await db.execute(
-                select(SceneContent.scene_id, SceneContent.project_id, SceneContent.content)
-            )
             seen: dict[tuple, str] = {}
-            for row in contents.all():
-                scene_id, project_id, content = row
-                seen[(str(project_id), str(scene_id))] = hash_content(content or "")
-            if seen:
-                for (pid, sid), h in seen.items():
-                    await self._enqueue(db, uuid.UUID(pid), uuid.UUID(sid), h)
+            enqueued = 0
+            last_id = None
+            while len(seen) < _AUDIT_MAX_SCENES:
+                stmt = select(
+                    SceneContent.scene_id, SceneContent.project_id, SceneContent.content
+                )
+                if last_id is not None:
+                    stmt = stmt.where(SceneContent.scene_id > last_id)
+                rows = (
+                    await db.execute(
+                        stmt.order_by(SceneContent.scene_id).limit(_AUDIT_BATCH_SIZE)
+                    )
+                ).all()
+                if not rows:
+                    break
+                for scene_id, project_id, content in rows:
+                    if len(seen) >= _AUDIT_MAX_SCENES:
+                        break
+                    h = hash_content(content or "")
+                    seen[(str(project_id), str(scene_id))] = h
+                    if await self._enqueue(db, project_id, scene_id, h):
+                        enqueued += 1
+                    last_id = scene_id
+                await asyncio.sleep(0)  # yield so other tasks make progress
+            if len(seen) >= _AUDIT_MAX_SCENES:
+                logger.warning(
+                    "audit hit cap of %d scenes; run truncated (more scenes to scan)",
+                    _AUDIT_MAX_SCENES,
+                )
             # Queue rows whose scenes are gone — clear them (§5.1/5.4).
             orphan = await db.execute(
                 select(FactQueueItem.scene_id)
@@ -275,7 +306,7 @@ class FactWorker:
             )
             await db.commit()
             self.stats["audited"] += 1
-            return len(seen)
+            return enqueued
 
     # ------------------------------------------------------------------
     # Internal

@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.agent.privacy import sanitise_error_text_for_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,7 +103,8 @@ class ErrorClassifier:
             return RecoveryDecision(
                 action=RecoveryAction.GIVE_UP,
                 message=(
-                    f"LLM API 认证或账户状态错误，请检查 API Key 是否有效、账户余额是否充足：{error[:200]}"
+                    f"LLM API 认证或账户状态错误，请检查 API Key 是否有效、账户余额是否充足："
+                    f"{sanitise_error_text_for_client(error[:200])}"
                 ),
                 context={"layer": "fatal"},
             )
@@ -125,7 +128,7 @@ class ErrorClassifier:
                 )
             return RecoveryDecision(
                 action=RecoveryAction.GIVE_UP,
-                message=f"All recovery attempts exhausted on transient error: {error[:200]}",
+                message=f"All recovery attempts exhausted on transient error: {sanitise_error_text_for_client(error[:200])}",
             )
 
         # ── Layer 2: Parameter / tool error → LLM self-correction ──
@@ -143,7 +146,7 @@ class ErrorClassifier:
             # Self-correction failed → give up on this step
             return RecoveryDecision(
                 action=RecoveryAction.GIVE_UP,
-                message=f"Parameter error persists after correction: {error[:200]}",
+                message=f"Parameter error persists after correction: {sanitise_error_text_for_client(error[:200])}",
                 context={"layer": "self_correction_exhausted"},
             )
 
@@ -179,7 +182,7 @@ class ErrorClassifier:
 
         return RecoveryDecision(
             action=RecoveryAction.GIVE_UP,
-            message=f"All recovery attempts exhausted: {error[:200]}",
+            message=f"All recovery attempts exhausted: {sanitise_error_text_for_client(error[:200])}",
         )
 
 

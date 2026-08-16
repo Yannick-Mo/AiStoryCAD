@@ -42,6 +42,18 @@ PROTECTED_FIELDS = frozenset({
 CREATE_PROTECTED = PROTECTED_FIELDS - {"id", "project_id"}
 
 
+# 外键列 → 目标模型映射：写入时必须校验目标行属于同一项目，
+# 否则可把场景/边/关系挂到他人项目下的章节/角色上。
+ENTITY_FK_MAP = {
+    Chapter: {"act_id": Act},
+    Scene: {"chapter_id": Chapter},
+    ChapterEdge: {"source_id": Chapter, "target_id": Chapter},
+    CharacterRelation: {"character_id": Character, "target_id": Character},
+    ThemeChapter: {"theme_id": Theme, "chapter_id": Chapter},
+    ChapterRhythm: {"chapter_id": Chapter},
+}
+
+
 class StoryCADRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -260,9 +272,39 @@ class StoryCADRepository:
     # Internal helpers
     # ============================================================
 
+    async def _validate_fk_targets(self, model_class: type, data: dict, project_id: uuid.UUID) -> bool:
+        # 安全：校验 data 中每个外键均指向同一项目下的行；无效时返回 False，
+        # 调用方跳过该写入（与跨项目 update/delete 的静默跳过语义一致）。
+        fk_map = ENTITY_FK_MAP.get(model_class)
+        if not fk_map:
+            return True
+        for column_name, target_model in fk_map.items():
+            value = data.get(column_name)
+            if value is None or value == "":
+                continue
+            try:
+                target_id = uuid.UUID(str(value))
+            except (ValueError, TypeError, AttributeError):
+                return False
+            result = await self.db.execute(
+                select(target_model.id).where(
+                    target_model.id == target_id,
+                    target_model.project_id == project_id,
+                )
+            )
+            if result.scalar_one_or_none() is None:
+                return False
+        return True
+
     async def _create_entity(self, entity_type: str, data: dict):
         model_class = ENTITY_MAP.get(entity_type)
         if not model_class:
+            return
+        if not await self._validate_fk_targets(model_class, data, uuid.UUID(str(data.get("project_id")))):
+            logger.warning(
+                "Skipping create of %s: foreign key target not in project %s",
+                entity_type, data.get("project_id"),
+            )
             return
         extra = {}
         if entity_type == "scenes" and "content" in data:
@@ -289,6 +331,14 @@ class StoryCADRepository:
                     entity_type, eid, project_id,
                 )
                 return
+
+        # 安全：更新携带的外键列也必须指向同一项目下的行。
+        if not await self._validate_fk_targets(model_class, data, project_id):
+            logger.warning(
+                "Skipping update of %s %s: foreign key target not in project %s",
+                entity_type, data.get("id"), project_id,
+            )
+            return
 
         scene_content = None
         if entity_type == "scenes" and "content" in data:

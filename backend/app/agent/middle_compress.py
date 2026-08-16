@@ -80,6 +80,22 @@ def _stringify(data: Any) -> str:
         return str(data)
 
 
+_FILTERED_PLACEHOLDER = "[内容已过滤:可能包含注入内容]"
+
+
+def _guard_fallback_text(text: str) -> str:
+    """兜底路径的原始工具结果注入主循环前,先过 guard 的注入/危险内容检测,
+    命中则换成无害占位符,避免外部可控文本绕过中间 LLM 的过滤。"""
+    if not text:
+        return text
+    from app.agent.guard import check_web_content_safety
+    err = check_web_content_safety(text)
+    if err:
+        logger.warning("fallback tool text blocked by web content check: %s", err)
+        return _FILTERED_PLACEHOLDER
+    return text
+
+
 def should_middle_process(tool_name: str, result: dict) -> bool:
     """Return True if this tool result should go through the middle LLM.
 
@@ -169,7 +185,10 @@ def _fold_fallback(result: dict) -> str:
     data = result.get("data", "")
     data_str = data if isinstance(data, str) else _stringify(data)
     head = data_str[:FOLD_HEAD_CHARS].replace("\n", " ").strip()
-    return f"[操作成功 — 结果较大(共{len(data_str)}字符)，压缩失败，仅保留开头摘要：{head}...]"
+    return (
+        f"[操作成功 — 结果较大(共{len(data_str)}字符)，压缩失败，仅保留开头摘要："
+        f"{_guard_fallback_text(head)}...]"
+    )
 
 
 async def middle_process_tool_result(
@@ -191,7 +210,9 @@ async def middle_process_tool_result(
 
     if not should_middle_process(tool_name, result):
         # Verbatim, but keep the marker framing for success payloads
-        return f"[操作成功]\n{text}" if result.get("success") else f"[操作失败]\n{result.get('error', 'unknown')}"
+        if result.get("success"):
+            return f"[操作成功]\n{_guard_fallback_text(text)}"
+        return f"[操作失败]\n{_guard_fallback_text(str(result.get('error', 'unknown')))}"
 
     output = ""
     try:
@@ -238,5 +259,5 @@ async def middle_process_tool_result(
 
     # Fallbacks: verbatim if the result fits the window safely, else fold.
     if chars < FOLD_FALLBACK_CHARS:
-        return f"[操作成功]\n{text}"
+        return f"[操作成功]\n{_guard_fallback_text(text)}"
     return _fold_fallback(result)

@@ -21,7 +21,7 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number; text: string } | null>(null)
   const [selectionToolbar, setSelectionToolbar] = useState<{ top: number; left: number } | null>(null)
   const [diffState, setDiffState] = useState<{ start: number; end: number; oldText: string; newText: string } | null>(null)
-  const [lastReplacement, setLastReplacement] = useState<{ start: number; end: number; oldText: string } | null>(null)
+  const [lastReplacement, setLastReplacement] = useState<{ start: number; end: number; oldText: string; newText: string } | null>(null)
   const [continueSuggestions, setContinueSuggestions] = useState<{ id: string; text: string }[]>([])
   const [aiLoading, setAiLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -154,7 +154,7 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
       cur.substring(0, diffState.start) +
       diffState.newText +
       cur.substring(diffState.end)
-    setLastReplacement({ start: diffState.start, end: diffState.start + diffState.newText.length, oldText: cur.substring(diffState.start, diffState.end) })
+    setLastReplacement({ start: diffState.start, end: diffState.start + diffState.newText.length, oldText: diffState.oldText, newText: diffState.newText })
     setContent(newContent)
     setDiffState(null)
   }
@@ -166,15 +166,38 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
   const handleUndo = () => {
     if (!lastReplacement) return
     const cur = contentRef.current
+    // 偏移可能已失效（应用 AI 修改后用户又编辑过文本）：
+    // 仅当偏移区域内容仍是当时的 AI 结果时才按偏移还原，
+    // 否则回退为按内容查找首次出现位置，避免错位拼接损坏内容。
+    if (!lastReplacement.newText) {
+      addToast('无法撤销：内容为空', 'error')
+      return
+    }
+    let start = lastReplacement.start
+    let end = lastReplacement.end
+    if (cur.substring(start, end) !== lastReplacement.newText) {
+      const idx = cur.indexOf(lastReplacement.newText)
+      if (idx === -1) {
+        addToast('无法撤销：原文已改变', 'error')
+        return
+      }
+      start = idx
+      end = idx + lastReplacement.newText.length
+    }
     const restored =
-      cur.substring(0, lastReplacement.start) +
+      cur.substring(0, start) +
       lastReplacement.oldText +
-      cur.substring(lastReplacement.end)
+      cur.substring(end)
     setContent(restored)
     setLastReplacement(null)
   }
 
   const handleContinueSelect = (suggestion: { id: string; text: string }) => {
+    // AI 修改预览期间禁止追加续写文本，否则会改变文本长度使 diff 偏移失效
+    if (diffState) {
+      addToast('请先处理 AI 修改，再选择续写建议', 'error')
+      return
+    }
     setContent(prev => prev + '\n\n' + suggestion.text)
     setContinueSuggestions([])
   }
@@ -291,7 +314,7 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           </div>
         )}
 
-        {continueSuggestions.length > 0 && !aiLoading && (
+        {continueSuggestions.length > 0 && !aiLoading && !diffState && (
           <div className="bg-gray-800/95 border border-gray-700 rounded-lg p-2 shadow-xl backdrop-blur-sm mt-2">
             <p className="text-[10px] text-gray-500 mb-1.5 px-1">续写建议：</p>
             <div className="flex gap-1.5">

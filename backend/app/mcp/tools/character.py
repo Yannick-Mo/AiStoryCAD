@@ -121,6 +121,13 @@ async def update_relation(
         await verify_project_ownership(project_id, user["id"], db)
         repo = StoryCADRepository(db)
         if relation_id:
+            # 安全：按 ID 直接更新前必须确认关系属于当前项目，防止跨租户改他人关系。
+            rel_result = await db.execute(
+                select(CharacterRelation).where(CharacterRelation.id == uuid.UUID(relation_id))
+            )
+            relation = rel_result.scalar_one_or_none()
+            if relation is None or relation.project_id != uuid.UUID(project_id):
+                raise ValueError("关系不属于该项目")
             data = {"id": relation_id}
             for field in ("rel_type", "label", "description", "trust", "threat", "attraction"):
                 val = locals()[field]
@@ -137,6 +144,17 @@ async def update_relation(
             return updated
         else:
             from uuid import UUID
+            # 安全：关系两端角色都必须属于当前项目，否则可把关系挂到他人角色上。
+            pid = uuid.UUID(project_id)
+            for char_id in (character_id, target_id):
+                char_result = await db.execute(
+                    select(Character).where(
+                        Character.id == UUID(char_id),
+                        Character.project_id == pid,
+                    )
+                )
+                if char_result.scalar_one_or_none() is None:
+                    raise ValueError("无效的角色 ID（不属于当前项目）")
             data = {
                 "project_id": project_id,
                 "character_id": str(UUID(character_id)),

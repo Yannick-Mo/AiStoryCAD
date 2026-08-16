@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.guard import InputGuard
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.history_manager import HistoryManager
+from app.agent.privacy import sanitise_error_text_for_client
 from app.api.rate_limiter import get_rate_limiter
 from app.llm.client import LLMClient, get_shared_client
 from app.llm.types import Message
@@ -448,9 +449,10 @@ class SuperAgent:
             log.error(
                 "agent_loop_error | error_type={} | error={}\n{}", type(exc).__name__, exc, tb,
             )
+            # 异常文本可能含 API Key/SQL 路径,发往客户端前深度净化
             yield {
                 "type": "error",
-                "data": json.dumps({"message": f"代理执行出错: {str(exc)[:200]}"}),
+                "data": json.dumps({"message": f"代理执行出错: {sanitise_error_text_for_client(str(exc))}"}),
             }
             raise
 
@@ -470,7 +472,7 @@ class SuperAgent:
                 yield evt
         except Exception as exc:
             log.error("_emit_tool_events failed: {}", exc, exc_info=True)
-            yield {"type": "error", "data": json.dumps({"message": f"工具事件处理出错: {str(exc)[:200]}"})}
+            yield {"type": "error", "data": json.dumps({"message": f"工具事件处理出错: {sanitise_error_text_for_client(str(exc))}"})}
             raise
 
         # 11. State cleanup

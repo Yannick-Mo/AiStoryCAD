@@ -133,9 +133,14 @@ async def _extract_mcp_token(request: Request, method: str, path: str) -> str | 
     auth = request.headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth[7:]
-    # query token 仅允许用于 SSE 建连端点(GET /mcp/sse);
-    # POST /mcp/messages 等其它请求不允许携带 query token。
-    if method == "GET" and path.rstrip("/") == "/mcp/sse":
+    # MCP 客户端应使用 Authorization: Bearer;?token= 查询参数会把 JWT
+    # 泄漏进访问日志,默认关闭——仅在 MCP_SSE_QUERY_TOKEN_ALLOWED=true 时
+    # 接受 GET /mcp/sse 的 query token。
+    if (
+        settings.mcp_sse_query_token_allowed
+        and method == "GET"
+        and path.rstrip("/") == "/mcp/sse"
+    ):
         return request.query_params.get("token")
     return None
 

@@ -65,6 +65,13 @@ async def create_scene(
     async with async_session() as db:
         user = await get_current_user_mcp(token, db)
         await verify_project_ownership(project_id, user["id"], db)
+        # 安全：章节必须属于当前项目，否则场景会挂到他人章节下并污染其计数。
+        chapter_result = await db.execute(
+            select(Chapter).where(Chapter.id == uuid.UUID(chapter_id))
+        )
+        chapter = chapter_result.scalar_one_or_none()
+        if chapter is None or str(chapter.project_id) != str(project_id):
+            raise ValueError("章节不属于该项目")
         repo = StoryCADRepository(db)
         scene_data = {
             "project_id": project_id,

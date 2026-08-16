@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 
 SSE_PING_INTERVAL = 15
 MAX_KEPT_JOBS = 100
+# Each running job holds a Task, DB session, events queue and report dict —
+# cap concurrent running jobs per user so memory stays bounded.
+MAX_RUNNING_JOBS_PER_USER = 3
 
 
 @dataclass
@@ -51,6 +54,7 @@ class ConsistencyJob:
 class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[str, ConsistencyJob] = {}
+        self._lock = asyncio.Lock()
 
     def create(self, project_id: str, user_id: str) -> ConsistencyJob:
         job = ConsistencyJob(job_id=str(uuid.uuid4()), project_id=project_id, user_id=user_id)
@@ -61,11 +65,28 @@ class JobManager:
     def get(self, job_id: str) -> ConsistencyJob | None:
         return self._jobs.get(job_id)
 
-    def get_running_for_project(self, project_id: str) -> ConsistencyJob | None:
-        for job in self._jobs.values():
-            if job.project_id == project_id and job.state == "running":
-                return job
-        return None
+    async def get_or_create(self, project_id: str, user_id: str) -> tuple[ConsistencyJob | None, str]:
+        """Atomic get-or-create under the registry lock (no TOCTOU duplicates).
+
+        Returns ``(job, status)`` where status is one of:
+          * "created" — a new job was registered for this user
+          * "reused"  — an in-flight job owned by this user was returned
+          * "busy"    — another user's check is in flight, or this user is at
+            MAX_RUNNING_JOBS_PER_USER; job is None (do not leak job_id).
+        """
+        async with self._lock:
+            for job in self._jobs.values():
+                if job.project_id == project_id and job.state == "running":
+                    if job.user_id == user_id:
+                        return job, "reused"
+                    return None, "busy"
+            running = sum(
+                1 for j in self._jobs.values()
+                if j.state == "running" and j.user_id == user_id
+            )
+            if running >= MAX_RUNNING_JOBS_PER_USER:
+                return None, "busy"
+            return self.create(project_id, user_id), "created"
 
     def mark_done(self, job: ConsistencyJob, report: dict) -> None:
         job.state = "done"

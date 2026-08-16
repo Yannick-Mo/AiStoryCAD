@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.guard import check_web_content_safety
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
 from app.config import settings
 
@@ -282,7 +283,21 @@ class WebSearchTool(BaseTool):
                     success=True,
                     data={"results": [], "message": "未找到相关结果，请尝试更换关键词或减少过滤条件"},
                 )
-            return ToolResult(success=True, data=results)
+            # 搜索结果(标题/摘要)是外部可控文本,注入主循环前先过 guard 的
+            # 注入/危险内容检测;命中则丢弃该条。在缓存读取之后过滤,缓存不变。
+            safe_results = []
+            for r in results:
+                text = f"{r.get('title', '')} {r.get('snippet', '')}"
+                if check_web_content_safety(text):
+                    logger.warning("web_search result filtered for query=%s url=%s", query, r.get("url", ""))
+                    continue
+                safe_results.append(r)
+            if not safe_results:
+                return ToolResult(
+                    success=True,
+                    data={"results": [], "message": "未找到相关结果，请尝试更换关键词或减少过滤条件"},
+                )
+            return ToolResult(success=True, data=safe_results)
         except Exception as e:
             logger.exception("web_search failed for query=%s", query)
             return ToolResult(success=False, error=str(e))

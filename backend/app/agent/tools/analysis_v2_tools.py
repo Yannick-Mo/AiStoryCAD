@@ -38,7 +38,10 @@ class AnalyzeChapterTool(BaseTool):
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
             chapter_id = uuid.UUID(ch_raw)
 
-            ch_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+            # 安全：按项目过滤章节查询，防止跨项目按 UUID 读取（IDOR）
+            ch_result = await db.execute(
+                select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id)
+            )
             chapter = ch_result.scalar_one_or_none()
             if not chapter:
                 return ToolResult(success=False, error="Chapter not found")
@@ -138,7 +141,10 @@ class AnalyzeCharacterArcTool(BaseTool):
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
             char_id = uuid.UUID(ch_raw)
 
-            result = await db.execute(select(Character).where(Character.id == char_id))
+            # 安全：按项目过滤角色查询，防止跨项目按 UUID 读取（IDOR）
+            result = await db.execute(
+                select(Character).where(Character.id == char_id, Character.project_id == project_id)
+            )
             char = result.scalar_one_or_none()
             if not char:
                 return ToolResult(success=False, error="Character not found")

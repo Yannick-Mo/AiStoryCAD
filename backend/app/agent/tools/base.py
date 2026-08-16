@@ -61,7 +61,8 @@ async def verify_project_owner(
     db: AsyncSession, project_id, user_id: str | None
 ) -> None:
     if user_id is None:
-        return
+        # 安全：缺少会话用户身份时直接拒绝，绝不静默放行（防御纵深）
+        raise PermissionError("Missing user identity for project ownership check")
     from app.project.models import Project
     result = await db.execute(
         select(Project).where(Project.id == project_id, Project.owner_id == user_id)

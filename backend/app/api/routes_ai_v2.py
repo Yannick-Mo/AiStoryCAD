@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, field_validator

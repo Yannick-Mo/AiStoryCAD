@@ -71,9 +71,12 @@ async def ensure_time_orders(
             for item in payload.get("order") or []:
                 if not isinstance(item, dict):
                     continue
-                raw = str(item.get("raw", "")).strip()
-                seq = int(item.get("order_seq", 0))
-                if raw and seq >= 0 and raw not in cache:
+                raw = str(item.get("raw", "")).strip()[:200]
+                try:
+                    seq = int(item.get("order_seq", 0))
+                except (ValueError, TypeError):
+                    continue  # LLM output is not numeric — skip, don't crash
+                if raw and 0 <= seq <= 1_000_000 and raw not in cache:
                     stmt = pg_insert(ConsistencyTimeCache).values(
                         project_id=pid, raw=raw, order_seq=seq
                     ).on_conflict_do_nothing(
