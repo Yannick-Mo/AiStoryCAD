@@ -3,11 +3,18 @@ from .types import ChatResult, Message, ModelDef, ToolCall, ToolDef
 from .tracker import TokenTracker
 from .registry import (
     _registry as model_registry,
+    configure_from_config,
     configure_from_settings,
     get,
     get_default,
+    get_embedding,
+    get_middle_model,
+    get_primary_name,
     list_models,
     register,
+    reset,
+    set_embedding,
+    set_middle_model,
 )
 
 __all__ = [
@@ -28,6 +35,13 @@ __all__ = [
     "register",
     "get",
     "get_default",
+    "get_primary_name",
     "list_models",
+    "get_middle_model",
+    "set_middle_model",
+    "get_embedding",
+    "set_embedding",
     "configure_from_settings",
+    "configure_from_config",
+    "reset",
 ]

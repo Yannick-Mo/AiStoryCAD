@@ -133,7 +133,7 @@ class ConsistencyReportRecord(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    requested_by = Column(UUID(as_uuid=True), nullable=True)
     summary = Column(Text, nullable=False, default="")
     stats = Column(JSONB, nullable=False, default=dict)
     meta = Column(JSONB, nullable=False, default=dict)

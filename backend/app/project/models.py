@@ -13,7 +13,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     title = Column(String(255), default="Untitled Project")
     description = Column(Text, default="")
     genre = Column(String(100), default="")

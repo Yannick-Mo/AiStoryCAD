@@ -2,14 +2,9 @@ from contextlib import asynccontextmanager
 import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from app.config import settings, validate_jwt_secret
-from app.database import init_db
+from app.config import settings
+from app.database import async_session, init_db
 from app.llm import configure_from_settings
-
-def _validate_config():
-    validate_jwt_secret()
-_validate_config()
 
 
 @asynccontextmanager
@@ -17,6 +12,16 @@ async def lifespan(app: FastAPI):
     configure_from_settings(settings)
     await init_db()
 
+    # Single-user local tool: if a model config row exists in the DB it
+    # overrides the environment-variable defaults (hot-reloadable via the
+    # settings API afterwards).
+    from app.database import async_session as _app_async_session
+    from app.settings.service import load_and_apply
+    try:
+        await load_and_apply(_app_async_session())
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("failed to load model config from DB")
     # Consistency v3 write path: ORM events → inbox → background worker
     # (+ periodic hash audit as the runtime fallback net, §5.1 兜底 A).
     worker = None
@@ -103,8 +108,6 @@ async def health():
 
 
 def register_routers():
-    from app.api.routes_auth import router as auth_router
-    app.include_router(auth_router)
     from app.api.routes_project import router as project_router
     app.include_router(project_router)
     from app.api.routes_storycad import router as storycad_router
@@ -121,87 +124,11 @@ def register_routers():
     app.include_router(rhythm_router)
     from app.api.routes_consistency import router as consistency_router
     app.include_router(consistency_router)
+    from app.api.routes_settings import router as settings_router
+    app.include_router(settings_router)
 
     from app.mcp.server import mcp
-    _mount_secured_mcp(mcp)
-
-
-_MCP_MAX_CONNECTIONS_PER_USER = 5
-
-
-async def _extract_mcp_token(request: Request, method: str, path: str) -> str | None:
-    auth = request.headers.get("authorization")
-    if auth and auth.lower().startswith("bearer "):
-        return auth[7:]
-    # MCP 客户端应使用 Authorization: Bearer;?token= 查询参数会把 JWT
-    # 泄漏进访问日志,默认关闭——仅在 MCP_SSE_QUERY_TOKEN_ALLOWED=true 时
-    # 接受 GET /mcp/sse 的 query token。
-    if (
-        settings.mcp_sse_query_token_allowed
-        and method == "GET"
-        and path.rstrip("/") == "/mcp/sse"
-    ):
-        return request.query_params.get("token")
-    return None
-
-
-async def _mcp_transport_auth(scope, receive, send, mcp_app):
-    """Transport-layer auth for the MCP SSE mount: valid JWT (Bearer header
-    or ?token= query for the SSE endpoint) is required, plus a soft per-user
-    connection cap. Per-tool token checks in app.mcp.auth remain the second
-    layer."""
-    if scope["type"] != "http":
-        await mcp_app(scope, receive, send)
-        return
-    from starlette.requests import Request as StarletteRequest
-
-    request = StarletteRequest(scope, receive)
-    method = scope.get("method", "")
-    path = scope.get("path", "")
-    token = await _extract_mcp_token(request, method, path)
-    if not token:
-        response = JSONResponse({"detail": "Missing authentication token"}, status_code=401)
-        await response(scope, receive, send)
-        return
-
-    from app.api.deps import decode_token, get_redis
-
-    payload = await decode_token(token)
-    if payload is None:
-        response = JSONResponse({"detail": "Invalid or revoked token"}, status_code=401)
-        await response(scope, receive, send)
-        return
-
-    redis = await get_redis()
-    conn_key = f"mcp:conn:{payload['sub']}"
-    if redis is not None:
-        try:
-            count = await redis.incr(conn_key)
-            await redis.expire(conn_key, 300)
-            if int(count) > _MCP_MAX_CONNECTIONS_PER_USER:
-                await redis.decr(conn_key)
-                response = JSONResponse({"detail": "Too many MCP connections"}, status_code=429)
-                await response(scope, receive, send)
-                return
-        except Exception:
-            redis = None
-    try:
-        await mcp_app(scope, receive, send)
-    finally:
-        if redis is not None:
-            try:
-                await redis.decr(conn_key)
-            except Exception:
-                pass
-
-
-def _mount_secured_mcp(mcp):
-    mcp_app = mcp.sse_app()
-
-    async def _secured_mcp(scope, receive, send):
-        await _mcp_transport_auth(scope, receive, send, mcp_app)
-
-    app.mount("/mcp", _secured_mcp)
+    app.mount("/mcp", mcp.sse_app())
 
 
 register_routers()

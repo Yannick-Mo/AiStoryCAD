@@ -1,35 +1,14 @@
-import { useEffect, useState } from "react"
-import { Search, Plus, LogOut, Trash2 } from "lucide-react"
-import { useAuth } from "../../context/AuthContext"
-import { apiDelete } from "../../api/auth"
-import ConfirmDialog from "../editor/components/ConfirmDialog"
-import { useToast } from "../editor/components/Toast"
+import { useEffect } from "react"
+import { Search, Plus, Settings } from "lucide-react"
 
 interface HomeNavbarProps {
   searchQuery: string
   onSearchChange: (val: string) => void
   onCreateClick: () => void
+  onSettingsClick: () => void
 }
 
-export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick }: HomeNavbarProps) {
-  const { user, logout } = useAuth()
-  const { addToast } = useToast()
-  const [deleting, setDeleting] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-
-  async function handleDeleteAccount() {
-    setDeleting(true)
-    try {
-      await apiDelete("/api/auth/me")
-      window.location.href = "/login"
-    } catch {
-      addToast("注销失败", "error")
-      setDeleting(false)
-    } finally {
-      setDeleteDialogOpen(false)
-    }
-  }
-
+export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick, onSettingsClick }: HomeNavbarProps) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey && e.key === "k") || (e.key === "/" && !["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName))) {
@@ -42,7 +21,6 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
   }, [])
 
   return (
-    <>
     <nav className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur-xl border-b border-gray-800 px-6 h-14 flex items-center gap-4">
       <a href="/" className="flex items-center gap-2 text-blue-400 font-bold text-lg no-underline shrink-0 hover:opacity-85 transition-opacity">
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
@@ -68,34 +46,13 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
         <Plus className="w-4 h-4" />
         新建项目
       </button>
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-400 hidden sm:block">{user?.username || user?.email}</span>
-        <button
-          onClick={() => setDeleteDialogOpen(true)}
-          disabled={deleting}
-          className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-500 hover:text-red-400 hover:bg-red-900/30 transition-all"
-          title="注销账号"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
-        <button
-          onClick={logout}
-          className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-all"
-          title="退出登录"
-        >
-          <LogOut className="w-4 h-4" />
-        </button>
-      </div>
+      <button
+        onClick={onSettingsClick}
+        className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-all"
+        title="模型配置"
+      >
+        <Settings className="w-4 h-4" />
+      </button>
     </nav>
-    <ConfirmDialog
-      open={deleteDialogOpen}
-      title="注销账号"
-      message="确定要注销账号吗？所有项目数据将被永久删除，此操作不可恢复！"
-      confirmText="确认注销"
-      cancelText="取消"
-      onConfirm={handleDeleteAccount}
-      onCancel={() => setDeleteDialogOpen(false)}
-    />
-    </>
   )
 }

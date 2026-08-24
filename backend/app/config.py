@@ -6,14 +6,6 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/storyforge"
     redis_url: str = "redis://redis:6379/0"
-    jwt_secret_key: str = ""
-    jwt_expire_hours: int = 24
-    # Set true only behind a TLS-terminating proxy; over plain http the
-    # browser would reject a Secure cookie (dev on http://localhost).
-    cookie_secure: bool = False
-    # JWT in ?token= URLs leaks into access logs; off by default. MCP
-    # clients should use Authorization: Bearer instead.
-    mcp_sse_query_token_allowed: bool = False
 
     # LLM configuration
     llm_api_key: str = ""
@@ -90,32 +82,3 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-
-# Placeholder / publicly-known secrets must never be accepted (issue #3).
-_JWT_PLACEHOLDER_SECRETS = {
-    "change-me-to-a-random-string",
-    "change-me",
-    "changeme",
-    "change_me",
-    "your-secret-key",
-    "your_jwt_secret",
-    "secret",
-    "jwt-secret",
-    "jwt_secret",
-    "please-change-me",
-}
-_JWT_MIN_SECRET_LENGTH = 32
-
-
-def validate_jwt_secret() -> None:
-    key = settings.jwt_secret_key
-    if not key:
-        raise ValueError(
-            "JWT_SECRET_KEY is not configured. Set it in .env file or JWT_SECRET_KEY environment variable."
-        )
-    if key.lower() in _JWT_PLACEHOLDER_SECRETS or len(key) < _JWT_MIN_SECRET_LENGTH:
-        raise ValueError(
-            "JWT_SECRET_KEY must be a strong random secret (at least "
-            f"{_JWT_MIN_SECRET_LENGTH} chars) and not a known placeholder. "
-            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
-        )

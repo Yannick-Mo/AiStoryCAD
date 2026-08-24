@@ -58,8 +58,7 @@ services:
     build:
       context: ./backend
     ports:
-      # 仅绑定 loopback——前端经 nginx 代理访问 API,/docs、/health、
-      # /register 不应暴露到所有网卡。
+      # 仅绑定 loopback——前端经 nginx 代理访问 API,/docs、/health 不应暴露到所有网卡。
       - "127.0.0.1:8000:8000"
     env_file: .env
     dns:

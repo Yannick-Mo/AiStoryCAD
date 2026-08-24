@@ -218,7 +218,8 @@ async def middle_process_tool_result(
     try:
         prompt = _system_prompt(tool_name, data, chars)
         body = f"<tool_result tool=\"{tool_name}\" chars={chars}>\n{text}\n</tool_result>"
-        model = getattr(settings, "llm_middle_model", "") or None
+        from app.llm.registry import get_middle_model
+        model = get_middle_model() or None
         chat_result = await asyncio.wait_for(
             llm_chat(
                 [M(role="system", content=prompt), M(role="user", content=body)],

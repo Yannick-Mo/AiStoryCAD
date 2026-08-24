@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from app.config import settings
 from app.project.models import Base
-from app.user.models import User
+from app.settings.service import local_user
 
 
 def _test_database_url() -> str:
@@ -86,8 +86,9 @@ async def db_session():
 
 @pytest_asyncio.fixture
 async def test_user(db_session: AsyncSession) -> dict:
-    from app.user.repository import UserRepository
-    from app.user.service import UserService
-    repo = UserRepository(db_session)
-    user = await repo.create("testuser", "test@example.com", await UserService._hash_password("password"))
-    return {"id": user.id, "username": user.username}
+    """Single-user local tool: the fixed local identity (UUID id like the
+    legacy user fixture, so callers can pass it straight to UUID columns)."""
+    from uuid import UUID
+    from app.settings.service import local_user
+    u = local_user()
+    return {**u, "id": UUID(u["id"])}

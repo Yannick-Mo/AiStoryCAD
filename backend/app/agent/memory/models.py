@@ -28,7 +28,7 @@ class Conversation(Base):
         nullable=False, index=True,
     )
     user_id = Column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        UUID(as_uuid=True),
         nullable=False, index=True,
     )
     title = Column(String(255), default="")

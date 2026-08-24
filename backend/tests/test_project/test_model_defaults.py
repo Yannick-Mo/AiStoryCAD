@@ -32,7 +32,7 @@ def test_all_timestamp_column_defaults_are_callable():
     import app.project.models  # noqa: F401
     import app.storycad.models  # noqa: F401
     import app.knowledge.models  # noqa: F401
-    import app.user.models  # noqa: F401
+    import app.settings.models  # noqa: F401
 
     offenders = []
     for mapper in Base.registry.mappers:

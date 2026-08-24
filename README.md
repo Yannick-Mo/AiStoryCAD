@@ -181,9 +181,10 @@ LLM 流式响应 + 工具调用 → 流式执行器调度工具
 ### 启动（生产/日常使用）
 
 ```bash
-# 1. 配置环境变量
+# 1. 配置环境变量（LLM 的 base-url / api-key 也可以直接在网页的
+#    "模型配置" 里设置并热生效，环境变量仅作启动兜底）
 cp .env.example .env
-# 编辑 .env，至少设置 JWT_SECRET_KEY、LLM_API_KEY、SEARXNG_SECRET_KEY
+# 编辑 .env，至少设置 LLM_API_KEY、SEARXNG_SECRET_KEY
 
 # 2. 构建并启动全部 5 个服务（db / redis / backend / searxng / frontend）
 docker compose up -d --build
@@ -193,6 +194,8 @@ docker compose up -d --build
 #   API:       http://localhost:8000
 #   Swagger:   http://localhost:8000/docs
 ```
+
+单用户本地工具：无需注册/登录，首次打开首页若检测到未配置模型会自动弹出"模型配置"窗口。
 
 生产配置**不挂载源码**：backend 镜像只含运行时依赖，frontend 由 nginx 托管构建产物。
 
@@ -236,13 +239,15 @@ npm run dev
 
 | 变量 | 说明 | 默认值 |
 |---|---|---|
-| `JWT_SECRET_KEY` | JWT 签名密钥（必填） | — |
-| `LLM_API_KEY` | LLM API 密钥（必填） | — |
+| `LLM_API_KEY` | LLM API 密钥（启动兜底；可在前端"模型配置"中修改） | — |
 | `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com/v1` |
 | `LLM_MODEL` | 模型名称 | `deepseek-v4-flash` |
 | `SEARXNG_SECRET_KEY` | SearXNG 会话签名密钥（生产必填随机值） | — |
 | `DATABASE_URL` | PostgreSQL 连接串 | `postgresql+asyncpg://postgres:postgres@db:5432/storyforge` |
 | `REDIS_URL` | Redis 连接串 | `redis://redis:6379/0` |
+
+运行时模型配置（主模型 / 中间压缩模型 / 备用模型 / Embedding）保存在数据库 `model_config` 表，
+可通过前端右上角齿轮按钮修改，保存后立即生效（无需重启）。
 
 完整配置项见 `backend/app/config.py`。后端依赖锁定在 `backend/requirements.lock`（主要依赖精确版本），可用 `pip install -r requirements.lock` 复现生产依赖；测试依赖见 `backend/requirements-dev.txt`（仅 CI 与本地开发安装，不进生产镜像）。CI 配置见 `.github/workflows/ci.yml`（后端 pytest + 前端 typecheck/build）。
 

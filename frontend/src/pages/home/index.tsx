@@ -8,7 +8,8 @@ import CreateCards from "./CreateCards"
 import CreateProjectDialog from "./CreateProjectDialog"
 import TemplateGrid from "./TemplateGrid"
 import Footer from "./Footer"
-import { listProjects, deleteProject, updateProject } from "../../api/auth"
+import SettingsModal from "./SettingsModal"
+import { listProjects, deleteProject, updateProject, getModelSettings } from "../../api/auth"
 import type { ProjectListItem } from "../../types/project"
 import ConfirmDialog from "../editor/components/ConfirmDialog"
 import RenameDialog from "./RenameDialog"
@@ -19,6 +20,7 @@ export default function ProjectListPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const { addToast } = useToast()
@@ -32,6 +34,18 @@ export default function ProjectListPage() {
   }, [searchQuery])
 
   useEffect(() => { fetchProjects() }, [fetchProjects])
+
+  // First-run onboarding: if no model is configured, open the settings modal.
+  useEffect(() => {
+    getModelSettings()
+      .then(s => {
+        if (!s.configured) {
+          setSettingsOpen(true)
+          addToast("首次使用：请先配置你的模型服务", "info")
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return
@@ -70,7 +84,7 @@ export default function ProjectListPage() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      <HomeNavbar searchQuery={searchQuery} onSearchChange={setSearchQuery} onCreateClick={() => setCreateOpen(true)} />
+      <HomeNavbar searchQuery={searchQuery} onSearchChange={setSearchQuery} onCreateClick={() => setCreateOpen(true)} onSettingsClick={() => setSettingsOpen(true)} />
       <AnnouncementBanner />
       <div className="max-w-5xl mx-auto px-6 pb-12">
         <HeroSection />
@@ -81,6 +95,7 @@ export default function ProjectListPage() {
         <Footer />
       </div>
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <RenameDialog
         open={renameTarget !== null}
         currentTitle={renameProject?.title ?? ""}

@@ -299,9 +299,13 @@ def get_fallback_models() -> list[str]:
     The primary model is excluded from the fallback list so we don't
     retry the same model that just failed.
     """
-    from app.config import settings
+    from app.llm.registry import get_primary_name
 
-    primary = settings.llm_model
+    try:
+        primary = get_primary_name()
+    except KeyError:
+        from app.config import settings
+        primary = settings.llm_model
     fallback_str = getattr(settings, "llm_fallback_models", "")
     if not fallback_str:
         return []

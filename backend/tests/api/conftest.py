@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.project.models import Base
 
 # Register all model tables on Base.metadata so create_all covers them.
-import app.user.models  # noqa: F401
 import app.project.models  # noqa: F401
 import app.storycad.models  # noqa: F401
 import app.knowledge.models  # noqa: F401
+import app.settings.models  # noqa: F401
 import app.agent.memory.models  # noqa: F401
 import app.agent.consistency.orm  # noqa: F401
 
