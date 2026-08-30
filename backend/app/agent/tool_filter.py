@@ -10,7 +10,7 @@ READ_ONLY_TOOLS: set[str] = {
     "read_project", "read_chapter", "read_scene", "read_full_project", "read_project_overview", "read_character",
     "search_knowledge",
     "analyze_chapter", "analyze_character_arc", "project_health",
-    "check_consistency", "analyze_rhythm", "suggest_next",
+    "check_consistency", "suggest_next",
     "list_characters", "list_chapters", "list_scenes",
     "list_relations", "list_edges", "search_nodes",
     "web_search", "web_fetch",
@@ -32,9 +32,6 @@ COWRITER_TOOLS: set[str] = {
     "create_relation", "update_relation", "delete_relation",
     # CRUD — edge
     "create_edge", "update_edge", "delete_edge",
-    # CRUD — theme
-    "create_theme", "update_theme", "delete_theme",
-    "link_theme_chapter", "unlink_theme_chapter", "set_chapter_rhythm",
     # Writing
     "write_scene_content", "continue_scene", "rewrite_scene",
     "expand_selection", "compress_selection",

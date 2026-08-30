@@ -242,14 +242,11 @@ async def build_system_prompt(state: dict) -> str:
     # Tier 1 — high: compact stats, tool results, plan, errors
     if project_structure:
         chars_count = len(project_ctx.get("characters", []))
-        themes_count = len(project_ctx.get("themes", []))
         rels_count = len(project_ctx.get("relations", []))
         edges_count = len(project_ctx.get("edges", []))
         stats_parts = [f"项目规模：{project_structure}"]
         if chars_count:
             stats_parts.append(f"{chars_count}角色")
-        if themes_count:
-            stats_parts.append(f"{themes_count}主题")
         if rels_count:
             stats_parts.append(f"{rels_count}条关系")
         if edges_count:

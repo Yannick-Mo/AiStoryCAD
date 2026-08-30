@@ -8,7 +8,6 @@ export interface StoryStarter {
   premise: string
   protagonist: string
   opening_scene: string
-  themes: string[]
   tags: string[]
 }
 

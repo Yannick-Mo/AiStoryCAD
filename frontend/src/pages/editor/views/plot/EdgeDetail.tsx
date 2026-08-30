@@ -15,7 +15,6 @@ const EDGE_TYPE_OPTIONS: { value: EdgeType; label: string }[] = [
   { value: 'causal', label: '因果关系' },
   { value: 'foreshadow', label: '伏笔照应' },
   { value: 'character', label: '人物关联' },
-  { value: 'theme', label: '主题关联' },
 ]
 
 const EDGE_TITLES: Record<EdgeType, string> = {
@@ -23,7 +22,6 @@ const EDGE_TITLES: Record<EdgeType, string> = {
   causal: '因果关系',
   foreshadow: '伏笔照应',
   character: '人物关联',
-  theme: '主题关联',
 }
 
 const STATUS_LABELS: Record<Chapter['status'], string> = {
@@ -134,38 +132,23 @@ function TypeSpecificContent({ edge, source, target, onUpdateEdge }: {
     )
   }
 
-  if (edge.type === 'theme') {
-    return (
-      <div className="space-y-3">
-        <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
-          <div className="text-[10px] text-gray-500 mb-1">主题说明</div>
-          <textarea
-            value={note}
-            onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
-            placeholder="说明两章共享、呼应或对照的主题命题..."
-            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
-            rows={3}
-          />
-        </section>
-        <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
-          <div className="text-[10px] text-gray-500 mb-1">目标对照</div>
-          <p className="text-xs text-gray-400 leading-relaxed">{source?.goal || '源章节暂无目标'} / {target?.goal || '目标章节暂无目标'}</p>
-        </section>
-      </div>
-    )
-  }
-
   return (
-    <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
-      <div className="text-[10px] text-gray-500 mb-1">因果内容</div>
-      <textarea
-        value={note}
-        onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
-        placeholder="说明这个事件如何推动后续结果..."
-        className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
-        rows={3}
-      />
-    </section>
+    <div className="space-y-3">
+      <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
+        <div className="text-[10px] text-gray-500 mb-1">连线说明</div>
+        <textarea
+          value={note}
+          onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
+          placeholder="说明两章之间的关系..."
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+          rows={3}
+        />
+      </section>
+      <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
+        <div className="text-[10px] text-gray-500 mb-1">目标对照</div>
+        <p className="text-xs text-gray-400 leading-relaxed">{source?.goal || '源章节暂无目标'} / {target?.goal || '目标章节暂无目标'}</p>
+      </section>
+    </div>
   )
 }
 

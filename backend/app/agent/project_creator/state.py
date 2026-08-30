@@ -44,7 +44,7 @@ class EdgeDef(TypedDict):
     source_chapter_idx: int
     target_act_idx: int
     target_chapter_idx: int
-    type: str  # 'timeline' | 'causal' | 'foreshadow' | 'character' | 'theme'
+    type: str  # 'timeline' | 'causal' | 'foreshadow' | 'character'
     label: str
 
 

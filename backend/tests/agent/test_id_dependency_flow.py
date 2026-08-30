@@ -230,8 +230,7 @@ class TestListThenWriteScenario:
     # Write tools that CREATE new entities don't need existing IDs
     TOOLS_WITHOUT_ID_REQUIREMENT = {
         "create_character", "create_act", "create_project_from_material",
-        "create_theme", "set_chapter_goal", "set_chapter_rhythm",
-        "link_theme_chapter", "unlink_theme_chapter",
+        "set_chapter_goal",
         "update_project",
     }
 
@@ -240,7 +239,7 @@ class TestListThenWriteScenario:
         least one *-id in its 'required' list."""
         registry = get_tool_registry()
         id_params = {"act_id", "chapter_id", "scene_id", "character_id",
-                     "source_id", "target_id", "edge_id", "theme_id",
+                     "source_id", "target_id", "edge_id",
                      "relation_id", "project_id"}
 
         for name in WRITE_TOOLS:

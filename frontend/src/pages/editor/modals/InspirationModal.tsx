@@ -209,9 +209,6 @@ function StarterCard({ starter, index, onApply }: { starter: StoryStarter; index
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        {starter.themes?.map((t, i) => (
-          <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">{t}</span>
-        ))}
         {starter.tags?.map((t, i) => (
           <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-900/30 text-amber-400">{t}</span>
         ))}

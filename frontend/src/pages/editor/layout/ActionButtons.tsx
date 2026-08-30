@@ -3,14 +3,13 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 interface ActionButtonsProps {
   onAIChat: () => void
   onInspiration: () => void
-  onRhythmAnalysis: () => void
   onConsistencyCheck: () => void
 }
 
 const DRAG_THRESHOLD = 5
 
 export default function ActionButtons({
-  onAIChat, onInspiration, onRhythmAnalysis, onConsistencyCheck
+  onAIChat, onInspiration, onConsistencyCheck
 }: ActionButtonsProps) {
   const [aiMenuOpen, setAiMenuOpen] = useState(false)
   const [pos, setPos] = useState(() => ({ x: window.innerWidth - 80, y: window.innerHeight - 200 }))
@@ -22,7 +21,6 @@ export default function ActionButtons({
   const aiItems = [
     { label: '💬 AI 对话', action: onAIChat },
     { label: '✨ 灵感生成', action: onInspiration },
-    { label: '📊 节奏分析', action: onRhythmAnalysis },
     { label: '✅ 一致性检查', action: onConsistencyCheck },
   ]
 

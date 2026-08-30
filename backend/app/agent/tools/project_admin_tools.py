@@ -488,8 +488,8 @@ class CreateEdgeTool(BaseTool):
                 "target_id": {"type": "string", "description": "目标章节ID，来自 list_chapters 或 read_full_project"},
                 "edge_type": {
                     "type": "string",
-                    "description": "timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
-                    "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+                    "description": "timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）",
+                    "enum": ["timeline", "causal", "foreshadow", "character"],
                 },
                 "label": {"type": "string", "description": "连线标签，例如'因→果'、'伏笔→回收'"},
                 "source_handle": {"type": "string", "description": "源端手柄位置，例如's-r'（右）、's-l'（左）"},
@@ -569,8 +569,8 @@ class UpdateEdgeTool(BaseTool):
                 "edge_id": {"type": "string", "description": "连线ID，来自 list_edges 返回结果"},
                 "edge_type": {
                     "type": "string",
-                    "description": "timeline（时间线/顺序）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
-                    "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+                    "description": "timeline（时间线/顺序）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）",
+                    "enum": ["timeline", "causal", "foreshadow", "character"],
                 },
                 "label": {"type": "string", "description": "连线标签"},
                 "source_handle": {"type": "string", "description": "源端手柄位置"},

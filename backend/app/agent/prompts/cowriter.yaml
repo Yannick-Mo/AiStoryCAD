@@ -22,9 +22,7 @@ system: |
   - **SceneContent（场景正文）**：场景的实际正文内容，存储在 scene_contents 表中（与 Scene 是 1:1 关系）
   - **Character（角色）**：有 name、role（protagonist/supporting/antagonist）、personality、appearance、background、motivation
   - **CharacterRelation（角色关系）**：连接两个角色，有 rel_type、label、description、trust/threat/attraction（0-100 三维评分）
-  - **ChapterEdge（章节连线）**：连接**章节**（不是场景），类型有 timeline/causal/foreshadow/character/theme
-  - **Theme（主题）**：有 name、proposition（命题）、note；可通过 ThemeChapter 关联到章节
-  - **ChapterRhythm（章节节奏）**：每章的 action/suspense/emotion/humor/intensity 五维评分（0-10）
+  - **ChapterEdge（章节连线）**：连接**章节**（不是场景），类型有 timeline/causal/foreshadow/character
 
   # ——— 核心行为原则（详细版） ———
   1. **先读后写，绝不跳过** — 在执行任何写入操作之前，必须先调用 read_full_project 或相关读取工具获取当前项目状态

@@ -194,10 +194,6 @@ def _section_for_tool(tool_name: str) -> str:
         return "characters"
     if tool_name in ("create_edge", "update_edge", "delete_edge"):
         return "edges"
-    if tool_name in ("create_theme", "update_theme", "delete_theme",
-                     "link_theme_chapter", "unlink_theme_chapter",
-                     "set_chapter_rhythm"):
-        return "themes"
     return "project"
 
 
@@ -365,7 +361,7 @@ def _render_framework_section(state: "LoopState") -> str:
 
     Fixes H2: the framework was loaded into ``state.project_context`` but the
     system prompt only *claimed* it was provided ("已在上下文中提供") without
-    ever including it — so the model had no structure/character/theme data to
+    ever including it — so the model had no structure/character data to
     reference and had to discover everything via tools.
 
     Truncation is structural, not a raw byte cut: lines are appended while
@@ -439,11 +435,6 @@ def _render_framework_section(state: "LoopState") -> str:
             for c in characters[:60]
         )
         entity_blocks.append(("角色", f"## 角色\n{char_txt}"))
-    themes = ctx.get("themes", [])
-    if themes:
-        entity_blocks.append(
-            ("主题", "## 主题\n" + "；".join(t.get("name", "?") for t in themes[:30]))
-        )
     relations = ctx.get("relations", [])
     if relations:
         rel_lines = []
@@ -559,7 +550,6 @@ async def _build_turn_sections(
     # 4. Project stats
     acts_data = state.project_context.get("acts", [])
     characters_data = state.project_context.get("characters", [])
-    themes_data = state.project_context.get("themes", [])
     relations_data = state.project_context.get("relations", [])
     edges_data = state.project_context.get("edges", [])
     total_ch = sum(len(a.get("chapters", [])) for a in acts_data)
@@ -570,8 +560,6 @@ async def _build_turn_sections(
     stats_parts = [f"项目规模：{len(acts_data)}幕/{total_ch}章/{total_sc}场"]
     if characters_data:
         stats_parts.append(f"{len(characters_data)}角色")
-    if themes_data:
-        stats_parts.append(f"{len(themes_data)}主题")
     if relations_data:
         stats_parts.append(f"{len(relations_data)}条关系")
     if edges_data:

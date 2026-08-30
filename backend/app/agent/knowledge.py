@@ -97,11 +97,10 @@ description、genre、logline。**这是所有创作的前提。**
 | `causal` | 因果关系 | 前一章的事件直接导致后一章的结果 |
 | `foreshadow` | 伏笔/呼应 | 前一章埋下伏笔，后一章回收呼应 |
 | `character` | 角色弧线 | 角色故事线在不同章节间的延续 |
-| `theme` | 主题关联 | 共享主题探索的章节之间的关联 |
 
 ### 连线最佳实践
 - **timeline 连线**形成故事的主时间线骨架，每个章节在时间线上最多只有一个前驱和一个后继
-- **非 timeline 连线**（causal/foreshadow/character/theme）可以任意创建，不受唯一性限制
+- **非 timeline 连线**（causal/foreshadow/character）可以任意创建，不受唯一性限制
 - 连线方向始终从**因到果**、从**前到后**、从**伏笔到回收**
 - 创建连线前先用 `list_edges` 查看现有连线，避免重复
 

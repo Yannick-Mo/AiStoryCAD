@@ -73,7 +73,6 @@ class TestH2FrameworkActuallyInjected:
                 }
             ],
             "characters": [{"id": "ch1", "name": "主角", "role": "protagonist"}],
-            "themes": [{"name": "救赎"}],
             "relations": [{"character_name": "主角", "target_name": "反派", "label": "敌对"}],
             "edges": [{"source_title": "第一章", "target_title": "第二章", "edge_type": "causal"}],
         }
@@ -85,7 +84,6 @@ class TestH2FrameworkActuallyInjected:
         assert "第一章" in out and "chapter_id=c1" in out
         assert "scene_id=s1" in out and "scene_id=s2" in out
         assert "主角" in out and "character_id=ch1" in out
-        assert "救赎" in out
         assert "敌对" in out
         assert "causal" in out
 

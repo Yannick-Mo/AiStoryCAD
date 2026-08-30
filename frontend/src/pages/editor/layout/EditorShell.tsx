@@ -10,10 +10,6 @@ import EdgeDetail from '../views/plot/EdgeDetail'
 import CharCanvas from '../views/character/CharCanvas'
 import CharacterDetail from '../views/character/CharacterDetail'
 import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
-import RhythmCanvas from '../views/rhythm/RhythmCanvas'
-import RhythmDetail from '../views/rhythm/RhythmDetail'
-import ThemeCanvas from '../views/theme/ThemeCanvas'
-import ThemeDetail from '../views/theme/ThemeDetail'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
@@ -41,19 +37,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter' | 'scene'; id: string; chapterId?: string } | null>(null)
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
-  const [selectedRhythmIndex, setSelectedRhythmIndex] = useState<number | null>(null)
-  const [selectedTheme, setSelectedTheme] = useState<{ themeIndex: number; chapterIndex: number } | null>(null)
-  const [showAddTheme, setShowAddTheme] = useState(false)
-  const [deleteThemeId, setDeleteThemeId] = useState<string | null>(null)
-  const [newThemeName, setNewThemeName] = useState('')
-  const [newThemeColor, setNewThemeColor] = useState('#d4a373')
-  const [newThemeProposition, setNewThemeProposition] = useState('')
   const [aiChatOpen, setAiChatOpen] = useState(false)
   const [aiContextView, setAiContextView] = useState<string>('chat')
   const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
   const [consistencyOpen, setConsistencyOpen] = useState(false)
-  const [triggerRhythmAnalysis, setTriggerRhythmAnalysis] = useState(false)
 
   const { addToast } = useToast()
 
@@ -63,11 +51,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const data = store.data
   const [layoutKey, setLayoutKey] = useState(0)
   const handleAutoLayout = useCallback(() => setLayoutKey(k => k + 1), [])
-
-  const handleRhythmAnalysis = () => {
-    views.switchView('narrative-rhythm')
-    setTriggerRhythmAnalysis(true)
-  }
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
@@ -199,27 +182,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onDeleteRelation={(characterId, relationId) => { store.deleteRelation(characterId, relationId); setSelectedRelation(null) }}
           />
         )
-      case 'narrative-rhythm':
-        return <RhythmCanvas projectId={projectId} rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => {
-                const existing = data.rhythms.find(r => r.chapterId === chapterId)
-                const rhythmId = existing?.id ?? crypto.randomUUID()
-                store.setData(d => d ? {
-                  ...d,
-                  rhythms: d.rhythms.some(r => r.chapterId === chapterId)
-                    ? d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r)
-                    : (() => {
-                        const idx = d.chapters.findIndex(c => c.id === chapterId)
-                        return [...d.rhythms, { id: rhythmId, chapterId, chapterIndex: Math.max(idx, 0), label: idx >= 0 ? `第${idx + 1}章` : '?', ...values }]
-                      })()
-                } : d)
-                if (existing) {
-                  store.enqueueChange({ entity: 'rhythms', op: 'update', id: existing.id, data: values as Record<string, unknown> })
-                } else {
-                  store.enqueueChange({ entity: 'rhythms', op: 'create', data: { id: rhythmId, project_id: projectId, chapter_id: chapterId, ...values } })
-                }
-              }} autoAnalyze={triggerRhythmAnalysis} onAnalysisDone={() => setTriggerRhythmAnalysis(false)} />
-      case 'narrative-theme':
-        return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} onAddTheme={() => setShowAddTheme(true)} onDeleteTheme={(id) => setDeleteThemeId(id)} />
       default:
         return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>
     }
@@ -449,59 +411,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             ) : null
           )}
 
-          {/* Detail panels - Rhythm */}
-          {views.activeViewId === 'narrative-rhythm' && selectedRhythmIndex !== null && (
-            <ResizablePanel>
-              {(() => {
-                const point = data.rhythms[selectedRhythmIndex]
-                if (!point) return null
-                const ch = data.chapters[point.chapterIndex]
-                const act = ch ? data.acts.find(a => a.id === ch.actId) : undefined
-                return (
-                  <RhythmDetail
-                    point={point}
-                    chapter={ch}
-                    act={act}
-                    wordCount={ch?.wordCount ?? 0}
-                    onClose={() => setSelectedRhythmIndex(null)}
-                  />
-                )
-              })()}
-            </ResizablePanel>
-          )}
-
-          {/* Detail panels - Theme */}
-          {views.activeViewId === 'narrative-theme' && selectedTheme && (
-            <ResizablePanel>
-              {(() => {
-                const theme = data.themes[selectedTheme.themeIndex]
-                if (!theme) return null
-                const ch = selectedTheme.chapterIndex >= 0 ? data.chapters[selectedTheme.chapterIndex] : undefined
-                return (
-                  <ThemeDetail
-                    theme={theme}
-                    chapter={ch}
-                    onClose={() => setSelectedTheme(null)}
-                    onSaveNote={(note) => {
-                      const t = data.themes[selectedTheme.themeIndex]
-                      if (t && t.id) {
-                        setData(d => d ? {
-                          ...d,
-                          themes: d.themes.map((th, i) => i === selectedTheme.themeIndex ? { ...th, note } : th)
-                        } : d)
-                        store.enqueueChange({ entity: 'themes', op: 'update', id: t.id, data: { note } })
-                      }
-                    }}
-                  />
-                )
-              })()}
-            </ResizablePanel>
-          )}
-
           <ActionButtons
             onAIChat={handleAiChatOpen}
             onInspiration={() => setInspirationOpen(true)}
-            onRhythmAnalysis={handleRhythmAnalysis}
             onConsistencyCheck={() => setConsistencyOpen(true)}
           />
         </div>
@@ -514,60 +426,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           onClose={() => setDrawerOpen(false)}
           onSelectChapter={handleChapterClick}
         />
-
-        {/* Create theme dialog */}
-        {showAddTheme && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddTheme(false)}>
-            <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-96" onClick={e => e.stopPropagation()}>
-              <h3 className="text-white font-semibold mb-4">新建主题</h3>
-              <input placeholder="主题名称" value={newThemeName} onChange={e => setNewThemeName(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white mt-2" />
-              <div className="flex gap-2 mt-3">
-                {["#d4a373","#6b7280","#ef4444","#3b82f6","#22c55e","#a855f7","#f97316","#ec4899"].map(c => (
-                  <div key={c} onClick={() => setNewThemeColor(c)}
-                    className={`w-7 h-7 rounded-full cursor-pointer border-2 ${newThemeColor === c ? 'border-white' : 'border-transparent'} hover:border-white`}
-                    style={{ backgroundColor: c }} />
-                ))}
-              </div>
-              <textarea placeholder="主题命题（可选）" value={newThemeProposition} onChange={e => setNewThemeProposition(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white mt-3" rows={2} />
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => { setShowAddTheme(false); setNewThemeName(''); setNewThemeColor('#d4a373'); setNewThemeProposition('') }}
-                  className="flex-1 px-3 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600">取消</button>
-                <button onClick={() => {
-                  const t = store.addTheme(newThemeName || undefined, newThemeColor, newThemeProposition || undefined)
-                  if (t) setSelectedTheme({ themeIndex: data.themes.length, chapterIndex: -1 })
-                  setShowAddTheme(false)
-                  setNewThemeName('')
-                  setNewThemeColor('#d4a373')
-                  setNewThemeProposition('')
-                }} className="flex-1 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-500">确定</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Delete theme confirmation */}
-        {deleteThemeId !== null && (() => {
-          const theme = data.themes.find(t => t.id === deleteThemeId)
-          return (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setDeleteThemeId(null)}>
-              <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-80" onClick={e => e.stopPropagation()}>
-                <h3 className="text-white font-semibold mb-2">删除主题</h3>
-                <p className="text-sm text-gray-400 mb-4">确定要删除主题「{theme?.name}」吗？</p>
-                <div className="flex gap-2 justify-end">
-                  <button onClick={() => setDeleteThemeId(null)}
-                    className="px-3 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm">取消</button>
-                  <button onClick={() => {
-                    store.deleteTheme(deleteThemeId)
-                    setSelectedTheme(null)
-                    setDeleteThemeId(null)
-                  }} className="px-3 py-2 rounded bg-red-600 text-white hover:bg-red-500 text-sm">删除</button>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
 
         {/* Modals */}
         <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} acts={data.acts} onClose={() => setPreviewOpen(false)} />

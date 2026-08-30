@@ -18,17 +18,3 @@ async def check_consistency(token: str, project_id: str) -> dict:
             # Surface the real reason (balance / auth / LLM failure) instead
             # of a canned "检查失败" that hides the root cause.
             return {"error": f"一致性检查失败：{e}", "issues": [], "summary": ""}
-
-
-@mcp.tool()
-async def analyze_rhythm(token: str, project_id: str) -> dict:
-    """分析故事节奏（动作、悬疑、情感、幽默、强度），返回分析报告"""
-    async with async_session() as db:
-        user = await get_current_user_mcp(token, db)
-        await verify_project_ownership(project_id, user["id"], db)
-        try:
-            from app.agent.rhythm.analyzer import RhythmAnalyzer
-            analyzer = RhythmAnalyzer(db)
-            return await analyzer.analyze(project_id)
-        except Exception:
-            return {"error": "节奏分析失败"}

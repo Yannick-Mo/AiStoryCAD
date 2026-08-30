@@ -97,8 +97,6 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
   const edges = (raw.edges || []) as unknown as ApiEdge[]
   const characters = (raw.characters || []) as unknown as ApiCharacter[]
   const charRels = (raw.character_relations || []) as unknown as ApiCharRelation[]
-  const themes = (raw.themes || []) as unknown as ApiTheme[]
-  const themeChs = (raw.theme_chapters || []) as unknown as ApiThemeChapter[]
 
 
   const chMap = new Map<string, Chapter>()
@@ -169,46 +167,12 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
       id: e.id,
       sourceId: e.source_id,
       targetId: e.target_id,
-      type: (e.edge_type as "timeline" | "causal" | "foreshadow" | "character" | "theme") || "timeline",
+      type: (e.edge_type as "timeline" | "causal" | "foreshadow" | "character") || "timeline",
       label: e.label || "",
       sourceHandle: e.source_handle || undefined,
       targetHandle: e.target_handle || undefined,
     })),
     characters: Array.from(charMap.values()),
-    rhythms: (raw.rhythms || [])
-      .map((r: any) => {
-        const chIdx = chapters.findIndex((c: any) => c.id === r.chapter_id)
-        return {
-          id: r.id,
-          chapterId: r.chapter_id,
-          chapterIndex: chIdx >= 0 ? chIdx : 0,
-          label: `${chIdx >= 0 ? `第${chIdx + 1}章` : '?'}`,
-          action: r.action,
-          suspense: r.suspense,
-          emotion: r.emotion,
-          humor: r.humor,
-          intensity: r.intensity,
-        }
-      })
-      .sort((a, b) => a.chapterIndex - b.chapterIndex),
-    themes: themes.map((t) => ({
-      id: t.id,
-      name: t.name,
-      color: t.color || "#d4a373",
-      proposition: t.proposition || "",
-      chapterIndices: (() => {
-        const chapterIndexMap = new Map<string, number>()
-        let j = 0
-        for (const key of chMap.keys()) {
-          chapterIndexMap.set(key, j)
-          j++
-        }
-        return themeChs.filter(tc => tc.theme_id === t.id).map(tc => {
-          return chapterIndexMap.get(tc.chapter_id) ?? 0
-        })
-      })(),
-      connections: [],
-    })),
     globalSettings: (raw.global_settings as unknown as string) || "",
   }
 }
@@ -223,6 +187,4 @@ interface ApiScene { id: string; chapter_id: string; title: string; sort_order: 
 interface ApiEdge { id: string; source_id: string; target_id: string; edge_type: string; label: string; source_handle: string; target_handle: string }
 interface ApiCharacter { id: string; name: string; role: string; personality: string; appearance: string; background: string; motivation: string }
 interface ApiCharRelation { id: string; character_id: string; target_id: string; rel_type: string; label: string; description: string; trust: number; threat: number; attraction: number }
-interface ApiTheme { id: string; name: string; color: string; proposition: string; note?: string; sort_order?: number }
-interface ApiThemeChapter { theme_id: string; chapter_id: string }
 

@@ -5,7 +5,6 @@ import { useActs } from './hooks/useActs'
 import { useChapters } from './hooks/useChapters'
 import { useEdges } from './hooks/useEdges'
 import { useCharacters } from './hooks/useCharacters'
-import { useThemes } from './hooks/useThemes'
 
 export interface EditorSelection {
   type: 'act' | 'chapter' | 'edge' | null
@@ -216,11 +215,6 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     addRelation, deleteRelation, updateRelation,
   } = useCharacters(data, setData, projectId, enqueueChange, clearSelection)
 
-  const {
-    addTheme, deleteTheme, updateTheme,
-    addThemeChapterIndex, removeThemeChapterIndex,
-  } = useThemes(data, setData, projectId, enqueueChange)
-
   // Wrapped deleteAct to also clear selection
   const deleteActAction = useCallback((actId: string) => {
     actsDeleteAct(actId)
@@ -251,8 +245,6 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     addScene, deleteScene, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
     resizeAct,
     addCharacter, deleteCharacter, addRelation, deleteRelation,
-    addTheme, deleteTheme,
-    updateTheme, addThemeChapterIndex, removeThemeChapterIndex,
     saveGlobalSettings,
     updateAct, updateChapter, updateScene, updateEdge,
     updateCharacter, updateRelation,

@@ -7,7 +7,6 @@ system: |
   - causal：因果关系（前一章的事件直接导致后一章发展）
   - foreshadow：伏笔/呼应（前章埋下伏笔，后章回收）
   - character：角色线（同一角色的成长弧在两个章节间延续）
-  - theme：主题线（两个章节探讨相同主题）
 
   每个连线至少涉及两个章节（源章节和目标章节），请确保：
   - source_act_idx 和 source_chapter_idx 指向源章节

@@ -32,7 +32,7 @@ tool_usage:
 
     ## Startup: always start with read_project_overview
     Every session starts with `read_project_overview` to get the project skeleton
-    (acts/chapters/scenes, character names/roles, theme names).  From there,
+    (acts/chapters/scenes, character names/roles).  From there,
     drill into specific entities with dedicated read tools.
 
     ## Recommended Exploration Flow
@@ -57,7 +57,7 @@ tool_usage:
 
     ### 1. Direct Tools — no ID required, call directly
     These tools have no entity ID prerequisites. They either take no parameters, or only need text/name/keyword inputs (not IDs).
-    Examples: `create_character`, `create_act`, `create_theme`, `web_search`, `check_consistency`, `read_project`, `update_project`, `suggest_next`, `invoke_skill`.
+    Examples: `create_character`, `create_act`, `web_search`, `check_consistency`, `read_project`, `update_project`, `suggest_next`, `invoke_skill`.
 
     ### 2. ID-dependent Tools — need an entity ID from a query tool first
     Look for the `←` marker in the tool's parameter hint:

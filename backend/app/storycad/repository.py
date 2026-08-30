@@ -10,7 +10,6 @@ from app.project.repository import ProjectRepository
 from app.storycad.models import (
     Act, Chapter, Scene, SceneContent, ChapterEdge,
     Character, CharacterRelation,
-    Theme, ThemeChapter, ChapterRhythm,
 )
 from app.storycad.entity_map import ENTITY_MAP
 from app.utils import row_to_dict
@@ -49,8 +48,6 @@ ENTITY_FK_MAP = {
     Scene: {"chapter_id": Chapter},
     ChapterEdge: {"source_id": Chapter, "target_id": Chapter},
     CharacterRelation: {"character_id": Character, "target_id": Character},
-    ThemeChapter: {"theme_id": Theme, "chapter_id": Chapter},
-    ChapterRhythm: {"chapter_id": Chapter},
 }
 
 
@@ -81,9 +78,6 @@ class StoryCADRepository:
         result["edges"] = await _fetch(ChapterEdge)
         result["characters"] = await _fetch(Character, "sort_order")
         result["character_relations"] = await _fetch(CharacterRelation)
-        result["themes"] = await _fetch(Theme, "sort_order")
-        result["theme_chapters"] = await _fetch(ThemeChapter)
-        result["rhythms"] = await _fetch(ChapterRhythm)
 
         proj_result = await self.db.execute(
             select(Project).where(Project.id == project_id)
@@ -102,8 +96,7 @@ class StoryCADRepository:
     async def sync_editor_data(self, project_id: uuid.UUID, changes: dict) -> int:
         has_changes = False
         for entity_type in ["acts", "chapters", "scenes", "edges", "characters",
-                            "character_relations", "themes", "theme_chapters",
-                            "rhythms"]:
+                            "character_relations"]:
             ops = changes.get(entity_type, {})
             if not ops:
                 continue

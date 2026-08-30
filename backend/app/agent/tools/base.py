@@ -151,14 +151,12 @@ class BaseTool(ABC):
         "Character": "角色（Character）不存在，请先调用 list_characters 获取可用的角色ID",
         "CharacterRelation": "角色关系（Relation）不存在，请先调用 list_relations 获取可用的关系ID",
         "ChapterEdge": "章节连线（Edge）不存在，请先调用 list_edges 获取可用的连线ID",
-        "Theme": "主题（Theme）不存在，请先查看项目结构概览中的主题列表",
         "Project": "项目（Project）不存在，请检查项目ID是否正确",
         "Act in project": "该项目中不存在此幕ID，请查看项目结构概览确认",
         "Chapter in project": "该项目中不存在此章节ID，请调用 list_chapters 确认",
         "Scene in project": "该项目中不存在此场景ID，请调用 list_scenes 确认",
         "Character in project": "该项目中不存在此角色ID，请调用 list_characters 确认",
         "Edge in project": "该项目中不存在此连线ID，请调用 list_edges 确认",
-        "Theme in project": "该项目中不存在此主题ID",
         "Relation in project": "该项目中不存在此关系ID，请调用 list_relations 确认",
     }
 
@@ -219,7 +217,6 @@ class BaseTool(ABC):
             "project_id": "项目ID由系统自动注入，通常无需显式传入",
             "edge_id": "必须！请先调用 list_edges 获取连线ID",
             "relation_id": "必须！请先调用 list_relations 获取关系ID",
-            "theme_id": "必须！请先查看项目结构概览中的主题列表获取主题ID",
             "source_id": "必须！请先调用 list_chapters 获取源章节ID",
             "target_id": "必须！请先调用 list_chapters 获取目标章节ID",
             "content": "必须提供场景正文内容",
@@ -236,7 +233,7 @@ class BaseTool(ABC):
             "expanded_text": "必须提供扩写后的完整段落",
             "compressed_text": "必须提供压缩后的文本",
             "style": "必须提供重写风格说明",
-            "edge_type": "必须提供连线类型（timeline/causal/foreshadow/character/theme）",
+            "edge_type": "必须提供连线类型（timeline/causal/foreshadow/character）",
         }
         correction_tools = {
             "chapter_id": "list_chapters",

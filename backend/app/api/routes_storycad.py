@@ -7,7 +7,6 @@ from app.project.service import ProjectService
 from app.storycad.repository import StoryCADRepository
 from app.storycad.models import (
     Scene, Chapter, Act, ChapterEdge, Character, CharacterRelation,
-    Theme, ThemeChapter, ChapterRhythm,
 )
 from app.storycad.entity_map import ENTITY_MAP
 
@@ -21,8 +20,6 @@ _ENTITY_FK_MAP = {
     Scene: {"chapter_id": Chapter},
     ChapterEdge: {"source_id": Chapter, "target_id": Chapter},
     CharacterRelation: {"character_id": Character, "target_id": Character},
-    ThemeChapter: {"theme_id": Theme, "chapter_id": Chapter},
-    ChapterRhythm: {"chapter_id": Chapter},
 }
 
 

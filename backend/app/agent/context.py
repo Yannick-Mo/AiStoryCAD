@@ -22,8 +22,6 @@ from app.storycad.models import (
     CharacterRelation,
     Scene,
     SceneContent,
-    Theme,
-    ThemeChapter,
 )
 from app.utils import row_to_dict
 
@@ -277,15 +275,6 @@ class ContextBuilder:
             )
             written_by_scene = {sc_id: True for (sc_id,) in sc_content_result.all()}
 
-        themes_by_chapter: dict[uuid.UUID, list[str]] = defaultdict(list)
-        tc_result = await self.db.execute(
-            select(ThemeChapter.chapter_id, Theme.name)
-            .join(Theme, Theme.id == ThemeChapter.theme_id)
-            .where(Theme.project_id == project_id)
-        )
-        for ch_id, theme_name in tc_result.all():
-            themes_by_chapter[ch_id].append(theme_name)
-
         acts_data = []
         for act in acts:
             chapters_data = []
@@ -297,7 +286,6 @@ class ContextBuilder:
                     scenes_data.append(sc_d)
                 ch_d = row_to_dict(ch)
                 ch_d["scenes"] = scenes_data
-                ch_d["themes"] = themes_by_chapter.get(ch.id, [])
                 chapters_data.append(ch_d)
             act_d = row_to_dict(act)
             act_d["chapters"] = chapters_data
@@ -313,11 +301,6 @@ class ContextBuilder:
         )
         relations_data = [row_to_dict(r) for r in rels_result.scalars().all()]
         relations_data = await self._decorate_relations(relations_data, project_id)
-
-        themes_result = await self.db.execute(
-            select(Theme).where(Theme.project_id == project_id).order_by(Theme.sort_order)
-        )
-        themes_data = [row_to_dict(t) for t in themes_result.scalars().all()]
 
         edges_result = await self.db.execute(
             select(ChapterEdge).where(ChapterEdge.project_id == project_id)
@@ -335,7 +318,6 @@ class ContextBuilder:
             "acts": acts_data,
             "characters": characters_data,
             "relations": relations_data,
-            "themes": themes_data,
             "edges": edges_data,
             "available_skills": available_skills,
             "rag_context": rag_context or "",
@@ -437,16 +419,6 @@ class ContextBuilder:
                 entry["appearance"] = c.appearance or ""
             characters_data.append(entry)
 
-        themes_result = await self.db.execute(
-            select(Theme).where(Theme.project_id == project_id).order_by(Theme.sort_order)
-        )
-        themes_data = []
-        for t in themes_result.scalars().all():
-            entry = {"name": t.name, "proposition": t.proposition or ""}
-            if depth == "framework":
-                entry["note"] = t.note or ""
-            themes_data.append(entry)
-
         available_skills = await self._get_available_skills()
 
         # Relations and edges — now included at all depths
@@ -479,7 +451,6 @@ class ContextBuilder:
             },
             "acts": acts_data,
             "characters": characters_data,
-            "themes": themes_data,
             "relations": relations_data,
             "edges": edges_data,
             "available_skills": available_skills,
@@ -509,7 +480,7 @@ class ContextBuilder:
 
         Returns only what a writing agent needs — no tool definitions,
         no safety rules, no session state. Includes the scene, its POV
-        character, related themes/edges, and continuity context.
+        character, related edges, and continuity context.
         """
         ctx: dict[str, Any] = {}
 
@@ -657,23 +628,6 @@ class ContextBuilder:
                     edge_lines.append(f"- {e.edge_type}: {src} → {tgt}")
                 ctx["related_edges"] = "\n".join(edge_lines)
 
-            # 8. Related themes (via ThemeChapter)
-            result = await self.db.execute(
-                select(ThemeChapter).where(ThemeChapter.chapter_id == chapter.id)
-            )
-            tc_links = result.scalars().all()
-            if tc_links:
-                theme_ids = [t.theme_id for t in tc_links]
-                result = await self.db.execute(
-                    select(Theme).where(Theme.id.in_(theme_ids))
-                )
-                themes = result.scalars().all()
-                theme_lines = []
-                for t in themes:
-                    prop = f" — {t.proposition}" if t.proposition else ""
-                    theme_lines.append(f"- {t.name}{prop}")
-                ctx["related_themes"] = "\n".join(theme_lines)
-
         # 9. Project info
         result = await self.db.execute(
             select(Project).where(Project.id == scene.project_id)
@@ -771,19 +725,6 @@ class ContextBuilder:
                 lines.append(f"  （还有 {len(chars) - len(lines)} 个角色略）")
                 break
             lines.append(block)
-        return "\n".join(lines)
-
-    async def _themes_text(self, project_id: uuid.UUID) -> str:
-        r = await self.db.execute(
-            select(Theme).where(Theme.project_id == project_id).order_by(Theme.sort_order)
-        )
-        themes = r.scalars().all()
-        if not themes:
-            return "暂无主题"
-        lines = []
-        for t in themes:
-            prop = f" — {t.proposition}" if t.proposition else ""
-            lines.append(f"- {t.name}{prop}")
         return "\n".join(lines)
 
     async def _relations_text(self, project_id: uuid.UUID) -> str:

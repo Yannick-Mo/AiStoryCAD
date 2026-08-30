@@ -13,7 +13,6 @@ STARTER_SYSTEM_PROMPT = """你是一个创意故事生成器。根据用户指�
 - premise: 核心设定（2-3句话）
 - protagonist: 主角原型描述（包括身份、性格特点）
 - opening_scene: 开篇场景（100-200字，中文）
-- themes: 可能主题（数组，每项10字以内）
 - tags: 标签（数组，每项5字以内）
 
 要求：

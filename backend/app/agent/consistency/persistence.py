@@ -67,17 +67,15 @@ async def content_stale_since(db: AsyncSession, project_id, since: datetime) -> 
         Act,
         Chapter,
         ChapterEdge,
-        ChapterRhythm,
         Character,
         CharacterRelation,
         Scene,
         SceneContent,
-        Theme,
     )
 
     models = (
         Act, Chapter, Scene, SceneContent, Character,
-        CharacterRelation, ChapterEdge, ChapterRhythm, Theme,
+        CharacterRelation, ChapterEdge,
     )
     for model in models:
         if not hasattr(model, "updated_at"):

@@ -89,16 +89,6 @@ def test_nested_read_full_project_extraction():
     assert label(reg, "scene", "s1") == "开场"
 
 
-def test_theme_without_id_is_skipped():
-    reg = build_id_registry([
-        result("read_project_overview", {
-            "themes": [{"name": "复仇"}, {"id": "t1", "name": "救赎"}],
-        }),
-    ])
-    assert len(reg["theme"]) == 1
-    assert label(reg, "theme", "t1") == "救赎"
-
-
 def test_flat_entity_tools_extraction():
     reg = build_id_registry([
         result("read_character", {"id": "c9", "name": "苏菲"}),

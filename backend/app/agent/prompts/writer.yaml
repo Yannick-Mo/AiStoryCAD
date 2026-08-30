@@ -57,11 +57,6 @@ system: |
   {% if tone %}- 风格：{{tone}}{% endif %}
   {% if global_settings %}- 世界观：{{global_settings}}{% endif %}
 
-  {% if related_themes %}
-  ## 关联主题
-  {{related_themes}}
-  {% endif %}
-
   {% if instructions %}
   ## 附加写作要求
   {{instructions}}

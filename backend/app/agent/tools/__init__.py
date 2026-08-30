@@ -26,7 +26,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
     )
-    from .analysis_tools import ConsistencyCheckTool, RhythmAnalyzeTool
+    from .analysis_tools import ConsistencyCheckTool
     from .analysis_v2_tools import AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool
     from .writing_tools import WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool
     from .knowledge_tools import SearchKnowledgeTool
@@ -38,10 +38,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         CreateProjectFromMaterialTool,
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
     )
-    from .theme_tools import (
-        CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
-        LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
-    )
     from .skill_tool import InvokeSkillTool
     from .writer_tool import CallWriterAgentTool, SyncSceneBlueprintTool
     from .word_count_tools import RecalcWordCountsTool
@@ -51,7 +47,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         ReadFullProjectTool, ReadProjectOverviewTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
-        ConsistencyCheckTool, RhythmAnalyzeTool,
+        ConsistencyCheckTool,
         AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
         WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool,
         SearchKnowledgeTool,
@@ -60,8 +56,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
         CreateProjectFromMaterialTool,
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
-        CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
-        LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
         InvokeSkillTool,
         CallWriterAgentTool,
         SyncSceneBlueprintTool,

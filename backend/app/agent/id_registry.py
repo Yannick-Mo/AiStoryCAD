@@ -37,7 +37,7 @@ STALE_WINDOW = 8       # a persisted entry expires after N unconfirmed versions
 # ── Entity type vocabulary ───────────────────────────────────────────────
 
 _ENTITY_TYPES: tuple[str, ...] = (
-    "act", "chapter", "scene", "character", "theme", "relation", "edge",
+    "act", "chapter", "scene", "character", "relation", "edge",
 )
 
 _TYPE_CN: dict[str, str] = {
@@ -45,7 +45,6 @@ _TYPE_CN: dict[str, str] = {
     "chapter": "章",
     "scene": "场景",
     "character": "角色",
-    "theme": "主题",
     "relation": "关系",
     "edge": "连线",
 }
@@ -56,7 +55,6 @@ _CONTAINER_TYPES: dict[str, str] = {
     "chapters": "chapter",
     "scenes": "scene",
     "characters": "character",
-    "themes": "theme",
     "relations": "relation",
     "edges": "edge",
 }
@@ -67,7 +65,6 @@ _LABEL_FIELDS: dict[str, tuple[str, ...]] = {
     "chapter": ("title",),
     "scene": ("title",),
     "character": ("name",),
-    "theme": ("name",),
     "relation": ("character_name", "target_name"),
     "edge": ("source_title", "target_title"),
 }
@@ -83,14 +80,12 @@ _FLAT_ENTITY_TOOL: dict[str, str] = {
     "create_scene": "scene",
     "create_chapter": "chapter",
     "create_act": "act",
-    "create_theme": "theme",
     "create_edge": "edge",
     "create_relation": "relation",
     "update_character": "character",
     "update_scene": "scene",
     "update_chapter": "chapter",
     "update_act": "act",
-    "update_theme": "theme",
     "update_edge": "edge",
     "update_relation": "relation",
 }
@@ -135,7 +130,6 @@ _DELETE_EVICTION: dict[str, list[tuple[str, str]]] = {
     ],
     "delete_relation": [("relation", "relation_id")],
     "delete_edge": [("edge", "deleted_edge_id")],
-    "delete_theme": [("theme", "theme_id")],
 }
 
 # Markers appended by streaming_executor._summarise_tool_output when a JSON

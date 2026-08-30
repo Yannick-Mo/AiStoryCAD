@@ -118,7 +118,6 @@ class TestFrameworkStructuralTruncation:
                 for i in range(4)
             ],
             "characters": [{"id": f"ch{i}", "name": f"角色{i}", "role": "protagonist"} for i in range(50)],
-            "themes": [{"name": f"主题{i}"} for i in range(20)],
             "relations": [{"character_name": "a", "target_name": "b", "label": "敌对"} for _ in range(30)],
             "edges": [{"source_title": "s", "target_title": "t", "edge_type": "causal"} for _ in range(30)],
         }

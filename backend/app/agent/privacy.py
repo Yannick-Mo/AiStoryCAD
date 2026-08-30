@@ -57,7 +57,6 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "call_writer_agent": "调用写作智能体",
     # Analysis
     "check_consistency": "检查一致性",
-    "analyze_rhythm": "分析节奏",
     "analyze_chapter": "分析章节",
     "analyze_character_arc": "分析角色弧",
     "suggest_next": "建议下一步",
@@ -73,13 +72,6 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "search_knowledge": "搜索知识库",
     "web_search": "联网搜索",
     "web_fetch": "读取网页",
-    # Theme
-    "create_theme": "创建主题",
-    "update_theme": "修改主题",
-    "delete_theme": "删除主题",
-    "link_theme_chapter": "关联主题-章节",
-    "unlink_theme_chapter": "取消关联主题-章节",
-    "set_chapter_rhythm": "设置章节节奏",
     # Internal / plans
     "cowriter_analysis": "内容分析",
     "plan_tools": "执行计划",

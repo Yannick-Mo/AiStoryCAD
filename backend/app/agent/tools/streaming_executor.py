@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Tools whose output is typically very long and should be summarized.
 _ANALYSIS_TOOL_NAMES: set[str] = {
     "analyze_chapter", "project_health", "check_consistency",
-    "analyze_rhythm", "suggest_next",
+    "suggest_next",
 }
 
 # Consistency reports are the one analysis output the LLM still needs to act
@@ -108,7 +108,7 @@ def _summarise_json_list(parsed: list, max_chars: int, tool_name: str) -> str:
             verbose_keys = {
                 "summary", "description", "notes", "setting", "content",
                 "motivation", "background", "personality", "appearance",
-                "outline", "rhythm", "beat", "goal", "style",
+                "outline", "beat", "goal", "style",
             }
             compressed = []
             for item in parsed:

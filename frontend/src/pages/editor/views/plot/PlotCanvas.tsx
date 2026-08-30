@@ -26,7 +26,6 @@ const EDGE_LABELS: Record<string, string> = {
   causal: '因果',
   foreshadow: '伏笔',
   character: '人物',
-  theme: '主题',
 }
 
 function nodeCenter(pos: { x: number; y: number }, w: number, h: number) {

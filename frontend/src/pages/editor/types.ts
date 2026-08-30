@@ -8,12 +8,10 @@ export interface ViewDef {
 export const VIEWS: ViewDef[] = [
   { id: 'narrative-plot', label: '情节', icon: '🎬' },
   { id: 'narrative-char', label: '人物', icon: '👥' },
-  { id: 'narrative-rhythm', label: '节奏', icon: '📈' },
-  { id: 'narrative-theme', label: '主题', icon: '🎭' },
 ]
 
 // Edge types
-export type EdgeType = 'timeline' | 'causal' | 'foreshadow' | 'character' | 'theme'
+export type EdgeType = 'timeline' | 'causal' | 'foreshadow' | 'character'
 
 export interface ChapterEdge {
   id: string
@@ -97,36 +95,12 @@ export interface Character {
   relations: CharacterRelation[]
 }
 
-export interface RhythmPoint {
-  id: string
-  chapterIndex: number
-  intensity: number
-  label: string
-  action: number
-  suspense: number
-  emotion: number
-  humor: number
-  chapterId: string
-}
-
-export interface ThemeItem {
-  id: string
-  name: string
-  color: string
-  proposition: string
-  chapterIndices: number[]
-  connections: string[]
-  note?: string
-}
-
 export interface EditorMockData {
   projectTitle: string
   acts: Act[]
   chapters: Chapter[]
   edges: ChapterEdge[]
   characters: Character[]
-  rhythms: RhythmPoint[]
-  themes: ThemeItem[]
   globalSettings: string
 }
 
@@ -146,10 +120,4 @@ export interface CharacterNodeData {
   name: string
   role: string
   relations: CharacterRelation[]
-}
-
-export interface ThemeNodeData {
-  name: string
-  color: string
-  connections: string[]
 }
