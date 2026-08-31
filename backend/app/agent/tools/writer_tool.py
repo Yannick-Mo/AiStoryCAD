@@ -82,6 +82,20 @@ class CallWriterAgentTool(BaseTool):
             # 2. 注入指令
             if instructions:
                 ctx["instructions"] = instructions
+
+            # 2b. 注入已激活技能的类型写作守则（active_skills 由主循环从会话
+            # 状态注入执行器，绝不信任 LLM 工具参数里传的值）
+            skill_names = kwargs.get("active_skills")
+            if skill_names:
+                try:
+                    from app.knowledge.skill_engine import _shared_engine as _skill_engine
+                    merged = await _skill_engine.get_merged_prompts(list(skill_names))
+                    writing_guidance = (merged or {}).get("writing", "")
+                    if writing_guidance:
+                        ctx["skill_writing_guidance"] = writing_guidance
+                except Exception as exc:
+                    logger.warning("Failed to load skill writing guidance: %s", exc)
+
             ctx["action"] = action
 
             # 3. 调用写作智能体

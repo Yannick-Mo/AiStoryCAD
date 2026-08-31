@@ -835,6 +835,7 @@ async def autonomous_loop(
                             filtered_tools, db,
                             project_id=state.project_id,
                             user_id=state.user_id,
+                            active_skills=state.active_skills,
                         ).execute_tool(tool_name, args, tool_use_id)
                     except Exception as exc:
                         result = {"tool": tool_name, "success": False, "error": str(exc)}
@@ -919,6 +920,7 @@ async def autonomous_loop(
             filtered_tools, db,
             project_id=state.project_id,
             user_id=state.user_id,
+            active_skills=state.active_skills,
         )
         tool_blocks: list[tuple[str, dict, str]] = []
         # Preserve the original ToolCall objects so the assistant message

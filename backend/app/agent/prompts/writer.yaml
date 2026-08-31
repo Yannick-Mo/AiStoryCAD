@@ -62,6 +62,11 @@ system: |
   {{instructions}}
   {% endif %}
 
+  {% if skill_writing_guidance %}
+  ## 类型写作守则（必须遵循，优先级高于通用写作原则）
+  {{skill_writing_guidance}}
+  {% endif %}
+
   # ——— 写作原则 ———
 
   ## 蓝图纪律（最高优先级）

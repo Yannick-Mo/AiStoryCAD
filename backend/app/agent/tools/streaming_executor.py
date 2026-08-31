@@ -252,11 +252,12 @@ class StreamingToolExecutor:
     """
 
     def __init__(self, tools: dict[str, BaseTool], db: Any = None,
-                 project_id: str = "", user_id: str = "") -> None:
+                 project_id: str = "", user_id: str = "", active_skills: list | None = None) -> None:
         self._tools = tools
         self._db = db
         self._project_id = project_id
         self._user_id = user_id
+        self._active_skills = list(active_skills) if active_skills else None
 
         # Serialise SAFE tool access — AsyncSession is not coroutine-safe
         self._safe_lock = asyncio.Lock()
@@ -507,6 +508,8 @@ class StreamingToolExecutor:
             merged["project_id"] = str(self._project_id)
         if self._user_id:
             merged["user_id"] = str(self._user_id)
+        if self._active_skills:
+            merged["active_skills"] = list(self._active_skills)
 
         timeout = tool._effective_timeout if tool._effective_timeout else 30
         uses_own_session = bool(getattr(tool, "_uses_own_session", False))
