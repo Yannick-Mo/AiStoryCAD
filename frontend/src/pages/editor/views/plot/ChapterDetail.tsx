@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { Chapter, Scene } from '../../types'
 import { loadSceneContent } from '../../../../api/editor'
 import { useToast } from '../../components/Toast'
@@ -9,6 +9,7 @@ interface ChapterDetailProps {
   onSceneSave: (chapterId: string, sceneId: string, content: string) => void
   onChapterSave: (chapterId: string, goal: string) => void
   onOpenSceneEditor?: (scene: Scene) => void
+  onOpenGoalFullscreen?: (chapter: Chapter) => void
   onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'status'>>) => void
   onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
   onAddScene: (chapterId: string) => Scene
@@ -23,13 +24,13 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
+export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor, onOpenGoalFullscreen, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editGoal, setEditGoal] = useState('')
   const [saving, setSaving] = useState(false)
   const [contentCache, setContentCache] = useState<Record<string, string>>({})
-  const [showGoalFullscreen, setShowGoalFullscreen] = useState(false)
+  const goalInputRef = useRef<HTMLTextAreaElement>(null)
   const { addToast } = useToast()
 
   useEffect(() => {
@@ -46,6 +47,15 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
   useEffect(() => {
     setEditGoal(chapter?.goal ?? '')
   }, [chapter?.id])
+
+  // When the chapter goal changes from outside (e.g. fullscreen editor saved),
+  // refresh the local textarea unless the user is currently typing in it.
+  useEffect(() => {
+    if (!chapter) return
+    if (document.activeElement !== goalInputRef.current) {
+      setEditGoal(chapter.goal ?? '')
+    }
+  }, [chapter?.goal])
 
   if (!chapter) return null
 
@@ -116,16 +126,34 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         {/* Goal section */}
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
-          <div className="text-[10px] text-gray-500 mb-1.5">📝 本章目标</div>
-          <div
-            onClick={() => editGoal && setShowGoalFullscreen(true)}
-            className={`w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 leading-relaxed whitespace-pre-wrap ${
-              editGoal ? 'cursor-pointer hover:border-amber-600/50 transition-colors' : ''
-            }`}
-            style={{ minHeight: '4.5rem' }}
-          >
-            {editGoal || <span className="text-gray-600">点击添加本章目标...</span>}
+          <div className="flex items-center justify-between mb-1.5">
+            <button
+              onClick={() => onOpenGoalFullscreen?.(chapter)}
+              className="text-[10px] text-gray-400 hover:text-amber-300 transition-colors flex items-center gap-1 group cursor-pointer"
+              title="全屏查看 / 编辑本章目标"
+            >
+              <span>📝 本章目标</span>
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px]">⛶ 全屏</span>
+            </button>
+            {editGoal && (
+              <button
+                onClick={() => onOpenGoalFullscreen?.(chapter)}
+                className="text-[9px] text-gray-600 hover:text-amber-400 transition-colors shrink-0"
+                title="全屏查看 / 编辑本章目标"
+              >
+                {editGoal.length} 字 ↗
+              </button>
+            )}
           </div>
+          <textarea
+            ref={goalInputRef}
+            value={editGoal}
+            onChange={e => setEditGoal(e.target.value)}
+            onBlur={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal) }}
+            placeholder="写一段话概括本章要完成什么..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+            rows={3}
+          />
         </section>
 
         {/* Scenes section */}
@@ -259,48 +287,6 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
           </button>
         </section>
       </div>
-
-      {/* Goal Fullscreen Modal */}
-      {showGoalFullscreen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-8"
-          onClick={() => setShowGoalFullscreen(false)}
-        >
-          <div
-            className="w-full max-w-3xl max-h-full overflow-y-auto bg-gray-900 border border-gray-700 rounded-2xl p-8 shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-amber-100">{chapter.title} — 章节目标</h2>
-              <button
-                onClick={() => setShowGoalFullscreen(false)}
-                className="text-gray-500 hover:text-white text-xl leading-none"
-              >✕</button>
-            </div>
-            <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-              {editGoal}
-            </div>
-            <div className="mt-6 pt-4 border-t border-gray-800">
-              <textarea
-                value={editGoal}
-                onChange={e => setEditGoal(e.target.value)}
-                onBlur={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal) }}
-                placeholder="编辑本章目标..."
-                className="w-full bg-gray-950 border border-gray-700 rounded-lg p-3 text-sm text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
-                rows={6}
-              />
-              <div className="flex justify-end mt-3">
-                <button
-                  onClick={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal); setShowGoalFullscreen(false) }}
-                  className="px-4 py-2 rounded-lg bg-amber-600 text-black text-sm font-medium hover:bg-amber-500 transition-colors"
-                >
-                  保存并关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
