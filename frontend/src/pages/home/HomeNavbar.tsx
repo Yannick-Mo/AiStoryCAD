@@ -23,9 +23,7 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick,
   return (
     <nav className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur-xl border-b border-gray-800 px-6 h-14 flex items-center gap-4">
       <a href="/" className="flex items-center gap-2 text-blue-400 font-bold text-lg no-underline shrink-0 hover:opacity-85 transition-opacity">
-        <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-          <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5zm0 2.18l7 3.5v6.72c0 4.17-2.69 8.08-7 9.08-4.31-1-7-4.91-7-9.08V7.68l7-3.5z"/>
-        </svg>
+        <img src="/logo.png" alt="AiStoryCAD" className="w-6 h-6 rounded" />
         AiStoryCAD
       </a>
       <div className="relative flex-1 max-w-xs ml-auto">
