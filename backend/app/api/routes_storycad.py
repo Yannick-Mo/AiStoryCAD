@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
 from app.project.service import ProjectService
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.storycad.models import (
     Scene, Chapter, Act, ChapterEdge, Character, CharacterRelation,
 )
@@ -54,8 +54,8 @@ async def _validate_fk_targets(db: AsyncSession, model_class: type, payload: dic
             raise HTTPException(status_code=400, detail=f"无效的 {column_name}（不属于当前项目）")
 
 
-async def _get_repo(db: AsyncSession) -> StoryCADRepository:
-    return StoryCADRepository(db)
+async def _get_repo(db: AsyncSession) -> AiStoryCADRepository:
+    return AiStoryCADRepository(db)
 
 
 # ============================================================

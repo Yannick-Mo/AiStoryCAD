@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Character, CharacterRelation
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.utils import row_to_dict
 
 
@@ -24,7 +24,7 @@ class ListCharactersTool(BaseTool):
         try:
             pid = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, pid, kwargs.get("user_id"))
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             characters = await repo.list_entities(Character, pid)
             relations_result = await db.execute(
                 select(CharacterRelation).where(CharacterRelation.project_id == pid)
@@ -100,7 +100,7 @@ class CreateCharacterTool(BaseTool):
                 return self._missing_param("name")
             pid = uuid.UUID(pid_val)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             existing = await db.execute(
                 select(Character).where(
                     Character.project_id == pid,
@@ -243,7 +243,7 @@ class UpdateCharacterTool(BaseTool):
             if not char_obj:
                 return self._not_found("Character")
             await verify_project_owner(db, char_obj.project_id, kwargs.get("user_id"))
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             data = {"id": str(char_id)}
             for field in ("name", "role", "personality", "appearance", "background", "motivation"):
                 if field in kwargs:
@@ -291,7 +291,7 @@ class CreateRelationTool(BaseTool):
             tgt = await db.get(Character, tgt_id)
             if not tgt or tgt.project_id != pid:
                 return self._not_found("Character in project")
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             data = {
                 "project_id": str(pid),
                 "character_id": str(char_id),
@@ -341,7 +341,7 @@ class UpdateRelationTool(BaseTool):
                 return self._not_found("CharacterRelation")
             if rel.project_id != pid:
                 return self._permission_denied("角色关系")
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             data = {"id": str(relation_id)}
             for field in ("rel_type", "label", "description", "trust", "threat", "attraction"):
                 if field in kwargs:

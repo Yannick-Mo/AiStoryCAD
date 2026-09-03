@@ -3,7 +3,7 @@ from sqlalchemy import select
 from app.mcp.server import mcp
 from app.database import async_session
 from app.storycad.models import Character, CharacterRelation
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.utils import row_to_dict
 from app.mcp.auth import get_current_user_mcp, verify_project_ownership
 
@@ -21,7 +21,7 @@ async def list_characters(token: str, project_id: str) -> dict:
     async with async_session() as db:
         user = await get_current_user_mcp(token, db)
         await verify_project_ownership(project_id, user["id"], db)
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         characters = await repo.list_entities(Character, project_id)
         relations_result = await db.execute(
             select(CharacterRelation).where(CharacterRelation.project_id == project_id)
@@ -45,7 +45,7 @@ async def create_character(
     async with async_session() as db:
         user = await get_current_user_mcp(token, db)
         await verify_project_ownership(project_id, user["id"], db)
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         data = {
             "project_id": project_id,
             "name": name,
@@ -83,7 +83,7 @@ async def update_character(
         if not character:
             raise ValueError(f"Character {character_id} not found")
         await verify_project_ownership(str(character.project_id), user["id"], db)
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         data = {"id": character_id}
         for field in ("name", "role", "personality", "appearance", "background", "motivation"):
             val = locals()[field]
@@ -119,7 +119,7 @@ async def update_relation(
     async with async_session() as db:
         user = await get_current_user_mcp(token, db)
         await verify_project_ownership(project_id, user["id"], db)
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         if relation_id:
             # 安全：按 ID 直接更新前必须确认关系属于当前项目，防止跨租户改他人关系。
             rel_result = await db.execute(

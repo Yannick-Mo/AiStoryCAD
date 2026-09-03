@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterRelation, Scene, SceneContent
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.project_creator.state import MaterialState
 from app.utils import row_to_dict
@@ -40,7 +40,7 @@ class CreateActTool(BaseTool):
             max_order = result.scalar() or -1
             sort_order = max_order + 1
 
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             created = await repo.create_entity(Act, {
                 "project_id": str(project_id),
                 "name": kwargs.get("name", "新幕"),
@@ -90,7 +90,7 @@ class CreateChapterTool(BaseTool):
             max_order = result.scalar() or -1
             sort_order = max_order + 1
 
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             created = await repo.create_entity(Chapter, {
                 "project_id": str(project_id),
                 "act_id": str(act_id),
@@ -541,7 +541,7 @@ class CreateEdgeTool(BaseTool):
                 if err:
                     return ToolResult(success=False, error=err)
 
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             created = await repo.create_entity(ChapterEdge, {
                 "project_id": str(project_id),
                 "source_id": str(src_id),
@@ -646,8 +646,8 @@ class DeleteEdgeTool(BaseTool):
 
 
 async def _recalc_chapter_counts(db: AsyncSession, project_id: uuid.UUID) -> None:
-    from app.storycad.repository import StoryCADRepository
-    await StoryCADRepository(db)._recalc_chapter_counts(project_id)
+    from app.storycad.repository import AiStoryCADRepository
+    await AiStoryCADRepository(db)._recalc_chapter_counts(project_id)
 
 
 async def _write_new_project(
@@ -656,7 +656,7 @@ async def _write_new_project(
     owner_id: uuid.UUID,
     do_commit: bool = True,
 ) -> uuid.UUID:
-    repo = StoryCADRepository(db)
+    repo = AiStoryCADRepository(db)
     project_title = state.get("project_title", "未命名项目")
     project = Project(
         title=project_title[:255],

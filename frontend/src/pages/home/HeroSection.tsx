@@ -5,7 +5,7 @@ export default function HeroSection() {
   return (
     <section className="pt-8 pb-4">
       <h1 className="text-2xl font-bold text-gray-100 flex items-center gap-2">
-        {greeting}，StoryCAD 用户
+        {greeting}，AiStoryCAD 用户
         <span className="inline-block animate-wave text-2xl origin-[70%_70%]">👋</span>
       </h1>
       <p className="text-sm text-gray-400 mt-0.5">你的故事结构设计中心——让每一个灵感，都变成坚实的长篇蓝图。</p>

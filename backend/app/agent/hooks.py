@@ -4,7 +4,7 @@ After each turn completes (tools executed or response generated), hooks
 run for bookkeeping: state tracking, resource cleanup, usage logging.
 
 Inspired by Claude Code's ``stopHooks.ts``, but simplified — only the
-hooks that make sense for StoryCAD's use case.
+hooks that make sense for AiStoryCAD's use case.
 
 Usage::
 

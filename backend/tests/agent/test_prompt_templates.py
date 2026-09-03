@@ -293,7 +293,7 @@ class TestSystemPromptContent:
     def test_chat_identity_contains_chinese_persona(self):
         """Identity section is now inline Chinese persona, not a file reference."""
         base = self._build_base(["identity"])
-        assert "StoryCAD AI" in base
+        assert "AiStoryCAD AI" in base
         assert "资深中文小说编辑" in base
         assert "角色驱动叙事" in base
 
@@ -320,7 +320,7 @@ class TestSystemPromptContent:
         # references persona.yaml, and prohibited_behaviors is cleaned up.
         # Those two things are tested above.
         # Verify the identity section is usable as a standalone base.
-        assert "StoryCAD AI" in identity
+        assert "AiStoryCAD AI" in identity
 
     def test_cowriter_no_do_not_write_scene_content(self):
         """The old universal 'Do NOT write scene content' is removed from

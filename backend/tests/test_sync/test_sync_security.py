@@ -4,7 +4,7 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.storycad.repository import StoryCADRepository, CREATE_PROTECTED
+from app.storycad.repository import AiStoryCADRepository, CREATE_PROTECTED
 from app.project.repository import ProjectRepository
 from app.storycad.models import Act, Chapter, Scene, SceneContent
 
@@ -14,9 +14,9 @@ pytestmark = pytest.mark.asyncio
 
 async def _create_own_project(
     db_session: AsyncSession, test_user: dict,
-) -> tuple[StoryCADRepository, object, str, str, str]:
+) -> tuple[AiStoryCADRepository, object, str, str, str]:
     """Create a project with one act/chapter/scene; return (repo, project, act_id, chapter_id, scene_id)."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
     project = await project_repo.create("OWN Project", "", test_user["id"])
     act_id = str(uuid.uuid4())
@@ -33,9 +33,9 @@ async def _create_own_project(
 
 async def _create_foreign_project(
     db_session: AsyncSession, test_user: dict,
-) -> tuple[StoryCADRepository, object, str, str, str]:
+) -> tuple[AiStoryCADRepository, object, str, str, str]:
     """Create a second project with one act/chapter/scene."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
     project = await project_repo.create("FOREIGN Project", "", test_user["id"])
     act_id = str(uuid.uuid4())
@@ -52,9 +52,9 @@ async def _create_foreign_project(
 
 async def _create_simple_project(
     db_session: AsyncSession, test_user: dict,
-) -> tuple[StoryCADRepository, object, str]:
+) -> tuple[AiStoryCADRepository, object, str]:
     """Minimal project with one act (no chapter/scene) for field-filter tests."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
     project = await project_repo.create("Test Project", "", test_user["id"])
     act_id = str(uuid.uuid4())

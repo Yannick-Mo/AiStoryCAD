@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, Scene, SceneContent
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.project.repository import ProjectRepository
 from app.utils import row_to_dict
 
@@ -152,7 +152,7 @@ class CreateSceneTool(BaseTool):
             chapter = await db.get(Chapter, ch_id)
             if chapter is None or chapter.project_id != pid:
                 return ToolResult(success=False, error="章节不存在或不属于该项目")
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             scene_data = {
                 "project_id": str(pid),
                 "chapter_id": str(ch_id),
@@ -206,7 +206,7 @@ class UpdateSceneTool(BaseTool):
             scene_result = await db.get(Scene, sc_id)
             if scene_result:
                 await verify_project_owner(db, scene_result.project_id, kwargs.get("user_id"))
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             update_data = {"id": str(sc_id)}
             for field in ("title", "summary", "pov_character", "setting", "scene_time"):
                 if field in kwargs:

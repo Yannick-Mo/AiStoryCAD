@@ -58,7 +58,7 @@ def _load_cowriter_persona() -> str:
 def _load_persona() -> str:
     """Render the persona prompt via the shared prompt loader (single source of truth)."""
     from app.agent.prompts import render_prompt
-    return render_prompt("persona") or "You are StoryCAD AI, a creative writing assistant."
+    return render_prompt("persona") or "You are AiStoryCAD AI, a creative writing assistant."
 
 
 # ── Context trimming ───────────────────────────────────────────────────

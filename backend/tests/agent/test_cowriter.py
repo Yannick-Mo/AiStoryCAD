@@ -10,9 +10,9 @@ class TestSystemPromptBuilder:
     def test_basic_static_sections_include_identity(self):
         builder = get_prompt_builder()
         prompt = builder.build(["identity", "output_style"])
-        # The identity section should mention StoryCAD or similar
+        # The identity section should mention AiStoryCAD or similar
         assert len(prompt) > 50
-        assert "StoryCAD" in prompt or "故事" in prompt or "小说" in prompt
+        assert "AiStoryCAD" in prompt or "故事" in prompt or "小说" in prompt
 
     def test_tool_usage_section(self):
         builder = get_prompt_builder()
@@ -22,7 +22,7 @@ class TestSystemPromptBuilder:
     def test_unknown_section_is_skipped(self):
         builder = get_prompt_builder()
         prompt = builder.build(["identity", "nonexistent_section_xyz"])
-        assert "StoryCAD" in prompt or "故事" in prompt or "小说" in prompt
+        assert "AiStoryCAD" in prompt or "故事" in prompt or "小说" in prompt
 
     def test_empty_sections_list(self):
         builder = get_prompt_builder()

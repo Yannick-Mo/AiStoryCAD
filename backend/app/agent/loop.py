@@ -1282,7 +1282,7 @@ async def autonomous_loop(
             from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
             mode_decl = MODE_DECLARATION_COWRITER if gen_state.get("mode") == "cowriter" else MODE_DECLARATION_CHAT
             sys_content = (
-                f"你是 StoryCAD AI，一位经验丰富的中文小说编辑和创作助手。\n"
+                f"你是 AiStoryCAD AI，一位经验丰富的中文小说编辑和创作助手。\n"
                 f"当前项目：{proj_name or '未命名'}\n"
                 f"{mode_decl}\n"
                 f"请根据对话历史，用中文回复用户。"
