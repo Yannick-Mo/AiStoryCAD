@@ -2,7 +2,7 @@
 import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.project.repository import ProjectRepository
 
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.asyncio
 
 async def test_sync_creates_act(db_session: AsyncSession, test_user: dict):
     """Creating an act via sync should persist it and return a version bump."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
     project = await project_repo.create("Test Project", "", test_user["id"])
@@ -35,7 +35,7 @@ async def test_sync_creates_act(db_session: AsyncSession, test_user: dict):
 
 async def test_sync_creates_chapter_under_act(db_session: AsyncSession, test_user: dict):
     """Chapters should link to acts correctly through sync."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
     project = await project_repo.create("Test Project", "", test_user["id"])
@@ -57,7 +57,7 @@ async def test_sync_creates_chapter_under_act(db_session: AsyncSession, test_use
 
 async def test_sync_deletes_act_cascades_chapters(db_session: AsyncSession, test_user: dict):
     """Deleting an act should cascade-delete its chapters (CASCADE FK fix)."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
     project = await project_repo.create("Test Project", "", test_user["id"])
@@ -82,7 +82,7 @@ async def test_sync_deletes_act_cascades_chapters(db_session: AsyncSession, test
 
 async def test_sync_updates_global_settings(db_session: AsyncSession, test_user: dict):
     """Saving global settings should persist to the project row."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
     project = await project_repo.create("Test Project", "", test_user["id"])
@@ -98,7 +98,7 @@ async def test_sync_updates_global_settings(db_session: AsyncSession, test_user:
 
 async def test_sync_recalculates_chapter_word_count(db_session: AsyncSession, test_user: dict):
     """After scene operations, chapter word_count should be recalculated."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
 
     project = await project_repo.create("Test Project", "", test_user["id"])

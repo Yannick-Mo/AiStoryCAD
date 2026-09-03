@@ -3,7 +3,7 @@ from sqlalchemy import select, func
 from app.mcp.server import mcp
 from app.database import async_session
 from app.storycad.models import Chapter, Scene, SceneContent
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.utils import row_to_dict
 from app.mcp.auth import get_current_user_mcp, verify_project_ownership
 
@@ -72,7 +72,7 @@ async def create_scene(
         chapter = chapter_result.scalar_one_or_none()
         if chapter is None or str(chapter.project_id) != str(project_id):
             raise ValueError("章节不属于该项目")
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         scene_data = {
             "project_id": project_id,
             "chapter_id": chapter_id,
@@ -121,7 +121,7 @@ async def update_scene(
         if not scene:
             raise ValueError(f"Scene {scene_id} not found")
         await verify_project_ownership(str(scene.project_id), user["id"], db)
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         update_data = {"id": scene_id}
         for field in ("title", "summary", "pov_character", "setting", "scene_time"):
             val = locals()[field]
@@ -182,7 +182,7 @@ async def recalc_project_word_counts(token: str, project_id: str) -> dict:
             if content_row:
                 updated += 1
 
-        repo = StoryCADRepository(db)
+        repo = AiStoryCADRepository(db)
         await repo._recalc_chapter_counts(pid)
 
         chapters_result = await db.execute(

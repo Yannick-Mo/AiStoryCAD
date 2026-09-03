@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.project.repository import ProjectRepository
 from app.storycad.models import Chapter, Scene
 
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.asyncio
 
 async def _setup(db_session: AsyncSession, test_user: dict):
     """Create a project with one act/chapter/scene; return (repo, project, chapter_id, scene_id)."""
-    repo = StoryCADRepository(db_session)
+    repo = AiStoryCADRepository(db_session)
     project_repo = ProjectRepository(db_session)
     project = await project_repo.create("Test Project", "", test_user["id"])
     act_id = str(uuid.uuid4())

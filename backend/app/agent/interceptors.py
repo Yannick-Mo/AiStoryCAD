@@ -6,7 +6,7 @@ execution:
 1. **Mode Gate** — chat mode blocks write tools
 2. **Confirmation Gate** — destructive/needs-confirmation tools require user approval
 
-Inspired by Claude Code's permission system but adapted for StoryCAD's
+Inspired by Claude Code's permission system but adapted for AiStoryCAD's
 domain: chat safety and write confirmation.
 """
 

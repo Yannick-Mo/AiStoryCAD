@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Theme, ThemeChapter, Chapter
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.utils import row_to_dict
 
 
@@ -31,7 +31,7 @@ class CreateThemeTool(BaseTool):
         try:
             pid = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, pid, kwargs.get("user_id"))
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             data = {
                 "project_id": str(pid),
                 "name": kwargs["name"],
@@ -74,7 +74,7 @@ class UpdateThemeTool(BaseTool):
             if not theme:
                 return self._not_found("Theme")
             await verify_project_owner(db, theme.project_id, kwargs.get("user_id"))
-            repo = StoryCADRepository(db)
+            repo = AiStoryCADRepository(db)
             data = {"id": str(theme_id)}
             for field in ("name", "proposition", "note", "color"):
                 if field in kwargs:

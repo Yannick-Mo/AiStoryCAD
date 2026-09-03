@@ -198,7 +198,7 @@ async def _search_duckduckgo(
                 "https://lite.duckduckgo.com/lite/",
                 data={"q": query},
                 headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; StoryCAD/1.0)",
+                    "User-Agent": "Mozilla/5.0 (compatible; AiStoryCAD/1.0)",
                     "Accept": "text/html",
                 },
             )

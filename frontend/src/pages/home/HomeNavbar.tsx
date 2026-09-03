@@ -48,7 +48,7 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
           <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5zm0 2.18l7 3.5v6.72c0 4.17-2.69 8.08-7 9.08-4.31-1-7-4.91-7-9.08V7.68l7-3.5z"/>
         </svg>
-        StoryCAD
+        AiStoryCAD
       </a>
       <div className="relative flex-1 max-w-xs ml-auto">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />

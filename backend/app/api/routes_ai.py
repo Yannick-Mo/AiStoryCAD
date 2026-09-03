@@ -15,7 +15,7 @@ from app.agent.project_creator.state import MaterialState
 from app.llm.client import get_shared_client
 from app.llm.types import Message
 from app.storycad.entity_map import ENTITY_MAP
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.storycad.models import Scene
 
 
@@ -276,7 +276,7 @@ def _make_preview(node_name: str, output: dict) -> str:
 
 
 async def _write_project_to_db(db: AsyncSession, state: dict, owner_id: uuid.UUID) -> uuid.UUID:
-    repo = StoryCADRepository(db)
+    repo = AiStoryCADRepository(db)
 
     project = Project(title=state.get("project_title", "未命名"), description="", owner_id=owner_id)
     db.add(project)

@@ -54,7 +54,7 @@ ENTITY_FK_MAP = {
 }
 
 
-class StoryCADRepository:
+class AiStoryCADRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 

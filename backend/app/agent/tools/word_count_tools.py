@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Chapter, Scene, SceneContent
-from app.storycad.repository import StoryCADRepository
+from app.storycad.repository import AiStoryCADRepository
 from app.agent.utils import count_words
 
 
@@ -54,7 +54,7 @@ class RecalcWordCountsTool(BaseTool):
                 if content_row:
                     updated += 1
 
-            await StoryCADRepository(db)._recalc_chapter_counts(pid)
+            await AiStoryCADRepository(db)._recalc_chapter_counts(pid)
 
             chapters_result = await db.execute(
                 select(Chapter.id, Chapter.title, func.coalesce(Chapter.total_words, 0))

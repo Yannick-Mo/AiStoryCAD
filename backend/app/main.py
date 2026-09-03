@@ -76,7 +76,7 @@ async def _audit_loop(worker):
             logging.getLogger(__name__).exception("consistency audit failed")
 
 
-app = FastAPI(title="StoryCAD", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AiStoryCAD", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

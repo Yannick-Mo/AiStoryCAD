@@ -1,9 +1,9 @@
-# SearXNG configuration for StoryCAD
+# SearXNG configuration for AiStoryCAD
 # See https://docs.searxng.org/admin/settings/settings.yml.html
 
 use_default_settings: true
 general:
-  instance_name: "StoryCAD Search"
+  instance_name: "AiStoryCAD Search"
   privacypolicy_url: false
   contact_url: false
   enable_metrics: false
@@ -66,7 +66,7 @@ outgoing:
   request_timeout: 10.0
   max_request_timeout: 15.0
   useragent_suffix: ""
-  # If StoryCAD has a proxy configured, SearXNG will respect HTTP_PROXY/HTTPS_PROXY env vars
+  # If AiStoryCAD has a proxy configured, SearXNG will respect HTTP_PROXY/HTTPS_PROXY env vars
   # proxies:
   #   all://:
   #     - http://proxy:port
