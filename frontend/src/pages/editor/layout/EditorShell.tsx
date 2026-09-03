@@ -13,6 +13,7 @@ import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import ChapterGoalModal from '../modals/ChapterGoalModal'
+import SceneGoalModal from '../modals/SceneGoalModal'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
 import AiPanel from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
@@ -36,6 +37,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
   const [editingScene, setEditingScene] = useState<Scene | null>(null)
   const [goalFullscreen, setGoalFullscreen] = useState(false)
+  const [sceneGoalOpen, setSceneGoalOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter' | 'scene'; id: string; chapterId?: string } | null>(null)
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
@@ -88,6 +90,14 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const handleChapterGoalSave = useCallback((chapterId: string, goal: string) => {
     store.updateChapter(chapterId, { goal })
     setSelectedChapter(prev => (prev && prev.id === chapterId ? { ...prev, goal } : prev))
+  }, [store])
+
+  const handleSceneGoalSave = useCallback((sceneId: string, summary: string) => {
+    const chapter = store.data?.chapters.find(c => c.scenes.some(s => s.id === sceneId))
+    if (chapter) {
+      store.updateScene(chapter.id, sceneId, { summary })
+      setEditingScene(prev => (prev && prev.id === sceneId ? { ...prev, summary } : prev))
+    }
   }, [store])
 
   const handleOpenAiPanel = useCallback((contextView: string, contextId?: string) => {
@@ -448,6 +458,17 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onClose={() => setEditingScene(null)}
             onSaved={handleSceneSaved}
             onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
+            onOpenGoalFullscreen={() => setSceneGoalOpen(true)}
+          />
+        )}
+
+        {sceneGoalOpen && editingScene && (
+          <SceneGoalModal
+            scene={editingScene}
+            onSave={async (summary: string) => {
+              handleSceneGoalSave(editingScene.id, summary)
+            }}
+            onClose={() => setSceneGoalOpen(false)}
           />
         )}
 

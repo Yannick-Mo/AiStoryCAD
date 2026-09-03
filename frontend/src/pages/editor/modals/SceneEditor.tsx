@@ -10,9 +10,10 @@ interface SceneEditorProps {
   onClose: () => void
   onSaved: (sceneId: string, content: string, wordCount: number) => void
   onOpenAiPanel?: (contextView: string, contextId: string) => void
+  onOpenGoalFullscreen?: () => void
 }
 
-export default function SceneEditor({ projectId, scene, chapterTitle, onClose, onSaved, onOpenAiPanel }: SceneEditorProps) {
+export default function SceneEditor({ projectId, scene, chapterTitle, onClose, onSaved, onOpenAiPanel, onOpenGoalFullscreen }: SceneEditorProps) {
   const { addToast } = useToast()
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
@@ -227,6 +228,13 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           </div>
           <div className="flex gap-2 items-center">
             <button
+              onClick={onOpenGoalFullscreen}
+              className="px-2 py-1 rounded-lg text-xs bg-gray-800/80 text-amber-400/90 hover:bg-amber-700/40 hover:text-amber-300 transition-colors"
+              title="全屏编辑场景目标 / 创作蓝图"
+            >
+              🎯 场景目标
+            </button>
+            <button
               onClick={handleOpenAiPanel}
               className="px-2 py-1 rounded-lg text-xs bg-amber-700/30 text-amber-400 hover:bg-amber-700/50 transition-colors"
               title="打开 AI 助手"
@@ -240,7 +248,14 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           <span>🎭 {scene.povCharacter}</span>
           <span>📍 {scene.setting}</span>
           <span>⏰ {scene.time}</span>
-          <span className="italic text-gray-600">—— {scene.summary}</span>
+          <button
+            onClick={onOpenGoalFullscreen}
+            className="flex items-center gap-1.5 italic text-gray-600 hover:text-amber-300 transition-colors group cursor-pointer"
+            title="全屏编辑场景目标 / 创作蓝图"
+          >
+            <span>📝 {scene.summary ? (scene.summary.length > 48 ? scene.summary.slice(0, 48) + '…' : scene.summary) : '写场景目标：开场状态 → 冲突 → 目标达成'}</span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px] shrink-0">⛶ 全屏</span>
+          </button>
         </div>
 
         {selectionToolbar && (
