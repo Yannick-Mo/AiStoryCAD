@@ -3,9 +3,9 @@
    200-char digest.
 2. read_chapter's scenes array keeps ALL entries (ID-list semantics), so a
    chapter with 30 scenes no longer silently returns 3.
-3. read_scene_content / read_global_settings clamp a single page to the safe
-   ceiling and report content_has_more truthfully (no "200 chars but says
-   finished").
+3. Body/settings reads return the FULL text by default (single-result ceiling
+   ~100k chars); pagination only kicks in beyond that — no "200 chars but says
+   finished".
 4. read_scene written flag follows word_count (single definition).
 """
 import json
@@ -77,11 +77,10 @@ def _db_with(project_row, scene_row=None, content_row=None):
 
 
 class TestSinglePageClamp:
-    async def test_scene_content_zero_limit_clamped_not_collapsed(self):
+    async def test_scene_content_default_reads_whole_body(self):
         pid = uuid.uuid4()
         sc_id = uuid.uuid4()
         body = "字" * 30000
-        proj = SimpleNamespace(id=pid, title="T", global_settings="")
         scene = SimpleNamespace(id=sc_id, project_id=pid, title="场",
                                 word_count=0)
         content = SimpleNamespace(scene_id=sc_id, content=body)
@@ -92,28 +91,13 @@ class TestSinglePageClamp:
             _Q(scalars=[content]),                                # select SceneContent
         ])
         res = await ReadSceneContentTool().run(
-            db, project_id=str(pid), user_id="u", scene_id=str(sc_id),
-            content_limit=0)
+            db, project_id=str(pid), user_id="u", scene_id=str(sc_id))
         assert res.success
-        assert len(res.data["content"]) <= 7000
-        assert res.data["content_has_more"] is True
+        assert res.data["content"] == body       # full 30k, no pagination tax
+        assert res.data["content_has_more"] is False
         assert res.data["body_chars"] == 30000
 
-    async def test_global_settings_zero_limit_clamped(self):
-        pid = uuid.uuid4()
-        proj = SimpleNamespace(id=pid, title="T", global_settings="设" * 25000)
-        db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[
-            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),  # verify
-            _Q(scalars=[proj]),
-        ])
-        res = await ReadGlobalSettingsTool().run(
-            db, project_id=str(pid), user_id="u", content_limit=0)
-        assert res.success
-        assert len(res.data["content"]) <= 11000
-        assert res.data["content_has_more"] is True
-
-    async def test_moderate_limit_not_clamped(self):
+    async def test_scene_content_offsets_still_work(self):
         sc_id = uuid.uuid4()
         pid = uuid.uuid4()
         scene = SimpleNamespace(id=sc_id, project_id=pid, title="场", word_count=5)
@@ -126,9 +110,43 @@ class TestSinglePageClamp:
         ])
         res = await ReadSceneContentTool().run(
             db, project_id=str(pid), user_id="u", scene_id=str(sc_id),
-            content_limit=5)
-        assert res.data["content"] == "abcde"
+            content_offset=3, content_limit=4)
+        assert res.data["content"] == "defg"
         assert res.data["content_has_more"] is True
+
+    async def test_absurdly_long_body_clamped_with_true_has_more(self):
+        # Beyond the ~100k single-result ceiling pagination takes over — the
+        # has_more flag must stay truthful (never "200 chars but finished").
+        pid = uuid.uuid4()
+        sc_id = uuid.uuid4()
+        body = "字" * 300000
+        scene = SimpleNamespace(id=sc_id, project_id=pid, title="场", word_count=0)
+        content = SimpleNamespace(scene_id=sc_id, content=body)
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[scene]),
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
+            _Q(scalars=[content]),
+        ])
+        res = await ReadSceneContentTool().run(
+            db, project_id=str(pid), user_id="u", scene_id=str(sc_id))
+        assert res.success
+        assert len(res.data["content"]) <= 99900
+        assert res.data["content_has_more"] is True
+
+    async def test_global_settings_default_reads_whole(self):
+        pid = uuid.uuid4()
+        proj = SimpleNamespace(id=pid, title="T", global_settings="设" * 25000)
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),  # verify
+            _Q(scalars=[proj]),
+        ])
+        res = await ReadGlobalSettingsTool().run(
+            db, project_id=str(pid), user_id="u")
+        assert res.success
+        assert res.data["content"] == "设" * 25000
+        assert res.data["content_has_more"] is False
 
 
 class TestWrittenUsesWordCount:

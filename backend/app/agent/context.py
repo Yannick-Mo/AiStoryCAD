@@ -740,7 +740,7 @@ class ContextBuilder:
         project_id: uuid.UUID,
         chapter_from: int,
         chapter_to: int,
-        budget_chars: int = 11000,
+        budget_chars: int = 20000,
     ) -> dict:
         """Range window of chapters by *global* story order (act sort →
         chapter sort, numbering continues across acts).

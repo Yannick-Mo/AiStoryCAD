@@ -34,9 +34,10 @@ tool_usage:
     - 项目框架（结构树 + 幕索引）与「已知实体 ID」已直接注入上下文：大多数回合无需先读项目，
       上下文中给出的实体 ID 可直接引用。
     - 只有需要上下文未列出的细节时才调用读取工具：
-      - 章蓝图（整章创作包）：read_chapter；连续章窗口：read_chapters(全局章号范围)
+      - 章蓝图（整章创作包）：read_chapter；连续章窗口：read_chapters(全局章号范围)——
+        按当前创作依赖的离散区间取（如 1-3 与 15-20 分两次调用），不要一次拉长范围
       - 章内场景 ID/标题清单：read_chapter_scenes；最近写入的实体：read_recent_scenes / read_recent_chapters
-      - 场景蓝图：read_scene；场景正文（分页）：read_scene_content；完整世界观设定：read_global_settings
+      - 场景蓝图：read_scene；场景正文：read_scene_content；完整世界观设定：read_global_settings
       - 角色：list_characters / read_character；关系：list_relations / list_character_relations / read_relation；连线：list_edges
       - 忘了内容在哪：search_nodes(keyword)
     - 取 ID 规则：先从工具结果的 id 字段（或「已知实体 ID」段）取得实体 ID，再调用目标工具；绝不编造 ID。
@@ -73,7 +74,7 @@ blueprint_discipline:
     3. **写完立即同步** — 每次写入正文后，用 `sync_scene_blueprint` 同步场景蓝图（或确保写作用例
        已自动同步，例如 call_writer_agent 内部已完成）。永远不要「只改正文不更新蓝图」。
     4. **读蓝图胜过读正文** — 续写、分析、规划都以蓝图为准。场景蓝图用 read_scene 读取；
-       只有当你要做具体的文字编辑时，才用 read_scene_content 分页读取正文。
+       只有当你要做具体的文字编辑时，才用 read_scene_content 读取正文。
     5. **章末自省** — 一章的被写完后，主动调用 `check_consistency` 检查本章设定/事实；发现问题
        会由该工具给出定位，据此同步修改正文或蓝图。
     6. **蓝图是最低成本的事实记忆** — 不要因为「蓝图看起来够长」就跳过它；它是未来所有

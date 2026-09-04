@@ -81,7 +81,7 @@ class TestRegistration:
     def test_read_chapters_meta(self):
         assert ReadChaptersTool.meta.name == "read_chapters"
         assert ReadChaptersTool.meta.concurrency.value == "safe"
-        assert ReadChaptersTool.meta.max_result_chars == 12000
+        assert ReadChaptersTool.meta.max_result_chars == 22000
         props = ReadChaptersTool.meta.parameters["properties"]
         assert {"chapter_from", "chapter_to"} <= set(props)
         assert ReadChaptersTool.meta.parameters["required"] == ["chapter_from", "chapter_to"]

@@ -16,7 +16,7 @@ class ReadProjectTool(BaseTool):
         name="read_project",
         description="加载项目元数据：标题/类型/一句话梗概/描述/状态/目标字数/模板/目标读者 及配置，"
                     "并给出全局设定的总字数提示。不包含幕/章/场景（用 read_chapters / read_chapter / read_scene）。"
-                    "注意：本工具不含全局设定全文——需要完整世界观设定请用 read_global_settings 分页读取",
+                    "注意：本工具不含全局设定全文——需要完整世界观设定请用 read_global_settings 读取",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
@@ -50,18 +50,18 @@ class ReadProjectTool(BaseTool):
 class ReadGlobalSettingsTool(BaseTool):
     meta = ToolMeta(
         name="read_global_settings",
-        description="分页读取项目全局设定（世界观/背景设定全文，常驻上下文中只给前2000字，这里是完整版）。"
-                    "按 content_offset/content_limit 翻页：content_has_more=true 表示还有后续，"
-                    "用 content_offset+len(content) 作为下一次的 offset 继续读。"
-                    "单次最多返回约11000字符——超长设定需多次翻页",
+        description="读取项目全局设定（世界观/背景设定全文，常驻上下文中只给前2000字，这里是完整版）。"
+                    "默认一次返回完整设定——创作所需的设定最终都要进上下文，不必分页搬。"
+                    "仅当设定超过单次上限（约10万字符，罕见）或你只想看设定中的某一段时，"
+                    "才用 content_offset/content_limit 定位读取；content_has_more=true 表示还有后续",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,
-        max_result_chars=12000,
+        max_result_chars=100000,
         parameters={
             "type": "object",
             "properties": {
-                "content_offset": {"type": "integer", "description": "设定文本读取起点（字符偏移，默认0）"},
-                "content_limit": {"type": "integer", "description": "本次最多读取长度（字符数，默认6000，上限11000；传0=尽量多读但受单次上限约束）"},
+                "content_offset": {"type": "integer", "description": "设定文本读取起点（字符偏移，默认0=从头）"},
+                "content_limit": {"type": "integer", "description": "最多读取长度（字符数）；不传或0=读到末尾/单次上限"},
             },
         },
     )
@@ -82,12 +82,12 @@ class ReadGlobalSettingsTool(BaseTool):
                 offset = int(kwargs.get("content_offset") or 0)
             except (TypeError, ValueError):
                 offset = 0
-            try:
-                limit = int(kwargs.get("content_limit") or 6000)
-            except (TypeError, ValueError):
-                limit = 6000
             if offset < 0:
                 offset = 0
+            try:
+                limit = int(kwargs.get("content_limit") or 0)
+            except (TypeError, ValueError):
+                limit = 0
             max_page = self._effective_max_result_chars - 1000
             if limit <= 0:
                 limit = max_page
@@ -153,7 +153,7 @@ class ReadSceneTool(BaseTool):
         description="读取单个场景：蓝图全文（summary，含【目标】【节拍】【关键信息】【结尾状态】）+ POV/地点/时间/字数/是否已写/正文长度。"
                     "注意 word_count 为字数、body_chars 为字符数（含标点），口径不同。"
                     "scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes。"
-                    "注意：本工具不含正文——需要正文请用 read_scene_content 分页读取",
+                    "注意：本工具不含正文——需要正文请用 read_scene_content 读取（一次返回完整正文）",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
@@ -190,19 +190,20 @@ class ReadSceneTool(BaseTool):
 class ReadSceneContentTool(BaseTool):
     meta = ToolMeta(
         name="read_scene_content",
-        description="分页读取场景正文（唯一的正文读取工具）。按 content_offset/content_limit 翻页："
-                    "content_has_more=true 表示还有后续，用 content_offset+len(content) 作为下一次的 offset 继续读。"
-                    "单次最多返回约7000字符——长场景需多次翻页。"
+        description="读取场景正文（唯一的正文读取工具）。默认一次返回完整正文——写作时正文最终都要进上下文，"
+                    "不必分页搬。仅当正文超过单次上限（约10万字符，罕见）或你只想看正文某一段时，"
+                    "才用 content_offset/content_limit 定位读取；content_has_more=true 表示还有后续。"
                     "注意 body_chars 为字符数（含标点），与 word_count（字数）口径不同。"
                     "scene_id 来自 read_chapter_scenes、read_recent_scenes 或 search_nodes。"
                     "蓝图（创作计划）请用 read_scene",
         concurrency=ConcurrencyMode.SAFE,
+        max_result_chars=100000,
         parameters={
             "type": "object",
             "properties": {
                 "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes、read_recent_scenes 或 search_nodes"},
-                "content_offset": {"type": "integer", "description": "正文读取起点（字符偏移，默认0）"},
-                "content_limit": {"type": "integer", "description": "本次最多读取的正文长度（字符数，默认6000，上限7000；传0=尽量多读但受单次上限约束）"},
+                "content_offset": {"type": "integer", "description": "正文读取起点（字符偏移，默认0=从头）"},
+                "content_limit": {"type": "integer", "description": "最多读取长度（字符数）；不传或0=读到末尾/单次上限"},
             },
             "required": ["scene_id"],
         },
@@ -226,12 +227,12 @@ class ReadSceneContentTool(BaseTool):
                 offset = int(kwargs.get("content_offset") or 0)
             except (TypeError, ValueError):
                 offset = 0
-            try:
-                limit = int(kwargs.get("content_limit") or 6000)
-            except (TypeError, ValueError):
-                limit = 6000
             if offset < 0:
                 offset = 0
+            try:
+                limit = int(kwargs.get("content_limit") or 0)
+            except (TypeError, ValueError):
+                limit = 0
             max_page = self._effective_max_result_chars - 1000
             if limit <= 0:
                 limit = max_page

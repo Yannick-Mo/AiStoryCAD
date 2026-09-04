@@ -556,7 +556,7 @@ async def _build_turn_sections(
     gs_total = proj.get("global_settings_chars") or len(proj_global_settings)
     if proj_global_settings:
         if gs_total > 2000:
-            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {gs_total} 字，已截断。可用 read_global_settings 分页读取完整设定]"
+            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {gs_total} 字，已截断。可用 read_global_settings 读取完整设定]"
         else:
             gs_snippet = proj_global_settings
         ctx_parts.append(f"全局设定:\n{gs_snippet}")
@@ -594,11 +594,13 @@ async def _build_turn_sections(
     if framework:
         sections.append(framework)
     sections.append(
-        "场景蓝图用 read_scene 读取，正文用 read_scene_content 分页读取。\n"
+        "场景蓝图用 read_scene 读取，正文用 read_scene_content 读取（一次返回完整正文）。\n"
         "# --- 获取实体 ID 指南 ---\n"
         "框架树与幕索引已直接给出部分 act/chapter/scene 的 ID；系统提示中「已知实体 ID」段的 ID 可直接引用。\n"
         "未在树中列出的实体按以下方式获取 ID：\n"
-        "- 章节 ID：read_chapters(chapter_from, chapter_to)（全局章号 = 前面各幕章数之和 + 幕内序号，幕索引每幕标了章数）\n"
+        "- 章节 ID 与章目标：read_chapters(chapter_from, chapter_to)（全局章号 = 前面各幕章数之和 + 幕内序号，幕索引每幕标了章数）。"
+        "按当前创作实际依赖取离散区间，例如依赖第1-3章与第15-20章就分别调 read_chapters(1,3) 与 read_chapters(15,20)；"
+        "不要一次读很长的连续范围——单次窗口过大后半会被截断，且大半内容与当前写作无关会浪费上下文\n"
         "- 场景 ID：read_chapter_scenes(chapter_id)（该章全部场景的 ID/标题清单，轻量）\n"
         "- 最近写入的实体 ID：read_recent_scenes / read_recent_chapters\n"
         "- 关键词定位（忘了在哪）：search_nodes(keyword)\n"
@@ -705,7 +707,7 @@ async def autonomous_loop(
 - 项目框架数据（幕/章/场景结构、角色、关系）已在上下文中提供，可直接引用（含 ID）。
 - 场景蓝图（Scene.summary）是每场戏的创作计划与事实档案，是续写、分析与规划的优先依据；
   蓝图用 read_scene 读取（单场）。
-- 场景正文内容不包含在上下文中——需要正文做文字级编辑时用 read_scene_content 分页读取。
+- 场景正文内容不包含在上下文中——需要正文做文字级编辑时用 read_scene_content 读取（默认一次返回完整正文）。
 - 章内场景导航（拿场景 ID）用 read_chapter_scenes；章目标用 read_chapter 或 read_chapters。
 - 写入正文后必须同步场景蓝图：call_writer_agent 会自动同步；直接写正文的工具
   （write_scene_content 等）之后请调用 sync_scene_blueprint。

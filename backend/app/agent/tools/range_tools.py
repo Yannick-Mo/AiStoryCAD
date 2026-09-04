@@ -14,12 +14,14 @@ class ReadChaptersTool(BaseTool):
         description="按全局章节序号读取一个连续范围的章节，每章含：全局序号/ID/标题/状态/所属幕与幕ID/目标全文。"
                     "全局章序号 = 全项目从第1幕第1章起连续编号（跨幕连续，幕索引标了每幕章数可换算）。"
                     "例如想看第3到第7章：chapter_from=3、chapter_to=7。"
+                    "用法建议：按当前创作实际依赖取离散区间（如同时依赖第1-3章与第15-20章就分别调 read_chapters(1,3)"
+                    "与 read_chapters(15,20)），不要一次读很长的连续范围——窗口越大后半越可能被截断"
+                    "（返回 truncated=true 时用 next_from 继续翻页）。"
                     "章内场景的轻量清单请用 read_chapter_scenes；场景蓝图/正文用 read_scene / read_scene_content。"
-                    "返回 truncated=true 时用 next_from 继续翻页。"
                     "最新进度可用 read_recent_scenes / read_recent_chapters 了解",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,
-        max_result_chars=12000,
+        max_result_chars=22000,
         parameters={
             "type": "object",
             "properties": {
