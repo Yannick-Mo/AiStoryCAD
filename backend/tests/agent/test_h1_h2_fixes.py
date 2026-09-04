@@ -40,11 +40,12 @@ class TestH1NoToolSummaryInjection:
         src = inspect.getsource(loop_mod._build_turn_sections)
         # Find the tuple that lists injected dynamic sections and assert the
         # exact tuple no longer contains tool_summary.
-        assert '("id_registry", "session_progress", "plan_reminder", "error_context")' in src
+        assert '("id_registry", "plan_reminder", "error_context")' in src
         tuple_line = next(
             line for line in src.splitlines() if "id_registry" in line and "(" in line
         )
         assert "tool_summary" not in tuple_line
+        assert "session_progress" not in tuple_line
 
 
 class TestH2FrameworkActuallyInjected:

@@ -146,7 +146,7 @@ class BaseTool(ABC):
     ENTITY_NOT_FOUND = {
         "Act": "幕（Act）不存在，请先调用 read_chapters 或查看项目框架结构概览确认幕ID",
         "Chapter": "章节（Chapter）不存在，请先调用 read_chapters（范围读取）或 read_chapter 获取可用的章节ID",
-        "Scene": "场景（Scene）不存在，请先调用 read_chapter（其返回该章全部场景）或 read_recent 获取可用的场景ID",
+        "Scene": "场景（Scene）不存在，请先调用 read_chapter_scenes（章内场景清单）或 read_recent_scenes 获取可用的场景ID",
         "SceneContent": "场景正文（SceneContent）不存在，请先调用 write_scene_content 写入内容",
         "Character": "角色（Character）不存在，请先调用 list_characters 获取可用的角色ID",
         "CharacterRelation": "角色关系（Relation）不存在，请先调用 list_relations 获取可用的关系ID",
@@ -154,7 +154,7 @@ class BaseTool(ABC):
         "Project": "项目（Project）不存在，请检查项目ID是否正确",
         "Act in project": "该项目中不存在此幕ID，请查看项目框架结构概览确认",
         "Chapter in project": "该项目中不存在此章节ID，请调用 read_chapters 或 read_chapter 确认",
-        "Scene in project": "该项目中不存在此场景ID，请调用 read_chapter 或 read_recent 确认",
+        "Scene in project": "该项目中不存在此场景ID，请调用 read_chapter_scenes 或 read_recent_scenes 确认",
         "Character in project": "该项目中不存在此角色ID，请调用 list_characters 确认",
         "Edge in project": "该项目中不存在此连线ID，请调用 list_edges 确认",
         "Relation in project": "该项目中不存在此关系ID，请调用 list_relations 确认",
@@ -185,6 +185,34 @@ class BaseTool(ABC):
         msg = f"权限不足：{entity} 不属于当前用户" if entity else "权限不足：不属于当前用户"
         return ToolResult(success=False, error=msg)
 
+    @classmethod
+    def _err(cls, exc: Exception, context: str = "") -> ToolResult:
+        """Translate common low-level errors into teaching-style Chinese errors.
+
+        Centralises the UUID / permission failures that used to leak raw
+        English into the next LLM turn (badly formed hexadecimal UUID string,
+        "User x does not own project y" ...).
+        """
+        if isinstance(exc, PermissionError):
+            msg = ("项目归属校验失败：该项目不属于当前用户（跨项目读取/写入被拒绝）。"
+                   "请确认你操作的是自己名下且当前会话绑定的项目。")
+            return ToolResult(success=False, error=msg,
+                              correction_hint="下一步：切换到正确的项目后再调用本工具")
+        msg = str(exc)
+        low = msg.lower()
+        if "uuid" in low and any(k in low for k in ("hexadecimal", "malformed", "invalid")):
+            return ToolResult(
+                success=False,
+                error=f"传入的 ID「{msg.split(chr(39))[1] if chr(39) in msg else msg}」不是合法的 UUID——通常是 ID 拼写错误或已过期。"
+                      "请先用对应的读取工具取最新 ID：场景→read_chapter_scenes / read_recent_scenes；"
+                      "章节→read_chapters / read_recent_chapters；角色→list_characters；"
+                      "关系→list_relations；连线→list_edges。不要原样重试本工具。",
+                correction_hint="下一步：运行对应读取工具获取真实 ID 后再调用本工具",
+            )
+        if context:
+            msg = f"{context}：{msg}"
+        return ToolResult(success=False, error=msg)
+
     @staticmethod
     def _require_param(kwargs: dict, key: str, hint: str = "") -> str | None:
         """Get a required param from kwargs, returning None if missing.
@@ -210,7 +238,7 @@ class BaseTool(ABC):
         """
         hints = {
             "chapter_id": "必须！请先调用 read_chapters（按章号范围）或 read_chapter 获取章节ID，然后立即用该ID调用本工具",
-            "scene_id": "必须！请先调用 read_chapter（返回该章全部场景）或 read_recent 获取场景ID，然后立即用该ID调用本工具",
+            "scene_id": "必须！请先调用 read_chapter_scenes（章内场景清单）或 read_recent_scenes 获取场景ID，然后立即用该ID调用本工具",
             "character_id": "必须！请先调用 list_characters 获取角色ID，然后立即用该ID调用本工具",
             "act_id": "必须！请先调用 read_chapters 或查看项目框架结构概览获取幕ID",
             "keyword": "必须提供搜索关键词（不能为空字符串）",
@@ -237,7 +265,7 @@ class BaseTool(ABC):
         }
         correction_tools = {
             "chapter_id": "read_chapters",
-            "scene_id": "read_chapter",
+            "scene_id": "read_chapter_scenes",
             "character_id": "list_characters",
             "act_id": "read_chapters",
             "edge_id": "list_edges",

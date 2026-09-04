@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Scene, SceneContent
+from app.storycad.repository import AiStoryCADRepository
 from app.agent.utils import count_words
 
 
@@ -71,13 +72,15 @@ def _fuzzy_locate(content: str, snippet: str, threshold: float = 0.6) -> int:
 class WriteSceneContentTool(BaseTool):
     meta = ToolMeta(
         name="write_scene_content",
-        description="写入场景正文内容，更新场景字数。scene_id 来自 read_chapter（该章场景列表）或 search_nodes",
+        description="写入场景正文（⚠️整体替换：content 必须是该场景的完整新正文，会覆盖旧文）。"
+                    "调用前必须先 read_scene_content 读完现有正文再改；只想在文末追加请用 continue_scene。"
+                    "scene_id 来自 read_chapter_scenes / read_recent_scenes 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
-                "content": {"type": "string", "description": "场景正文内容"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
+                "content": {"type": "string", "description": "完整正文（整体替换，会覆盖旧文；不要只传改动片段）"},
             },
             "required": ["scene_id", "content"],
         },
@@ -106,22 +109,23 @@ class WriteSceneContentTool(BaseTool):
                 db.add(SceneContent(scene_id=sc_id, project_id=scene_obj.project_id, content=content))
             wc = count_words(content)
             scene_obj.word_count = wc
+            await AiStoryCADRepository(db).recalc_chapter(scene_obj.chapter_id)
             await db.commit()
             return ToolResult(success=True, data={"scene_id": str(sc_id), "word_count": wc, "content_preview": content[:200]})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class ContinueSceneTool(BaseTool):
     meta = ToolMeta(
         name="continue_scene",
-        description="基于前文风格分析，续写场景内容（追加到已有内容后）。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
+        description="基于前文风格分析，续写场景内容（追加到已有内容后）。scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
                 "additional_content": {"type": "string", "description": "续写的内容"},
             },
             "required": ["scene_id", "additional_content"],
@@ -151,19 +155,20 @@ class ContinueSceneTool(BaseTool):
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class RewriteSceneTool(BaseTool):
     meta = ToolMeta(
         name="rewrite_scene",
-        description="以指定风格或要求重写场景内容。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
+        description="整篇重写场景正文（⚠️content 必须是完整新正文，会整体替换旧文；写前先 read_scene_content 读完原文）。"
+                    "scene_id 来自 read_chapter_scenes / read_recent_scenes 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
-                "content": {"type": "string", "description": "重写后的内容"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
+                "content": {"type": "string", "description": "重写后的完整正文（整体替换）"},
                 "style": {"type": "string", "description": "风格说明（更悬疑/更简洁/更有张力等）"},
             },
             "required": ["scene_id", "content"],
@@ -189,19 +194,20 @@ class RewriteSceneTool(BaseTool):
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=content)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class ExpandSelectionTool(BaseTool):
     meta = ToolMeta(
         name="expand_selection",
-        description="扩写指定段落，保持风格一致。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes，original_text 需与场景正文精确匹配",
+        description="扩写指定段落，保持风格一致。scene_id 来自 read_chapter_scenes / read_recent_scenes 或 search_nodes，"
+                    "original_text 需与场景正文精确匹配（先用 read_scene_content 复制精确原文）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
-                "original_text": {"type": "string", "description": "原始文本（用于定位，需先调用 read_scene 获取精确文本）"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
+                "original_text": {"type": "string", "description": "原始文本（用于定位；先用 read_scene_content 复制正文中的精确原文，不要手打）"},
                 "expanded_text": {"type": "string", "description": "扩写后的完整段落"},
             },
             "required": ["scene_id", "original_text", "expanded_text"],
@@ -235,26 +241,27 @@ class ExpandSelectionTool(BaseTool):
                 return ToolResult(
                     success=False,
                     error="无法在场景正文中找到指定的原始文本，可能存在标点、空格或换行差异",
-                    correction_hint="请先使用场景读取工具获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
+                    correction_hint="请先用 read_scene_content 读取场景完整正文，复制需要替换的精确原文后重新调用本工具",
                 )
             new_content = sc.content[:pos] + expanded + sc.content[pos + len(original):]
             writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class CompressSelectionTool(BaseTool):
     meta = ToolMeta(
         name="compress_selection",
-        description="压缩指定段落，保持关键信息。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
+        description="压缩指定段落，保持关键信息。scene_id 来自 read_chapter_scenes / read_recent_scenes 或 search_nodes，"
+                    "original_text 需与场景正文精确匹配（先用 read_scene_content 复制精确原文）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
-                "original_text": {"type": "string", "description": "原始文本（需先调用 read_scene 获取精确文本）"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
+                "original_text": {"type": "string", "description": "原始文本（用于定位；先用 read_scene_content 复制正文中的精确原文，不要手打）"},
                 "compressed_text": {"type": "string", "description": "压缩后的文本"},
             },
             "required": ["scene_id", "original_text", "compressed_text"],
@@ -288,11 +295,11 @@ class CompressSelectionTool(BaseTool):
                 return ToolResult(
                     success=False,
                     error="无法在场景正文中找到指定的原始文本，可能存在标点、空格或换行差异",
-                    correction_hint="请先使用场景读取工具获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
+                    correction_hint="请先用 read_scene_content 读取场景完整正文，复制需要替换的精确原文后重新调用本工具",
                 )
             new_content = sc.content[:pos] + compressed + sc.content[pos + len(original):]
             writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

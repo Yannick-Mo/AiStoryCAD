@@ -18,7 +18,6 @@ from app.api.rate_limiter import get_rate_limiter
 from app.llm.client import LLMClient, get_shared_client
 from app.llm.types import Message
 from app.agent.tools import get_tool_registry as _get_registry
-from app.agent.tools import get_tool_descriptions as _build_tool_descriptions
 from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 _CHAT_STREAM_TIMEOUT = 120  # 2 min (was 60s — too tight for writing tools)
@@ -407,11 +406,10 @@ class SuperAgent:
         from app.agent.loop import autonomous_loop
 
         all_tools = await self._get_tool_registry()
-        td = _build_tool_descriptions(all_tools)
 
         try:
             async for event in autonomous_loop(
-                initial_state, all_tools, self._llm_client, self.db, td,
+                initial_state, all_tools, self._llm_client, self.db,
             ):
                 if not isinstance(event, dict):
                     continue

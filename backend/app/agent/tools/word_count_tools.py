@@ -78,4 +78,4 @@ class RecalcWordCountsTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

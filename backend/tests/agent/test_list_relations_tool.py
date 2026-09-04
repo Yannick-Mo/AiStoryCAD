@@ -1,14 +1,17 @@
-"""Tests for ListRelationsTool's read modes (browse / character / single /
-type) and the resulting data shape."""
-import asyncio
+"""Tests for the split relation/scene navigation tools:
+list_relations (browse), list_character_relations (per-character network),
+read_relation (single full row), read_chapter_scenes (chapter scene list)."""
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
-
-from app.agent.tools.list_tools import ListRelationsTool
+from app.agent.tools.list_tools import (
+    ListRelationsTool,
+    ListCharacterRelationsTool,
+    ReadRelationTool,
+    ReadChapterScenesTool,
+)
 from app.storycad.models import CharacterRelation
 
 
@@ -38,7 +41,7 @@ class _S:
         return self._items
 
 
-def _relation(rid, cid, tid, rel_type="好友", label="", description="详情", trust=80, threat=10, attraction=50):
+def _relation(rid, cid, tid, rel_type="好友", label="挚友", description="详细说明全文", trust=80, threat=10, attraction=50):
     return CharacterRelation(
         id=rid, project_id=uuid.uuid4(), character_id=cid, target_id=tid,
         rel_type=rel_type, label=label, description=description,
@@ -47,82 +50,139 @@ def _relation(rid, cid, tid, rel_type="好友", label="", description="详情", 
     )
 
 
-def _make_db(relations, char_pairs):
-    """db.execute call order: verify (project) -> relations -> character names."""
-    db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[
-        _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
-        _Q(scalars=relations),
-        _Q(rows=char_pairs),
-    ])
-    return db
+def _char_row(cid, name):
+    return SimpleNamespace(id=cid, name=name)
 
 
-class TestMeta:
-    def test_params_declared(self):
-        props = ListRelationsTool.meta.parameters["properties"]
-        assert {"character_id", "relation_id", "rel_type"} <= set(props)
-
-    def test_description_explains_modes(self):
-        desc = ListRelationsTool.meta.description
-        assert "character_id" in desc and "relation_id" in desc and "rel_type" in desc
-        assert "精读" in desc
-        assert "数值" in desc
-
-
-class TestRunModes:
-    def _setup(self):
+class TestListRelationsBrowse:
+    async def _run(self):
         pid = uuid.uuid4()
         c1, c2 = uuid.uuid4(), uuid.uuid4()
-        rels = [
-            _relation(uuid.uuid4(), c1, c2, rel_type="好友", label="挚友", description="相识于少年时代，彼此信任", trust=90, threat=5, attraction=40),
-            _relation(uuid.uuid4(), c1, uuid.uuid4(), rel_type="敌对", label="死敌", description="争夺王位", trust=10, threat=95, attraction=10),
-        ]
-        char_names = [
-            SimpleNamespace(id=c1, name="林晓"),
-            SimpleNamespace(id=c2, name="苏菲"),
-        ]
-        db = _make_db(rels, char_names)
+        rel = _relation(uuid.uuid4(), c1, c2, description="相识于少年")
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),   # verify owner
+            _Q(scalars=[rel]),                                 # all relations
+            _Q(rows=[_char_row(c1, "林晓"), _char_row(c2, "苏菲")]),
+        ])
         tool = ListRelationsTool()
-        return db, tool, pid
+        return await tool.run(db, project_id=str(pid), user_id="u1")
 
-    async def _run(self, **params):
-        db, tool, pid = self._setup()
-        return await tool.run(db, project_id=str(pid), user_id="u1", **params)
-
-    async def test_browse_all(self):
+    async def test_browse_returns_light_rows(self):
         res = await self._run()
         assert res.success
-        assert res.data["total"] == 2
-        assert len(res.data["relations"]) == 2
-
-    async def test_character_filter_ok(self):
-        res = await self._run(character_id=str(uuid.uuid4()))
-        assert res.success
-        assert "relations" in res.data
-
-    async def test_rel_type_filter_ok(self):
-        res = await self._run(rel_type="敌对")
-        assert res.success
-
-    async def test_relation_id_single_ok(self):
-        rid = uuid.uuid4()
-        res = await self._run(relation_id=str(rid))
-        assert res.success
-        assert res.data["total"] == 2  # fake db returns the same rows regardless
-
-    async def test_relation_rows_have_full_fields(self):
-        res = await self._run()
+        assert res.data["total"] == 1
         row = res.data["relations"][0]
         for key in ("id", "character_name", "target_name", "rel_type",
-                    "description", "trust", "threat", "attraction"):
-            assert key in row, f"missing field {key}"
+                    "label", "trust", "threat", "attraction"):
+            assert key in row, f"missing {key}"
+        # browse level never carries the long description
+        assert "description" not in row
+        assert row["character_name"] == "林晓"
+
+    def test_no_filter_params(self):
+        assert ListRelationsTool.meta.parameters["properties"] == {}
 
 
-class TestValidation:
-    async def test_bad_relation_id_returns_error(self):
-        db = _make_db([], [])
-        tool = ListRelationsTool()
-        res = await tool.run(db, project_id=str(uuid.uuid4()), user_id="u1",
-                             relation_id="not-a-uuid")
+class TestListCharacterRelations:
+    async def test_per_character_rows(self):
+        pid = uuid.uuid4()
+        c1, c2 = uuid.uuid4(), uuid.uuid4()
+        rel = _relation(uuid.uuid4(), c1, c2)
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
+            _Q(scalars=[rel]),
+            _Q(rows=[_char_row(c1, "林晓"), _char_row(c2, "苏菲")]),
+        ])
+        tool = ListCharacterRelationsTool()
+        res = await tool.run(db, project_id=str(pid), user_id="u1",
+                             character_id=str(c1))
+        assert res.success
+        assert res.data["total"] == 1
+        assert "description" not in res.data["relations"][0]
+
+    def test_requires_character_id(self):
+        assert "character_id" in ListCharacterRelationsTool.meta.parameters["required"]
+
+
+class TestReadRelation:
+    async def _run(self):
+        pid = uuid.uuid4()
+        c1, c2 = uuid.uuid4(), uuid.uuid4()
+        rel = _relation(uuid.uuid4(), c1, c2, description="这条关系完整的背景说明，要写互动戏需要它")
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
+            _Q(scalars=[rel]),
+            _Q(rows=[_char_row(c1, "林晓"), _char_row(c2, "苏菲")]),
+        ])
+        tool = ReadRelationTool()
+        return await tool.run(db, project_id=str(pid), user_id="u1",
+                              relation_id=str(rel.id))
+
+    async def test_single_relation_full_row(self):
+        res = await self._run()
+        assert res.success
+        assert res.data["total"] == 1
+        row = res.data["relations"][0]
+        assert row["description"] == "这条关系完整的背景说明，要写互动戏需要它"
+        assert row["character_name"] == "林晓"
+
+    async def test_missing_relation_errors(self):
+        pid = uuid.uuid4()
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
+            _Q(scalars=[]),
+        ])
+        tool = ReadRelationTool()
+        res = await tool.run(db, project_id=str(pid), user_id="u1",
+                             relation_id=str(uuid.uuid4()))
+        assert not res.success
+
+
+class TestReadChapterScenes:
+    async def _run(self, scenes=None):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        chapter = SimpleNamespace(id=cid, project_id=pid, title="第一章")
+        scenes = scenes or [
+            SimpleNamespace(id=uuid.uuid4(), title="开场", sort_order=1,
+                            pov_character="林晓", word_count=0),
+            SimpleNamespace(id=uuid.uuid4(), title="冲突", sort_order=2,
+                            pov_character="苏菲", word_count=3200),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[chapter]),
+            _Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
+            _Q(scalars=scenes),
+        ])
+        tool = ReadChapterScenesTool()
+        return await tool.run(db, project_id=str(pid), user_id="u1",
+                              chapter_id=str(cid))
+
+    async def test_light_navigation_rows(self):
+        res = await self._run()
+        assert res.success
+        assert res.data["chapter_title"] == "第一章"
+        assert res.data["total"] == 2
+        row = res.data["scenes"][0]
+        for key in ("id", "title", "sort_order", "pov_character",
+                    "word_count", "written"):
+            assert key in row
+        # navigation rows never carry the blueprint
+        assert "summary" not in row
+        assert res.data["scenes"][1]["written"] is True
+        assert res.data["scenes"][0]["written"] is False
+
+    async def test_unknown_chapter_errors(self):
+        pid = uuid.uuid4()
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _Q(scalars=[]),
+        ])
+        tool = ReadChapterScenesTool()
+        res = await tool.run(db, project_id=str(pid), user_id="u1",
+                             chapter_id=str(uuid.uuid4()))
         assert not res.success

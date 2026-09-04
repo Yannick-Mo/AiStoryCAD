@@ -32,7 +32,7 @@ from typing import Any
 WINDOW_SIZE = 20       # latest tool_results considered per request
 MAX_ENTRIES = 200      # hard cap on registry size
 RENDER_MAX_CHARS = 6000
-STALE_WINDOW = 8       # a persisted entry expires after N unconfirmed versions
+STALE_WINDOW = 16       # a persisted entry expires after N unconfirmed versions
 
 # ── Entity type vocabulary ───────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ _SNAPSHOT_TOOLS: dict[str, str] = {
 # Params that, if present, make a list_* result a *filtered* (non-authoritative)
 # subset.
 _FILTER_PARAMS: dict[str, set[str]] = {
-    "list_relations": {"character_id", "relation_id", "rel_type"},
+    "list_character_relations": {"character_id"},
     "list_characters": set(),
     "list_edges": set(),
 }
@@ -427,7 +427,7 @@ def render_id_registry(
     if not reg:
         return ""
 
-    lines = ["# --- 已知实体 ID（工具调用可直接引用，无需先 list_*）---"]
+    lines = ["# --- 已知实体 ID（工具调用可直接引用，无需先查询）---"]
     total = 0
     for etype in _ENTITY_TYPES:
         entries = reg.get(etype)
@@ -443,6 +443,6 @@ def render_id_registry(
         if total >= max_entries:
             break
 
-    lines.append("（注：ID 可能已过期，若调用失败请重新调用 list_* 工具获取最新 ID）")
+    lines.append("（注：ID 可能已过期，若调用失败请重新调用获取工具取最新 ID——如 read_chapters / read_chapter_scenes / list_characters 等）")
     rendered = "\n".join(lines)
     return rendered[:max_chars]

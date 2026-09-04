@@ -16,10 +16,13 @@ def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) 
 def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
     from .list_tools import (
         ListRelationsTool, ListEdgesTool, SearchNodesTool,
+        ListCharacterRelationsTool, ReadRelationTool, ReadChapterScenesTool,
     )
-    from .range_tools import ReadChaptersTool, ReadRecentTool
+    from .range_tools import ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool
     from .project_tools import (
-        ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
+        ReadProjectTool, ReadChapterTool, ReadSceneTool, ReadSceneContentTool,
+        ReadGlobalSettingsTool,
+        CreateSceneTool, UpdateSceneTool,
         SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
     )
     from .character_tools import (
@@ -43,8 +46,11 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
     from .word_count_tools import RecalcWordCountsTool
     classes = [
         ListRelationsTool, ListEdgesTool, SearchNodesTool,
-        ReadChaptersTool, ReadRecentTool,
-        ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
+        ListCharacterRelationsTool, ReadRelationTool, ReadChapterScenesTool,
+        ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool,
+        ReadProjectTool, ReadChapterTool, ReadSceneTool, ReadSceneContentTool,
+        ReadGlobalSettingsTool,
+        CreateSceneTool, UpdateSceneTool,
         SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,

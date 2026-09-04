@@ -139,7 +139,10 @@ async def run_scene_sync(
         Message(role="user", content="请更新场景蓝图并完成自评。"),
     ]
     try:
-        result = await client.chat(messages, temperature=0.4, max_tokens=1600)
+        result = await client.chat(
+            messages, temperature=0.4, max_tokens=1600,
+            response_format="json_object",
+        )
         parsed = await parse_json_safe(
             result.content or "", client, messages, node_name="scene_sync"
         )

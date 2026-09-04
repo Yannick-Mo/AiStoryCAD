@@ -46,10 +46,10 @@ class ConsistencyCheckTool(BaseTool):
                 report = await checker.check_all(str(pid), requested_by=kwargs.get("user_id"))
                 return ToolResult(success=True, data=report.model_dump(mode="json"))
         except PermissionError as e:
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
         except Exception as e:
             try:
                 await db.rollback()
             except Exception:
                 pass
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

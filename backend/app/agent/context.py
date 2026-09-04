@@ -711,7 +711,8 @@ class ContextBuilder:
         scene summary inside the framework tree.
         """
         rows = (await self.db.execute(
-            select(Scene.title, Scene.pov_character, Scene.summary)
+            select(Scene.id, Scene.title, Scene.pov_character,
+                   Scene.summary, Scene.word_count)
             .join(Chapter, Chapter.id == Scene.chapter_id)
             .join(Act, Act.id == Chapter.act_id)
             .where(Scene.project_id == project_id)
@@ -723,11 +724,12 @@ class ContextBuilder:
             return None
         lines = ["\n最近场景快照："]
         last_idx = len(rows) - 1
-        for idx, (title, pov, summary) in enumerate(reversed(rows)):
+        for idx, (sid, title, pov, summary, word_count) in enumerate(reversed(rows)):
             cap = 800 if idx == last_idx else 200
-            snippet = f"- {title or '?'}"
+            snippet = f"- {title or '?'}(scene_id={sid})"
             if pov:
                 snippet += f" [{pov}]"
+            snippet += f" {'已写' if (word_count or 0) > 0 else '未写'}"
             if summary:
                 snippet += f": {(summary or '')[:cap]}"
             lines.append(snippet)
@@ -738,7 +740,6 @@ class ContextBuilder:
         project_id: uuid.UUID,
         chapter_from: int,
         chapter_to: int,
-        include_goals: bool = True,
         budget_chars: int = 11000,
     ) -> dict:
         """Range window of chapters by *global* story order (act sort →
@@ -804,9 +805,8 @@ class ContextBuilder:
                 "act_id": str(ch.act_id) if ch.act_id else "",
                 "act_name": act_map.get(ch.act_id, ""),
                 "status": ch.status or "",
+                "goal": ch.goal or "",
             }
-            if include_goals:
-                entry["goal"] = ch.goal or ""
             est = len(json.dumps(entry, ensure_ascii=False))
             if used + est + 2 > budget_chars:
                 truncated = True
@@ -849,7 +849,9 @@ class ContextBuilder:
         )
         recent_rows = recent_result.all()
         if not recent_rows:
-            return {"kind": kind, "items": [], "truncated": False}
+            if kind == "chapters":
+                return {"chapters": [], "truncated": False}
+            return {"scenes": [], "truncated": False}
 
         scene_ids = [sid for (sid, _ts) in recent_rows]
 
@@ -898,8 +900,8 @@ class ContextBuilder:
                     if ch is None:
                         continue
                     entry: dict[str, Any] = {
-                        "chapter_id": str(ch.id),
-                        "chapter_title": ch.title or "",
+                        "id": str(ch.id),
+                        "title": ch.title or "",
                         "status": ch.status or "",
                         "goal": ch.goal or "",
                     }
@@ -918,7 +920,7 @@ class ContextBuilder:
                         break
                     chapter_items.append(entry)
                     used += est + 2
-            return {"kind": kind, "items": chapter_items, "truncated": truncated}
+            return {"chapters": chapter_items, "truncated": truncated}
 
         items: list[dict[str, Any]] = []
         truncated = False
@@ -929,8 +931,8 @@ class ContextBuilder:
                 continue
             sc = info["scene"]
             entry = {
-                "scene_id": str(sc.id),
-                "scene_title": sc.title or "",
+                "id": str(sc.id),
+                "title": sc.title or "",
                 "chapter_id": info.get("chapter_id", ""),
                 "chapter_title": info.get("chapter_title", ""),
                 "act_name": info.get("act_name", ""),
@@ -945,7 +947,7 @@ class ContextBuilder:
                 break
             items.append(entry)
             used += est + 2
-        return {"kind": kind, "items": items, "truncated": truncated}
+        return {"scenes": items, "truncated": truncated}
 
 
     # ------------------------------------------------------------------
@@ -963,11 +965,7 @@ class ContextBuilder:
         if not skip_cache:
             cached = await self._cache_get(ck)
             if cached is not None:
-                result = dict(cached)
-                genre = (result.get("project") or {}).get("genre") or ""
-                rag_context = await self._get_rag_context_if_meaningful(query_hint, genre)
-                result["rag_context"] = rag_context or ""
-                return result
+                return dict(cached)
 
         proj = await self._get_project(project_id)
         if not proj:
@@ -996,6 +994,7 @@ class ContextBuilder:
                             "id": str(sc.id),
                             "title": sc.title,
                             "sort_order": sc.sort_order,
+                            "word_count": sc.word_count or 0,
                         })
                         continue
                     entry: dict[str, Any] = {
@@ -1068,8 +1067,7 @@ class ContextBuilder:
         scene_count = sum(len(scenes_by_chapter.get(cid, [])) for cid in chapter_ids)
 
         proj_global_settings = proj.global_settings or ""
-        if depth == "framework":
-            proj_global_settings = proj_global_settings
+        gs_len = len(proj_global_settings)
 
         result = {
             "project": {
@@ -1078,7 +1076,8 @@ class ContextBuilder:
                 "genre": proj.genre or "",
                 "logline": proj.logline or "",
                 "status": proj.status or "",
-                "global_settings": proj_global_settings if depth == "framework" else proj_global_settings[:2000],
+                "global_settings": proj_global_settings[:2000],
+                "global_settings_chars": gs_len,
             },
             "acts": acts_data,
             "characters": characters_data,
@@ -1093,14 +1092,25 @@ class ContextBuilder:
         if note:
             result["truncated_note"] = note
 
-        # RAG is query-dependent — compute fresh, but keep the cached dict
-        # self-contained for other consumers.
-        rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
-        result["rag_context"] = rag_context or ""
-
+        # RAG is query-dependent and only consumed by the final response pass —
+        # never stored in the shared per-project cache (it would pollute other
+        # sessions with one session's query hint).  Consumers call
+        # ``get_rag_context`` on demand.
         await self._cache_set(ck, result)
 
         return result
+
+    async def get_rag_context(self, project_id: uuid.UUID, query_hint: str = "") -> str:
+        """Fetch RAG reference knowledge on demand (final response pass only).
+
+        Kept out of ``build_summary``: per-turn builds must not pay a vector
+        retrieval that nothing in the tool loop consumes, and caching it would
+        leak one session's query into every other session's snapshot.
+        """
+        proj = await self._get_project(project_id)
+        genre = (proj.genre or "") if proj else ""
+        rag = await self._get_rag_context_if_meaningful(query_hint, genre)
+        return rag or ""
 
     # ------------------------------------------------------------------
     # build_for_writing — focused context for the WritingAgent

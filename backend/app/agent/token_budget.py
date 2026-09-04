@@ -31,14 +31,16 @@ CRITICAL_AT_RATIO = 0.95
 
 # Token buffer between our estimated budget and the model's true
 # context limit.  The model also needs room for the new response and
-# any tool results produced during the turn.
-SAFETY_BUFFER_TOKENS = 100_000
+# any tool results produced during the turn.  Scaled to the window
+# (10%, floor 25k) instead of a fixed 100k that dwarfed 400k windows.
+_SAFETY_BUFFER_RATIO = 0.10
+SAFETY_BUFFER_TOKENS = max(25_000, int((settings.llm_context_window or 0) * _SAFETY_BUFFER_RATIO))
 
 # Maximum tokens we budget for the model's response.
 MAX_RESPONSE_TOKENS = 8_192
 
 # Default model limit (tokens), read from settings or fallback.
-_DEFAULT_MODEL_LIMIT = settings.llm_context_window or 120_000
+_DEFAULT_MODEL_LIMIT = settings.llm_context_window or 400_000
 
 # ── Budget tracker dataclass ────────────────────────────────────────
 
@@ -59,8 +61,13 @@ def compute_budget(
     messages: list["Message"],
     tool_results: list[dict],
     model_limit: int = _DEFAULT_MODEL_LIMIT,
+    extra_tokens: int = 0,
 ) -> TurnBudget:
     """Compute the current token budget snapshot.
+
+    ``extra_tokens`` covers text that lives in the same window but outside
+    ``messages``: the static system prompt, per-turn sections and the
+    ``tools[]`` schema, which are rebuilt/sent every turn.
 
     Returns:
         A ``TurnBudget`` with ``total_estimated_tokens`` populated.
@@ -72,7 +79,7 @@ def compute_budget(
         for r in tool_results
     )
     return TurnBudget(
-        total_estimated_tokens=msg_tokens + tr_tokens,
+        total_estimated_tokens=msg_tokens + tr_tokens + extra_tokens,
         model_limit=model_limit,
         started_at=time.time(),
     )

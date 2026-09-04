@@ -162,6 +162,22 @@ class AiStoryCADRepository:
                 .values(scene_count=0, total_words=0)
             )
 
+    async def recalc_chapter(self, chapter_id: uuid.UUID):
+        """Refresh one chapter's scene_count/total_words from its scenes.
+
+        Cheap single-chapter variant of ``_recalc_chapter_counts`` for the
+        agent write path (a body write only affects its own chapter).
+        """
+        counts = await self.db.execute(
+            select(func.count(Scene.id), func.coalesce(func.sum(Scene.word_count), 0))
+            .where(Scene.chapter_id == chapter_id)
+        )
+        row = counts.one()
+        await self.db.execute(
+            Chapter.__table__.update().where(Chapter.id == chapter_id)
+            .values(scene_count=row[0], total_words=row[1])
+        )
+
     # ============================================================
     # Scene content (separate, lazy-loaded)
     # ============================================================

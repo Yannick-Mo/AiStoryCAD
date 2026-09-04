@@ -186,11 +186,13 @@ def _format_tool_data(data) -> str:
         return str(data)[:2000]
 
 
-async def build_system_prompt(state: dict) -> str:
+async def build_system_prompt(state: dict, rag_text: str = "") -> str:
     """Build a token-budget-aware system prompt for the final generate step.
 
     Args:
         state: A flat dict with the same shape as ``LoopState.to_dict()``.
+        rag_text: Pre-fetched RAG reference knowledge (fetched once by the
+                  caller, never stored in project_context).
     """
     from app.agent.knowledge import APP_GUIDE
 
@@ -216,7 +218,7 @@ async def build_system_prompt(state: dict) -> str:
     total_ch = sum(len(a.get("chapters", [])) for a in acts) if acts else 0
     project_structure = f"{len(acts)} acts, {total_ch} chapters total" if acts else ""
 
-    rag_text = project_ctx.get("rag_context", "")
+    rag_text = rag_text or ""
     if rag_text:
         rag_text = rag_text[:MAX_RAG_CHARS]
 
@@ -328,23 +330,6 @@ async def build_system_prompt(state: dict) -> str:
         persona_text = _load_cowriter_persona()
         if persona_text:
             sections.append(_ContextSection(tier=0, label="cowriter_persona", text=persona_text))
-
-    # Cowriter session
-    session = state.get("cowriter_session", {})
-    if session.get("is_active"):
-        phase = session.get("phase", "explore")
-        goal = session.get("goal", "")
-        decisions = session.get("decisions", [])
-        session_lines = [f"协作者当前阶段：{phase}"]
-        if goal:
-            session_lines.append(f"当前目标：{goal}")
-        if decisions:
-            session_lines.append(f"已完成 {len(decisions)} 轮决策")
-            for d in decisions[-3:]:
-                label = d.get("label", "?")
-                result = d.get("result", "")
-                session_lines.append(f"  - 选择了「{label}」→ {result[:100]}")
-        sections.append(_ContextSection(tier=1, label="cowriter_session", text="\n".join(session_lines)))
 
     if retry_count > 0:
         sections.append(

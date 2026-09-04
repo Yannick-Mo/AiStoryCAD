@@ -51,7 +51,7 @@ class CreateActTool(BaseTool):
             return ToolResult(success=True, data=created)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class CreateChapterTool(BaseTool):
@@ -103,20 +103,20 @@ class CreateChapterTool(BaseTool):
             return ToolResult(success=True, data=created)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class DeleteSceneTool(BaseTool):
     meta = ToolMeta(
         name="delete_scene",
-        description="删除指定场景（Scene），同时删除场景正文内容。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
+        description="删除指定场景（Scene），同时删除场景正文内容。scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
             },
             "required": ["scene_id"],
         },
@@ -144,7 +144,7 @@ class DeleteSceneTool(BaseTool):
             return ToolResult(success=True, data={"deleted_scene_id": kwargs["scene_id"]})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class DeleteChapterTool(BaseTool):
@@ -194,7 +194,7 @@ class DeleteChapterTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class DeleteActTool(BaseTool):
@@ -253,7 +253,7 @@ class DeleteActTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateProjectTool(BaseTool):
@@ -340,7 +340,7 @@ class UpdateProjectTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class CreateProjectFromMaterialTool(BaseTool):
@@ -399,7 +399,7 @@ class CreateProjectFromMaterialTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 # ── Edge validation helpers ──────────────────────────────────────────────
@@ -555,7 +555,7 @@ class CreateEdgeTool(BaseTool):
             return ToolResult(success=True, data=created)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateEdgeTool(BaseTool):
@@ -610,7 +610,7 @@ class UpdateEdgeTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class DeleteEdgeTool(BaseTool):
@@ -642,7 +642,7 @@ class DeleteEdgeTool(BaseTool):
             return ToolResult(success=True, data={"deleted_edge_id": kwargs["edge_id"]})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 async def _recalc_chapter_counts(db: AsyncSession, project_id: uuid.UUID) -> None:

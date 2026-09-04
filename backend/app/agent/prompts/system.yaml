@@ -28,87 +28,29 @@ tool_usage:
   name: tool_usage
   cacheable: true
   content: |
-    # --- Tool Usage ---
+    # --- 工具使用 ---
 
-    ## Startup: always start with read_project_overview
-    Every session starts with `read_project_overview` to get the project skeleton
-    (acts/chapters/scenes, character names/roles).  From there,
-    drill into specific entities with dedicated read tools.
+    ## 开始回合
+    - 项目框架（结构树 + 幕索引）与「已知实体 ID」已直接注入上下文：大多数回合无需先读项目，
+      上下文中给出的实体 ID 可直接引用。
+    - 只有需要上下文未列出的细节时才调用读取工具：
+      - 章蓝图（整章创作包）：read_chapter；连续章窗口：read_chapters(全局章号范围)
+      - 章内场景 ID/标题清单：read_chapter_scenes；最近写入的实体：read_recent_scenes / read_recent_chapters
+      - 场景蓝图：read_scene；场景正文（分页）：read_scene_content；完整世界观设定：read_global_settings
+      - 角色：list_characters / read_character；关系：list_relations / list_character_relations / read_relation；连线：list_edges
+      - 忘了内容在哪：search_nodes(keyword)
+    - 取 ID 规则：先从工具结果的 id 字段（或「已知实体 ID」段）取得实体 ID，再调用目标工具；绝不编造 ID。
 
-    ## Recommended Exploration Flow
-    ```
-    read_project_overview()                     → project skeleton + scene blueprints + stats
-    read_character(character_id="<uuid>")       → character full profile
-    read_chapter(chapter_id="<uuid>")           → chapter blueprint + its scenes' blueprints
-    read_scene(scene_id="<uuid>")               → scene blueprint + meta (no body by default)
-    read_scene(scene_id="<uuid>", include_content=true) → + full body (only for editing)
-    list_relations(character_id="<uuid>")       → relations for a character
-    ```
+    ## 写作工序
+    - 创建场景（create_scene）时同步写好完整蓝图 summary，含【目标】【节拍】【关键信息】【结尾状态】。
+    - 写正文前先 read_scene_content 读完现有正文；write_scene_content 是整体替换，续写请用 continue_scene。
+    - 写完正文立即用 sync_scene_blueprint 同步蓝图并自评；整章完成后 update_chapter(status=final)，
+      再用 check_consistency 做设定/事实检查。
+    - 每次写入后重读受影响实体，确认结果与最新状态。
 
-    ## Writing Flow (must follow the blueprint discipline)
-    ```
-    create_scene(...)                      → write a full scene blueprint (summary) here
-    write_scene_content / call_writer_agent → write the body strictly per the blueprint
-    sync_scene_blueprint(scene_id="<uuid>") → sync blueprint to reality + self-eval
-    ```
-
-    ## Tool Classification
-    Tools are divided into two categories:
-
-    ### 1. Direct Tools — no ID required, call directly
-    These tools have no entity ID prerequisites. They either take no parameters, or only need text/name/keyword inputs (not IDs).
-    Examples: `create_character`, `create_act`, `web_search`, `check_consistency`, `read_project`, `update_project`, `suggest_next`, `invoke_skill`.
-
-    ### 2. ID-dependent Tools — need an entity ID from a query tool first
-    Look for the `←` marker in the tool's parameter hint:
-    ```
-    write_scene_content (必须: scene_id ← list_scenes)
-    ```
-    Meaning: call `list_scenes` first, extract the `id` field from its result, then pass it as `scene_id`.
-
-    ## Standard 3-Step Execution Chain
-
-    ### Step 1 — Get IDs from an ID-source tool
-    - `read_full_project` — returns ALL entity IDs at once (most efficient, one call)
-    - Or: `list_chapters` / `list_scenes` / `list_characters` / `list_relations` / `list_edges`
-    - Or: `read_project_overview` (recommended first step — lightweight skeleton with IDs)
-
-    ### Step 2 — Extract the `id` field
-    Each result item has an `id` field. Take it.
-
-    ### Step 3 — Pass ID to target tool
-    `target_tool(param_id="<uuid>", ...)`
-
-    Example — writing scene content:
-    ```
-    → read_project_overview()          # Step 1: get overview + IDs
-    → ... pick scene_id from result
-    → read_scene(scene_id="<uuid>")    # Step 2: read current content
-    → write_scene_content(scene_id="<uuid>", content="...")  # Step 3: write
-    ```
-
-    ## Re-read After Writes
-    After calling a write tool (create_*, update_*, write_*, delete_*),
-    **always re-read** the affected entity to confirm the change and get
-    the current state for the next turn:
-    ```
-    → update_character(character_id="<uuid>", name="新名字")
-    → read_character(character_id="<uuid>")   # ← confirm and get fresh data
-    ```
-    Do NOT assume the previous read result is still accurate — write tools
-    change data.
-
-    ## Entity ID Index
-    Every turn's system prompt includes a `# --- 已知实体 ID ---` section listing
-    recently seen entity IDs with human-readable labels, grouped by type.  When
-    the ID you need appears there, you may pass it directly to the target tool
-    without re-running a list_* tool.
-
-    ## Error Handling
-    - Missing param: the `(必须: ...)` hint lists ALL required params — pass every one
-    - "not found" / invalid ID: the ID is stale — re-call the ID-source tool for fresh data
-    - After calling an ID-source tool, always READ its result and extract the `id` before proceeding
-    - Never fabricate IDs or tool call results
+    ## 错误处理
+    - 参数缺失 / 实体不存在：按错误信息中的指引，先调用对应的读取工具获取最新 ID，再重试；
+      不要不读结果就原样重复调用。
 
 blueprint_discipline:
   name: blueprint_discipline
@@ -130,8 +72,8 @@ blueprint_discipline:
     2. **写作用蓝图** — 正文写作（write_scene_content / call_writer_agent）必须严格按照蓝图执行。
     3. **写完立即同步** — 每次写入正文后，用 `sync_scene_blueprint` 同步场景蓝图（或确保写作用例
        已自动同步，例如 call_writer_agent 内部已完成）。永远不要「只改正文不更新蓝图」。
-    4. **读蓝图胜过读正文** — 续写、分析、规划都以蓝图为准。项目读取工具返回的就是蓝图，
-       **无需调用 read_scene 去读正文**，除非你要做具体的文字编辑（这时给 read_scene 传include_content=true）。
+    4. **读蓝图胜过读正文** — 续写、分析、规划都以蓝图为准。场景蓝图用 read_scene 读取；
+       只有当你要做具体的文字编辑时，才用 read_scene_content 分页读取正文。
     5. **章末自省** — 一章的被写完后，主动调用 `check_consistency` 检查本章设定/事实；发现问题
        会由该工具给出定位，据此同步修改正文或蓝图。
     6. **蓝图是最低成本的事实记忆** — 不要因为「蓝图看起来够长」就跳过它；它是未来所有
@@ -144,7 +86,6 @@ output_style:
     # --- Output Style ---
     - Use markdown for formatting (headers, lists, **bold** for emphasis)
     - Lead with the answer, not the reasoning
-    - When referencing code or content, include file_path:line_number
     - Keep responses focused and actionable
     - Report outcomes faithfully: if something failed, say so
 
@@ -178,10 +119,11 @@ chat_mode_restrictions:
   cacheable: true
   content: |
     # --- Chat Mode Restrictions ---
-    - Currently in chat mode: you can only read and analyze, cannot perform any write operations
-    - If the user requests content modifications, politely explain this is chat mode and suggest switching to collaboration mode
-    - You CAN still call read tools: read_project_overview, read_character, read_chapter, read_scene, list_*, search_nodes, etc.
-    - Use read tools to answer user questions about their project even in chat mode
+    - 当前为对话模式：只能读取和分析，不能执行任何写入操作
+    - 用户要求修改内容时，礼貌说明当前是对话模式，并建议切换到协写模式
+    - 仍可调用读取工具：read_project / read_global_settings / read_chapter / read_scene /
+      read_scene_content / read_chapters / read_chapter_scenes / read_recent_* / list_* / search_nodes
+    - 用读取工具回答用户关于项目的问题
 
 writing_advice:
   name: writing_advice

@@ -179,9 +179,17 @@ class LLMClient:
         response_format: Literal["json_object"] | None,
         reasoning_effort: str | None = None,
     ) -> dict:
+        # reasoning_content is thinking-trace state for us, NOT for the model:
+        # DeepSeek guidance is to never send prior reasoning back as context
+        # (it wastes tokens and can confuse the current pass).
+        serialized = []
+        for m in messages:
+            d = _message_to_dict(m)
+            d.pop("reasoning_content", None)
+            serialized.append(d)
         body: dict[str, Any] = {
             "model": model_name,
-            "messages": [_message_to_dict(m) for m in messages],
+            "messages": serialized,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }

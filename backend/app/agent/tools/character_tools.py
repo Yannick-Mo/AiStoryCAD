@@ -33,18 +33,18 @@ class ListCharactersTool(BaseTool):
             return ToolResult(success=True, data={"characters": characters, "relations": relations})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class ReadCharacterTool(BaseTool):
     meta = ToolMeta(
         name="read_character",
-        description="获取单个角色的完整档案（名称、类型、性格、外貌、背景、动机）。character_id 来自 list_characters 或 read_recent",
+        description="获取单个角色的完整档案（名称、类型、性格、外貌、背景、动机）。character_id 来自 list_characters",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
             "properties": {
-                "character_id": {"type": "string", "description": "角色ID，来自 list_characters 或 read_recent 返回结果"},
+                "character_id": {"type": "string", "description": "角色ID，来自 list_characters"},
             },
             "required": ["character_id"],
         },
@@ -68,7 +68,7 @@ class ReadCharacterTool(BaseTool):
             return ToolResult(success=True, data=row_to_dict(char))
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class CreateCharacterTool(BaseTool):
@@ -123,7 +123,7 @@ class CreateCharacterTool(BaseTool):
             return ToolResult(success=True, data=created)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class DeleteCharacterTool(BaseTool):
@@ -175,7 +175,7 @@ class DeleteCharacterTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class DeleteRelationTool(BaseTool):
@@ -209,7 +209,7 @@ class DeleteRelationTool(BaseTool):
             return ToolResult(success=True, data={"deleted": rel.label or rel.rel_type, "relation_id": str(rel_id)})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateCharacterTool(BaseTool):
@@ -255,7 +255,7 @@ class UpdateCharacterTool(BaseTool):
             return ToolResult(success=True, data=updated)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class CreateRelationTool(BaseTool):
@@ -308,7 +308,7 @@ class CreateRelationTool(BaseTool):
             return ToolResult(success=True, data=created)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateRelationTool(BaseTool):
@@ -353,4 +353,4 @@ class UpdateRelationTool(BaseTool):
             return ToolResult(success=True, data=updated)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

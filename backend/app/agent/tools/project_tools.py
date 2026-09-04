@@ -14,7 +14,9 @@ from app.utils import row_to_dict
 class ReadProjectTool(BaseTool):
     meta = ToolMeta(
         name="read_project",
-        description="加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景。按范围读章节请用 read_chapters；读某章及场景请用 read_chapter/read_scene",
+        description="加载项目元数据：标题/类型/一句话梗概/描述/状态/目标字数/模板/目标读者 及配置，"
+                    "并给出全局设定的总字数提示。不包含幕/章/场景（用 read_chapters / read_chapter / read_scene）。"
+                    "注意：本工具不含全局设定全文——需要完整世界观设定请用 read_global_settings 分页读取",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
@@ -35,19 +37,84 @@ class ReadProjectTool(BaseTool):
                 return self._not_found("Project")
             config = await proj_repo.get_config(pid)
             data = row_to_dict(project)
+            gs = data.pop("global_settings", "") or ""
+            data["global_settings_chars"] = len(gs)
             if config:
                 data["config"] = row_to_dict(config)
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
+
+
+class ReadGlobalSettingsTool(BaseTool):
+    meta = ToolMeta(
+        name="read_global_settings",
+        description="分页读取项目全局设定（世界观/背景设定全文，常驻上下文中只给前2000字，这里是完整版）。"
+                    "按 content_offset/content_limit 翻页：content_has_more=true 表示还有后续，"
+                    "用 content_offset+len(content) 作为下一次的 offset 继续读。"
+                    "单次最多返回约11000字符——超长设定需多次翻页",
+        concurrency=ConcurrencyMode.SAFE,
+        timeout=30,
+        max_result_chars=12000,
+        parameters={
+            "type": "object",
+            "properties": {
+                "content_offset": {"type": "integer", "description": "设定文本读取起点（字符偏移，默认0）"},
+                "content_limit": {"type": "integer", "description": "本次最多读取长度（字符数，默认6000，上限11000；传0=尽量多读但受单次上限约束）"},
+            },
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            proj_repo = ProjectRepository(db)
+            project = await proj_repo.get(pid)
+            if not project:
+                return self._not_found("Project")
+            body = project.global_settings or ""
+            try:
+                offset = int(kwargs.get("content_offset") or 0)
+            except (TypeError, ValueError):
+                offset = 0
+            try:
+                limit = int(kwargs.get("content_limit") or 6000)
+            except (TypeError, ValueError):
+                limit = 6000
+            if offset < 0:
+                offset = 0
+            max_page = self._effective_max_result_chars - 1000
+            if limit <= 0:
+                limit = max_page
+            limit = min(limit, max_page)
+            page = body[offset:offset + limit]
+            return ToolResult(success=True, data={
+                "project_id": str(project.id),
+                "project_title": project.title or "",
+                "settings_chars": len(body),
+                "content_offset": offset,
+                "content": page,
+                "content_has_more": (offset + len(page)) < len(body),
+            })
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
 
 
 class ReadChapterTool(BaseTool):
     meta = ToolMeta(
         name="read_chapter",
-        description="获取章节及其场景列表（章节ID来自 read_chapters 范围读取或项目框架结构概览 (chapter_id=…)）",
+        description="读取整章创作包：章目标全文 + 该章全部场景的蓝图与元数据（写/分析这章时的完整规划依据）。"
+                    "场景很多时各场蓝图字段会被压缩（含省略标记），可对个别场用 read_scene 精读蓝图。"
+                    "chapter_id 来自 read_chapters（范围）或项目框架结构概览。"
+                    "只想快速拿章内场景 ID/标题清单时请用 read_chapter_scenes（更轻量）",
         concurrency=ConcurrencyMode.SAFE,
+        max_result_chars=16000,
         parameters={
             "type": "object",
             "properties": {
@@ -77,24 +144,21 @@ class ReadChapterTool(BaseTool):
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class ReadSceneTool(BaseTool):
     meta = ToolMeta(
         name="read_scene",
-        description="获取场景蓝图与元数据（标题、蓝图、POV、地点、时间、是否已写正文、正文长度）。"
-                    "scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes。"
-                    "默认不含正文——续写/分析以蓝图为依据即可；仅当需要做文字级编辑（expand_selection/compress_selection/rewrite 等）时才传 include_content=true 读取正文。"
-                    "正文超长时用 content_offset/content_limit 分页读取（body_chars 为正文总长，content_has_more=true 表示还有后续）",
+        description="读取单个场景：蓝图全文（summary，含【目标】【节拍】【关键信息】【结尾状态】）+ POV/地点/时间/字数/是否已写/正文长度。"
+                    "注意 word_count 为字数、body_chars 为字符数（含标点），口径不同。"
+                    "scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes。"
+                    "注意：本工具不含正文——需要正文请用 read_scene_content 分页读取",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）、read_recent 或 search_nodes"},
-                "include_content": {"type": "boolean", "description": "是否包含场景正文（默认 false）"},
-                "content_offset": {"type": "integer", "description": "正文读取起点（字符偏移，仅 include_content=true 时生效，默认0）"},
-                "content_limit": {"type": "integer", "description": "本次最多读取的正文长度（字符数，默认6000，0=读取到末尾）"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes、read_recent_scenes 或 search_nodes"},
             },
             "required": ["scene_id"],
         },
@@ -112,36 +176,78 @@ class ReadSceneTool(BaseTool):
                 return self._not_found("Scene")
             await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
             data = row_to_dict(scene)
-            include_content = bool(kwargs.get("include_content", False))
             content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
             sc_content = content_result.scalar_one_or_none()
-            body = sc_content.content if sc_content else ""
-            body = body or ""
-            data["written"] = bool(body.strip())
+            body = (sc_content.content if sc_content else "") or ""
+            data["written"] = (scene.word_count or 0) > 0
             data["body_chars"] = len(body)
-            if include_content:
-                try:
-                    offset = int(kwargs.get("content_offset") or 0)
-                except (TypeError, ValueError):
-                    offset = 0
-                try:
-                    limit = int(kwargs.get("content_limit") or 6000)
-                except (TypeError, ValueError):
-                    limit = 6000
-                if offset < 0:
-                    offset = 0
-                if limit < 0:
-                    limit = 0
-                page = body[offset:offset + limit] if limit > 0 else body[offset:]
-                data["content"] = page
-                data["content_offset"] = offset
-                data["content_has_more"] = (offset + len(page)) < len(body)
-            else:
-                data["content"] = None
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
+
+
+class ReadSceneContentTool(BaseTool):
+    meta = ToolMeta(
+        name="read_scene_content",
+        description="分页读取场景正文（唯一的正文读取工具）。按 content_offset/content_limit 翻页："
+                    "content_has_more=true 表示还有后续，用 content_offset+len(content) 作为下一次的 offset 继续读。"
+                    "单次最多返回约7000字符——长场景需多次翻页。"
+                    "注意 body_chars 为字符数（含标点），与 word_count（字数）口径不同。"
+                    "scene_id 来自 read_chapter_scenes、read_recent_scenes 或 search_nodes。"
+                    "蓝图（创作计划）请用 read_scene",
+        concurrency=ConcurrencyMode.SAFE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes、read_recent_scenes 或 search_nodes"},
+                "content_offset": {"type": "integer", "description": "正文读取起点（字符偏移，默认0）"},
+                "content_limit": {"type": "integer", "description": "本次最多读取的正文长度（字符数，默认6000，上限7000；传0=尽量多读但受单次上限约束）"},
+            },
+            "required": ["scene_id"],
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            sc_raw = self._require_param(kwargs, "scene_id")
+            if sc_raw is None:
+                return self._missing_param("scene_id")
+            sc_id = uuid.UUID(sc_raw)
+            result = await db.execute(select(Scene).where(Scene.id == sc_id))
+            scene = result.scalar_one_or_none()
+            if not scene:
+                return self._not_found("Scene")
+            await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
+            content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
+            sc_content = content_result.scalar_one_or_none()
+            body = (sc_content.content if sc_content else "") or ""
+            try:
+                offset = int(kwargs.get("content_offset") or 0)
+            except (TypeError, ValueError):
+                offset = 0
+            try:
+                limit = int(kwargs.get("content_limit") or 6000)
+            except (TypeError, ValueError):
+                limit = 6000
+            if offset < 0:
+                offset = 0
+            max_page = self._effective_max_result_chars - 1000
+            if limit <= 0:
+                limit = max_page
+            limit = min(limit, max_page)
+            page = body[offset:offset + limit]
+            return ToolResult(success=True, data={
+                "scene_id": str(scene.id),
+                "scene_title": scene.title or "",
+                "body_chars": len(body),
+                "content_offset": offset,
+                "content": page,
+                "content_has_more": (offset + len(page)) < len(body),
+            })
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
 
 
 class CreateSceneTool(BaseTool):
@@ -187,33 +293,41 @@ class CreateSceneTool(BaseTool):
             }
             content = kwargs.get("content")
             created = await repo.create_entity(Scene, scene_data)
+            wc = None
             if content:
                 sc_id = uuid.UUID(created["id"])
                 db.add(SceneContent(scene_id=sc_id, project_id=pid, content=content))
                 from app.agent.utils import count_words
                 word_count = count_words(content)
+                wc = word_count
                 scene_obj = await db.get(Scene, sc_id)
                 if scene_obj:
                     scene_obj.word_count = word_count
+                    await repo.recalc_chapter(scene_obj.chapter_id)
             await db.commit()
-            return ToolResult(success=True, data=created)
+            data = dict(created)
+            if wc is not None:
+                data["word_count"] = wc
+                data["content_preview"] = content[:200]
+            return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateSceneTool(BaseTool):
     meta = ToolMeta(
         name="update_scene",
-        description="更新场景内容、标题、POV、地点、时间、梗概等。scene_id 来自 read_chapter（该章场景列表）或 search_nodes",
+        description="更新场景的标题/蓝图/正文等。scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes。"
+                    "⚠️ 传 content 是整体替换正文（会覆盖旧文）：先 read_scene_content 读完再改；只续写请用 continue_scene",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
                 "title": {"type": "string", "description": "场景标题"},
                 "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
-                "content": {"type": "string", "description": "场景正文"},
+                "content": {"type": "string", "description": "场景完整正文（整体替换，会覆盖旧文）"},
                 "pov_character": {"type": "string", "description": "POV角色"},
                 "setting": {"type": "string", "description": "场景地点"},
                 "scene_time": {"type": "string", "description": "场景时间"},
@@ -245,14 +359,21 @@ class UpdateSceneTool(BaseTool):
                     sc.content = content
                 elif scene_obj:
                     db.add(SceneContent(scene_id=sc_id, project_id=scene_obj.project_id, content=content))
+                wc = None
                 if scene_obj:
                     from app.agent.utils import count_words
-                    scene_obj.word_count = count_words(content)
+                    wc = count_words(content)
+                    scene_obj.word_count = wc
+                    await repo.recalc_chapter(scene_obj.chapter_id)
             await db.commit()
-            return ToolResult(success=True, data=updated)
+            data = dict(updated)
+            if "content" in kwargs and wc is not None:
+                data["word_count"] = wc
+                data["content_preview"] = kwargs["content"][:200]
+            return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class SetChapterGoalTool(BaseTool):
@@ -290,7 +411,7 @@ class SetChapterGoalTool(BaseTool):
             return ToolResult(success=True, data={"chapter_id": str(ch_id), "goal": goal_raw})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateChapterTool(BaseTool):
@@ -338,7 +459,7 @@ class UpdateChapterTool(BaseTool):
             return ToolResult(success=True, data={"chapter_id": str(ch_id), "title": ch.title, "status": ch.status})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class UpdateActTool(BaseTool):
@@ -376,4 +497,4 @@ class UpdateActTool(BaseTool):
             return ToolResult(success=True, data={"act_id": str(act_id), "name": act.name})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

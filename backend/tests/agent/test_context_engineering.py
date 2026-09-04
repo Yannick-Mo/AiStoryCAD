@@ -15,6 +15,7 @@ from app.agent.context_compressor import (
     should_compress,
 )
 from app.agent.loop import (
+    _ENTITY_SECTION_MAX,
     _FRAMEWORK_SECTION_MAX,
     _render_framework_section,
 )
@@ -89,7 +90,8 @@ class TestTokenBasedCompression:
         import app.agent.loop as loop_mod
 
         src = inspect.getsource(loop_mod)
-        assert "should_compress(state.messages, MODEL_CONTEXT_LIMIT)" in src
+        assert "should_compress(state.messages, MODEL_CONTEXT_LIMIT" in src
+        assert "system_prompt=system_content" in src
         assert "_last_compress_tokens" in src
         assert "_last_scan_count" not in src
 
@@ -125,12 +127,22 @@ class TestFrameworkStructuralTruncation:
     def test_truncation_stops_at_complete_line(self):
         state = LoopState.from_initial({"project_context": self._big_context()})
         out = _render_framework_section(state)
-        # Never exceeds budget by more than the truncation note
-        assert len(out) <= _FRAMEWORK_SECTION_MAX + 200
+        # Tree budget + the independent entity budget, plus the truncation note.
+        assert len(out) <= _FRAMEWORK_SECTION_MAX + _ENTITY_SECTION_MAX + 200
         # Ends with the structural note, not a half-rendered line
         assert out.rstrip().endswith("read_chapters 按全局章号范围读取]")
         assert "项目框架较长" in out
         assert "以下未完整列出" in out
+
+    def test_entities_still_rendered_when_tree_truncated(self):
+        # A tree that exhausts the detail budget must NOT hide the
+        # character/relation/edge rosters (independent budgets).
+        state = LoopState.from_initial({"project_context": self._big_context()})
+        out = _render_framework_section(state)
+        assert "项目框架较长" in out  # tree was truncated...
+        assert "## 角色" in out       # ...but the rosters still appear
+        assert "## 关系" in out
+        assert "## 连线" in out
 
     def test_act_index_lists_all_acts_even_when_details_truncated(self):
         # Detail tree only fits the first acts, but the act index must still

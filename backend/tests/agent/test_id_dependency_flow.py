@@ -272,13 +272,14 @@ class TestListThenWriteScenario:
             f"write_scene_content needs scene_id, got {required}"
 
     def test_list_tools_accept_scope_params(self):
-        """Most list/range tools accept a scope param to narrow results.
-        Known gap: list_characters and list_edges accept no params."""
+        """Most navigation/read tools accept a scope param to narrow results."""
         registry = get_tool_registry()
         scoping = {
-            "list_relations":  "character_id",
-            "read_chapters":   "chapter_from",
-            "read_recent":     "kind",
+            "list_character_relations": "character_id",
+            "read_chapters":            "chapter_from",
+            "read_recent_scenes":       "n",
+            "read_chapter_scenes":      "chapter_id",
+            "read_scene_content":       "content_offset",
         }
         for tool_name, scope_param in scoping.items():
             tool = registry[tool_name]

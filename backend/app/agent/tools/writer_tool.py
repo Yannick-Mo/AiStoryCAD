@@ -38,7 +38,7 @@ class CallWriterAgentTool(BaseTool):
             "properties": {
                 "scene_id": {
                     "type": "string",
-                    "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes",
+                    "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes",
                 },
                 "action": {
                     "type": "string",
@@ -101,7 +101,8 @@ class CallWriterAgentTool(BaseTool):
             # 3. 调用写作智能体
             agent = WritingAgent()
             user_prompt = f"请{action=='continue' and '续写' or action=='rewrite' and '重写' or '创作'}场景《{ctx.get('scene_title', '')}》的正文。"
-            text = await agent.run(self.llm_client, ctx, user_prompt)
+            writing = await agent.run(self.llm_client, ctx, user_prompt)
+            text = writing.text
 
             if not text:
                 return ToolResult(success=False, error="写作智能体未能生成正文")
@@ -118,13 +119,40 @@ class CallWriterAgentTool(BaseTool):
             if not save_result.success:
                 return save_result
 
-            # 5. 写后同步：蓝图对齐正文 + 质量自评（后端子代理，正文不进主上下文）
-            sync_result = await self._sync_scene_blueprint(
-                db, sc_id, text, user_id=kwargs.get("user_id"),
-            )
+            # 4b. 截断防线：模型在 max_tokens 处被截断时，正文尾部可能缺失。
+            # 此时不自动同步蓝图（避免把腰斩文 sync 成新正典），旧蓝图保持原样。
+            truncated = writing.truncated
+            sync_result = None
+            if not truncated:
+                # 5. 写后同步：蓝图对齐正文 + 质量自评（后端子代理，正文不进主上下文）
+                sync_result = await self._sync_scene_blueprint(
+                    db, sc_id, text, user_id=kwargs.get("user_id"),
+                )
 
             preview = text[:200].replace("\n", " ")
             wc = save_result.data.get("word_count", 0)
+            if truncated:
+                summary = (
+                    f"已{_action_label(action)}场景《{ctx.get('scene_title', '')}》，共 {wc} 字，"
+                    "但⚠️模型输出在长度上限处被截断，正文尾部可能缺失，本次未同步蓝图。"
+                )
+                data = {
+                    "scene_id": scene_id_raw,
+                    "word_count": wc,
+                    "action": action,
+                    "preview": preview,
+                    "truncated": True,
+                    "summary": summary,
+                }
+                return ToolResult(
+                    success=True,
+                    data=data,
+                    correction_hint=(
+                        "正文可能不完整：请先用 continue_scene 续写补全正文，"
+                        "补全完成后调用 sync_scene_blueprint 同步蓝图。"
+                        "在补全之前不要基于该场景的结尾状态继续创作。"
+                    ),
+                )
             data = {
                 "scene_id": scene_id_raw,
                 "word_count": wc,
@@ -153,7 +181,7 @@ class CallWriterAgentTool(BaseTool):
         except Exception as e:
             await db.rollback()
             logger.error("CallWriterAgentTool failed: %s", e, exc_info=True)
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
     async def _sync_scene_blueprint(
         self,
@@ -201,7 +229,7 @@ class SyncSceneBlueprintTool(BaseTool):
         name="sync_scene_blueprint",
         description=(
             "同步场景蓝图：读取场景正文（仅在后端子代理中），将对齐后的创作蓝图写回场景概述。"
-            "scene_id 来自 read_chapter（该章场景列表）或 search_nodes。任何写入正文的操作"
+            "scene_id 来自 read_chapter_scenes / read_recent_scenes 或 search_nodes。任何写入正文的操作"
             "（write_scene_content/continue_scene/rewrite_scene/expand_selection/"
             "compress_selection/update_scene）之后都应调用此工具，确保项目读取工具只读蓝图即可继续创作。"
         ),
@@ -212,7 +240,7 @@ class SyncSceneBlueprintTool(BaseTool):
             "properties": {
                 "scene_id": {
                     "type": "string",
-                    "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes",
+                    "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes",
                 },
                 "note": {
                     "type": "string",
@@ -271,4 +299,4 @@ class SyncSceneBlueprintTool(BaseTool):
         except Exception as e:
             await db.rollback()
             logger.error("SyncSceneBlueprintTool failed: %s", e, exc_info=True)
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

@@ -37,16 +37,25 @@ def test_sync_scene_blueprint_meta_links_id_source_tool():
     assert "scene_id" in params and "read_chapter" in params["scene_id"]["description"]
 
 
-def test_read_scene_meta_mentions_id_source_and_include_content():
+def test_read_scene_is_blueprint_only_and_lists_id_source():
     from app.agent.tools import get_tool_registry
 
     tool = get_tool_registry()["read_scene"]
-    assert "read_chapter" in tool.meta.description
-    assert "include_content" in tool.meta.description
+    assert "read_chapter_scenes" in tool.meta.description
     props = tool.meta.parameters["properties"]
-    assert "include_content" in props
-    assert "content_offset" in props
-    assert "content_limit" in props
+    # read_scene is single-purpose (blueprint) — no content switch
+    assert "include_content" not in props
+    assert list(props.keys()) == ["scene_id"]
+
+
+def test_read_scene_content_is_separate_tool_with_pagination():
+    from app.agent.tools import get_tool_registry
+
+    tool = get_tool_registry()["read_scene_content"]
+    assert "正文" in tool.meta.description
+    props = tool.meta.parameters["properties"]
+    assert "scene_id" in props
+    assert {"content_offset", "content_limit"} <= set(props)
 
 
 def test_loop_base_sections_include_blueprint_discipline():

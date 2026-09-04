@@ -46,27 +46,9 @@ class AttachmentInjector:
             if rendered:
                 sections["id_registry"] = rendered
 
-        # Session progress
-        session = getattr(state, "cowriter_session", None)
-        if hasattr(state, "cowriter_session") and session:
-            sess = session or {}
-            if sess.get("is_active"):
-                phase = sess.get("phase", "explore")
-                goal = sess.get("goal", "")
-                focus = sess.get("current_focus", "")
-                phase_cn = {
-                    "explore": "探索",
-                    "plan": "计划",
-                    "execute": "执行",
-                    "review": "评审",
-                    "complete": "完成",
-                }.get(phase, phase)
-                lines = [f"# --- 协作进度 ---\n阶段: {phase_cn}"]
-                if goal:
-                    lines.append(f"目标: {goal}")
-                if focus:
-                    lines.append(f"焦点: {focus}")
-                sections["session_progress"] = "\n".join(lines)
+        # (cowriter_session-based "协作进度" section was removed — nothing in
+        # the codebase ever writes is_active/phase, so it was dead context
+        # that taught a phase machine the engine never runs.)
 
         # Pending plan reminder
         pending_plan = getattr(state, "pending_plan", None)

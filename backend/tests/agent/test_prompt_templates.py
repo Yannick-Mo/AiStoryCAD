@@ -331,9 +331,9 @@ class TestSystemPromptContent:
 
 
 class TestToolUsageExamplesMatchSchemas:
-    """M15: system.yaml's tool_usage examples used `id=` for read_* tools
-    (real params are character_id/chapter_id/scene_id) and fake ordinal IDs.
-    Every example must use the real parameter names."""
+    """M15: static prompts must never show examples with generic `id=` params
+    or ordinal fake IDs, and the real parameter names must match the tool
+    registry schemas (single source of truth for the tool surface)."""
 
     _YAML = None
 
@@ -346,30 +346,34 @@ class TestToolUsageExamplesMatchSchemas:
             cls._YAML = p.read_text(encoding="utf-8")
         return cls._YAML
 
-    def test_read_examples_use_real_param_names(self):
+    @classmethod
+    def _registry(cls) -> dict:
+        from app.agent.tools import get_tool_registry
+        return get_tool_registry()
+
+    def test_prompt_never_uses_generic_id_param(self):
         src = self._load()
-        # No example may call read_* with a generic `id=` param.
-        assert 'read_character(id=' not in src
-        assert 'read_chapter(id=' not in src
-        assert 'read_scene(id=' not in src
-        # Correct names are present.
-        assert 'read_character(character_id=' in src
-        assert 'read_chapter(chapter_id=' in src
-        assert 'read_scene(scene_id=' in src
+        for call in ('read_character(id=', 'read_chapter(id=',
+                     'read_scene(id=', 'update_character(id='):
+            assert call not in src, f"{call} 不应出现在提示词示例中"
+
+    def test_read_examples_use_real_param_names(self):
+        reg = self._registry()
+        assert "scene_id" in reg["read_scene"].meta.parameters["properties"]
+        assert "chapter_id" in reg["read_chapter"].meta.parameters["properties"]
+        assert "character_id" in reg["read_character"].meta.parameters["properties"]
 
     def test_write_examples_use_scene_id(self):
-        src = self._load()
-        assert 'write_scene_content(scene_id=' in src
+        reg = self._registry()
+        write_params = reg["write_scene_content"].meta.parameters["properties"]
+        assert "scene_id" in write_params
+        assert "content" in write_params
 
     def test_update_character_uses_character_id(self):
-        src = self._load()
-        assert 'update_character(character_id=' in src
-        assert "update_character(id=" not in src
+        reg = self._registry()
+        assert "character_id" in reg["update_character"].meta.parameters["properties"]
 
     def test_no_ordinal_fake_ids_in_examples(self):
         src = self._load()
-        # The old "s-1"/"c-1" ordinal placeholders are gone in favor of <uuid>.
         assert 'scene_id="s-1"' not in src
         assert 'id="c-1"' not in src
-        assert 'scene_id="<uuid>"' in src
-        assert 'character_id="<uuid>"' in src

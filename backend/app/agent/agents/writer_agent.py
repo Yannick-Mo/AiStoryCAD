@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 from app.llm.client import LLMClient
 from app.llm.types import Message
@@ -8,6 +9,21 @@ from app.agent.prompts import render_prompt
 from app.agent.utils import count_words
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WritingResult:
+    """Output of a WritingAgent run.
+
+    ``truncated`` is True when the provider stopped the generation at
+    ``max_tokens`` (finish_reason == "length") — the caller must NOT treat
+    the text as the complete scene body (and must not sync the blueprint
+    against a possibly amputated ending).
+    """
+
+    text: str = ""
+    truncated: bool = False
+    characters: int = 0
 
 
 class WritingAgent:
@@ -24,7 +40,7 @@ class WritingAgent:
         client: LLMClient,
         context: dict,
         user_prompt: str,
-    ) -> str:
+    ) -> WritingResult:
         persona = render_prompt("persona") or ""
 
         kwargs = {
@@ -36,27 +52,33 @@ class WritingAgent:
         system = render_prompt(self.prompt_name, **kwargs)
         if not system:
             logger.error("Failed to render writer prompt")
-            return ""
+            return WritingResult()
 
         messages: list[Message] = [
             Message(role="system", content=system),
             Message(role="user", content="请直接输出正文，不要添加任何解释。"),
         ]
 
-        result = await client.chat(messages, temperature=0.8, max_tokens=8192)
-        text = (result.content or "").strip()
-
+        text, truncated = await self._generate(client, messages)
         if not text:
             logger.warning("WritingAgent returned empty content, retrying")
             messages.append(Message(role="assistant", content="（无输出）"))
             messages.append(Message(role="user", content="请输出正文内容。"))
-            result = await client.chat(messages, temperature=0.8, max_tokens=8192)
-            text = (result.content or "").strip()
+            text, truncated = await self._generate(client, messages)
 
         if text:
             wc = count_words(text)
-            logger.info("WritingAgent generated %d characters", wc)
-        else:
-            logger.error("WritingAgent failed to generate content after retry")
+            logger.info("WritingAgent generated %d characters (truncated=%s)", wc, truncated)
+            return WritingResult(text=text, truncated=truncated, characters=wc)
 
-        return text
+        logger.error("WritingAgent failed to generate content after retry")
+        return WritingResult()
+
+    async def _generate(
+        self, client: LLMClient, messages: list[Message]
+    ) -> tuple[str, bool]:
+        """One generation attempt. Returns (text, truncated)."""
+        result = await client.chat(messages, temperature=0.8, max_tokens=16384)
+        text = (result.content or "").strip()
+        truncated = getattr(result, "finish_reason", "") == "length"
+        return text, truncated

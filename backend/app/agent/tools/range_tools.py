@@ -11,12 +11,12 @@ from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
 class ReadChaptersTool(BaseTool):
     meta = ToolMeta(
         name="read_chapters",
-        description="按全局章节序号读取一个连续范围的章节（含每章标题、状态、目标全文，不含场景及其目标/正文）。"
-                    "全局章序号 = 全项目从第1幕第1章起连续编号（跨幕连续，第1幕第50章之后是第2幕第51章）。"
+        description="按全局章节序号读取一个连续范围的章节，每章含：全局序号/ID/标题/状态/所属幕与幕ID/目标全文。"
+                    "全局章序号 = 全项目从第1幕第1章起连续编号（跨幕连续，幕索引标了每幕章数可换算）。"
                     "例如想看第3到第7章：chapter_from=3、chapter_to=7。"
-                    "每章返回 act_id/act_name；要看某章内的场景请改用 read_chapter。"
+                    "章内场景的轻量清单请用 read_chapter_scenes；场景蓝图/正文用 read_scene / read_scene_content。"
                     "返回 truncated=true 时用 next_from 继续翻页。"
-                    "总章数与最新进度可用 read_recent 或项目框架了解",
+                    "最新进度可用 read_recent_scenes / read_recent_chapters 了解",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,
         max_result_chars=12000,
@@ -25,10 +25,6 @@ class ReadChaptersTool(BaseTool):
             "properties": {
                 "chapter_from": {"type": "integer", "description": "全局章序号起点（从1开始，含）"},
                 "chapter_to": {"type": "integer", "description": "全局章序号终点（含）"},
-                "include_goals": {
-                    "type": "boolean",
-                    "description": "是否包含每章目标全文（默认 true；只想扫标题/找ID可传 false 更省空间）",
-                },
             },
             "required": ["chapter_from", "chapter_to"],
         },
@@ -59,32 +55,23 @@ class ReadChaptersTool(BaseTool):
                 )
 
             builder = ContextBuilder(db)
-            include_goals = bool(kwargs.get("include_goals", True))
-            data = await builder.build_chapter_window(
-                pid, chapter_from, chapter_to, include_goals=include_goals
-            )
+            data = await builder.build_chapter_window(pid, chapter_from, chapter_to)
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
-class ReadRecentTool(BaseTool):
+class ReadRecentScenesTool(BaseTool):
     meta = ToolMeta(
-        name="read_recent",
-        description="读取最近写入/更新的场景或章节（按正文更新时间倒序，kind=scenes 返回场景快照含蓝图前500字，"
-                    "kind=chapters 返回这些场景所在章含章目标全文）。用于了解项目最新进展与动向。"
-                    "场景/章节ID 可从返回项中取得；要读完整正文/蓝图请用 read_scene/read_chapter",
+        name="read_recent_scenes",
+        description="读取最近写入/更新的场景（按正文更新时间倒序）：每项 = 场景ID/标题/所在章与幕/字数/更新时间/蓝图前500字。"
+                    "用于了解最新写到哪、拿最近场景的 ID。要完整蓝图/正文请用 read_scene / read_scene_content",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,
         parameters={
             "type": "object",
             "properties": {
-                "kind": {
-                    "type": "string",
-                    "description": "返回类型：scenes（最近写入的场景）/ chapters（最近写入场景所在章节），默认 scenes",
-                    "enum": ["scenes", "chapters"],
-                },
                 "n": {"type": "integer", "description": "返回条数（1-10，默认5）"},
             },
         },
@@ -97,19 +84,50 @@ class ReadRecentTool(BaseTool):
                 return self._missing_param("project_id")
             pid = uuid.UUID(pid_raw)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
-
-            kind = kwargs.get("kind") or "scenes"
-            if kind not in ("scenes", "chapters"):
-                return ToolResult(success=False, error="kind 仅支持 scenes 或 chapters")
             try:
                 n = int(kwargs.get("n") or 5)
             except (TypeError, ValueError):
                 n = 5
             n = max(1, min(n, 10))
-
             builder = ContextBuilder(db)
-            data = await builder.build_recent_items(pid, kind=kind, n=n)
+            data = await builder.build_recent_items(pid, kind="scenes", n=n)
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
+
+
+class ReadRecentChaptersTool(BaseTool):
+    meta = ToolMeta(
+        name="read_recent_chapters",
+        description="读取最近被写入的章节（按其中场景的正文更新时间倒序，去重）：每项 = 章节ID/标题/状态/目标全文/"
+                    "最新写入场景标题与时间。用于快速了解最近写作围绕哪些章。"
+                    "场景级动态请看 read_recent_scenes",
+        concurrency=ConcurrencyMode.SAFE,
+        timeout=30,
+        parameters={
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "description": "返回条数（1-10，默认5）"},
+            },
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            try:
+                n = int(kwargs.get("n") or 5)
+            except (TypeError, ValueError):
+                n = 5
+            n = max(1, min(n, 10))
+            builder = ContextBuilder(db)
+            data = await builder.build_recent_items(pid, kind="chapters", n=n)
+            return ToolResult(success=True, data=data)
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)

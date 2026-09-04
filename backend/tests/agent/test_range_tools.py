@@ -16,7 +16,11 @@ import pytest
 
 from app.agent.context import ContextBuilder
 from app.agent.tools.base import ToolMeta
-from app.agent.tools.range_tools import ReadChaptersTool, ReadRecentTool
+from app.agent.tools.range_tools import (
+    ReadChaptersTool,
+    ReadRecentScenesTool,
+    ReadRecentChaptersTool,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -84,20 +88,30 @@ class TestRegistration:
         assert "全局章序号" in ReadChaptersTool.meta.description
 
     def test_read_recent_meta(self):
-        assert ReadRecentTool.meta.name == "read_recent"
-        props = ReadRecentTool.meta.parameters["properties"]
-        assert props["kind"]["enum"] == ["scenes", "chapters"]
+        assert ReadRecentScenesTool.meta.name == "read_recent_scenes"
+        props = ReadRecentScenesTool.meta.parameters["properties"]
         assert props["n"]["description"].find("1-10") >= 0
+        assert "kind" not in props
+        assert ReadRecentChaptersTool.meta.name == "read_recent_chapters"
+        assert "kind" not in ReadRecentChaptersTool.meta.parameters["properties"]
+
+    def test_split_read_tools_registered(self):
+        from app.agent.tools import get_tool_registry
+        reg = get_tool_registry()
+        assert {"read_scene_content", "read_chapter_scenes", "read_relation",
+                "list_character_relations", "read_recent_scenes",
+                "read_recent_chapters"} <= set(reg)
+        assert "read_recent" not in reg
 
     def test_registry_and_modes(self):
         from app.agent.tools import get_tool_registry, get_filtered_tools
         reg = get_tool_registry()
-        assert {"read_chapters", "read_recent"} <= set(reg)
-        for name in ("read_chapters", "read_recent"):
+        assert {"read_chapters", "read_recent_scenes", "read_recent_chapters"} <= set(reg)
+        for name in ("read_chapters", "read_recent_scenes", "read_recent_chapters"):
             assert not reg[name].is_write_operation
         for mode in ("chat", "cowriter"):
             tools = get_filtered_tools(reg, mode=mode)
-            assert "read_chapters" in tools and "read_recent" in tools, mode
+            assert {"read_chapters", "read_recent_scenes", "read_recent_chapters"} <= set(tools), mode
 
     def test_deleted_tools_are_gone(self):
         from app.agent.tools import get_tool_registry
@@ -106,6 +120,7 @@ class TestRegistration:
         assert "read_project_overview" not in reg
         assert "list_chapters" not in reg
         assert "list_scenes" not in reg
+        assert "read_recent" not in reg
         assert verify_tool_registry(reg) == []
 
 
@@ -130,7 +145,6 @@ class TestReadChaptersValidation:
         builder.build_chapter_window.assert_awaited_once()
         args, kwargs = builder.build_chapter_window.call_args
         assert args[1] == 3 and args[2] == 7
-        assert kwargs.get("include_goals") is True
 
     async def test_window_reversed_errors(self):
         tool = ReadChaptersTool()
@@ -149,11 +163,11 @@ class TestReadChaptersValidation:
 class TestReadRecentValidation:
     @patch("app.agent.tools.range_tools.verify_project_owner")
     @patch("app.agent.tools.range_tools.ContextBuilder")
-    async def test_success_defaults(self, mock_builder_cls, mock_verify):
+    async def test_scenes_success_defaults(self, mock_builder_cls, mock_verify):
         builder = MagicMock()
         builder.build_recent_items = AsyncMock(return_value={"kind": "scenes", "items": []})
         mock_builder_cls.return_value = builder
-        tool = ReadRecentTool()
+        tool = ReadRecentScenesTool()
         res = await tool.run(db=MagicMock(), project_id=str(uuid.uuid4()), user_id="u1")
         assert res.success
         builder.build_recent_items.assert_awaited_once()
@@ -162,22 +176,28 @@ class TestReadRecentValidation:
 
     @patch("app.agent.tools.range_tools.verify_project_owner")
     @patch("app.agent.tools.range_tools.ContextBuilder")
-    async def test_n_clamped(self, mock_builder_cls, mock_verify):
+    async def test_chapters_kind_fixed(self, mock_builder_cls, mock_verify):
         builder = MagicMock()
         builder.build_recent_items = AsyncMock(return_value={"kind": "chapters", "items": []})
         mock_builder_cls.return_value = builder
-        tool = ReadRecentTool()
+        tool = ReadRecentChaptersTool()
+        res = await tool.run(db=MagicMock(), project_id=str(uuid.uuid4()), user_id="u1", n=3)
+        assert res.success
+        _, kwargs = builder.build_recent_items.call_args
+        assert kwargs["kind"] == "chapters" and kwargs["n"] == 3
+
+    @patch("app.agent.tools.range_tools.verify_project_owner")
+    @patch("app.agent.tools.range_tools.ContextBuilder")
+    async def test_n_clamped(self, mock_builder_cls, mock_verify):
+        builder = MagicMock()
+        builder.build_recent_items = AsyncMock(return_value={"kind": "scenes", "items": []})
+        mock_builder_cls.return_value = builder
+        tool = ReadRecentScenesTool()
         res = await tool.run(db=MagicMock(), project_id=str(uuid.uuid4()),
-                             user_id="u1", kind="chapters", n=99)
+                             user_id="u1", n=99)
         assert res.success
         _, kwargs = builder.build_recent_items.call_args
         assert kwargs["n"] == 10
-
-    async def test_bad_kind_errors(self):
-        tool = ReadRecentTool()
-        res = await tool.run(db=AsyncMock(), project_id=str(uuid.uuid4()),
-                             user_id="u1", kind="scen")
-        assert not res.success
 
 
 # ---------------------------------------------------------------------------
@@ -230,13 +250,13 @@ class TestBuildChapterWindow:
         assert out["chapters"] == []
         assert out["total_chapters"] == 1
 
-    async def test_include_goals_false_omits_goal(self):
+    async def test_window_always_includes_goal(self):
         a1 = uuid.uuid4()
         chs = [_chapter(uuid.uuid4(), a1, "章", goal="目标全文")]
         db = self._window_db(chs, [(a1, "幕")])
         builder = ContextBuilder(db)
-        out = await builder.build_chapter_window(uuid.uuid4(), 1, 1, include_goals=False)
-        assert "goal" not in out["chapters"][0]
+        out = await builder.build_chapter_window(uuid.uuid4(), 1, 1)
+        assert out["chapters"][0]["goal"] == "目标全文"
 
     async def test_budget_trims_with_next_from(self):
         a1 = uuid.uuid4()
@@ -277,8 +297,8 @@ class TestBuildRecentItems:
         builder = ContextBuilder(db)
         out = await builder.build_recent_items(uuid.uuid4(), kind="scenes", n=5)
         assert out["truncated"] is False
-        item = out["items"][0]
-        assert item["scene_id"] == str(sid)
+        item = out["scenes"][0]
+        assert item["id"] == str(sid)
         assert item["chapter_title"] == "第三章"
         assert item["act_name"] == "第二幕"
         assert item["word_count"] == 1234
@@ -290,7 +310,7 @@ class TestBuildRecentItems:
         db = _fake_db(_QueryResult(rows=[]))
         builder = ContextBuilder(db)
         out = await builder.build_recent_items(uuid.uuid4(), kind="scenes")
-        assert out == {"kind": "scenes", "items": [], "truncated": False}
+        assert out == {"scenes": [], "truncated": False}
 
     async def test_recent_chapters_dedup_with_goal(self):
         cid1, cid2 = uuid.uuid4(), uuid.uuid4()
@@ -308,37 +328,35 @@ class TestBuildRecentItems:
         )
         builder = ContextBuilder(db)
         out = await builder.build_recent_items(uuid.uuid4(), kind="chapters", n=2)
-        assert [i["chapter_id"] for i in out["items"]] == [str(cid1), str(cid2)]
-        first = out["items"][0]
+        assert [i["id"] for i in out["chapters"]] == [str(cid1), str(cid2)]
+        first = out["chapters"][0]
         assert first["goal"] == "目标甲"
         assert first["latest_scene_title"] == "新场"
 
 
 # ---------------------------------------------------------------------------
-# read_scene pagination (run-level with real models)
+# read_scene_content pagination (run-level)
 # ---------------------------------------------------------------------------
 
-class TestReadScenePagination:
+class TestReadSceneContentPagination:
     async def _run(self, body, offset, limit):
         from types import SimpleNamespace
 
-        from app.agent.tools.project_tools import ReadSceneTool
+        from app.agent.tools.project_tools import ReadSceneContentTool
 
         pid, sid = uuid.uuid4(), uuid.uuid4()
         scene = SimpleNamespace(id=sid, project_id=pid, title="场")
         project = SimpleNamespace(id=pid)
         content = SimpleNamespace(content=body)
-        tool = ReadSceneTool()
+        tool = ReadSceneContentTool()
         db = _fake_db(
             _QueryResult(scalars=[scene]),
             _QueryResult(scalars=[project]),
             _QueryResult(scalars=[content]),
         )
-        with patch("app.agent.tools.project_tools.row_to_dict",
-                   return_value={"id": str(sid), "project_id": str(pid), "title": "场"}):
-            return await tool.run(db, project_id=str(pid), user_id="u1",
-                                  scene_id=str(sid), include_content=True,
-                                  content_offset=offset, content_limit=limit)
+        return await tool.run(db, project_id=str(pid), user_id="u1",
+                              scene_id=str(sid),
+                              content_offset=offset, content_limit=limit)
 
     async def test_first_page_no_more(self):
         res = await self._run("短正文", 0, 6000)

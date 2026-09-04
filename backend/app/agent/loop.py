@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.context_compressor import (
     async_compress_context,
     build_boundary_message,
+    estimate_text_tokens,
     estimate_tokens,
     should_compress,
 )
@@ -45,7 +46,7 @@ from app.agent.token_budget import (
     check_token_budget,
     compute_budget,
 )
-from app.agent.tools import get_filtered_tools, get_tool_descriptions
+from app.agent.tools import get_filtered_tools
 from app.agent.tools.base import BaseTool
 from app.agent.tools.streaming_executor import StreamingToolExecutor
 from app.config import settings
@@ -58,17 +59,7 @@ from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 MAX_TURNS = 30
 MAX_RECOVERY = 3
-MODEL_CONTEXT_LIMIT = settings.llm_context_window  # tokens (DeepSeek 128K window)
-
-# ── Tool description cache ────────────────────────────────────────────
-_TOOL_DESC_CACHE: dict[str, str] = {}
-
-def _get_tool_descriptions_cached(filtered_tools: dict) -> str:
-    keys = tuple(sorted(filtered_tools))
-    h = str(hash(keys))
-    if h not in _TOOL_DESC_CACHE:
-        _TOOL_DESC_CACHE[h] = get_tool_descriptions(filtered_tools)
-    return _TOOL_DESC_CACHE[h]
+MODEL_CONTEXT_LIMIT = settings.llm_context_window  # tokens (single source: settings.llm_context_window)
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -319,6 +310,10 @@ def _render_cowriter_persona() -> str:
 
 _FRAMEWORK_SECTION_MAX = 12000
 _ACT_INDEX_MAX = 3000
+# Characters/relations/edges get their own budget so a long detail tree can
+# never starve the entity rosters entirely out of the prompt (independent of
+# the tree budget above; both are per-component ceilings).
+_ENTITY_SECTION_MAX = 3000
 
 
 def _render_framework_section(state: "LoopState") -> str:
@@ -404,7 +399,9 @@ def _render_framework_section(state: "LoopState") -> str:
             )
             if scenes:
                 scenes_txt = "；".join(
-                    f"{s.get('sort_order')}. {s.get('title') or '未命名'}(scene_id={s.get('id')})"
+                    f"{s.get('sort_order')}. {s.get('title') or '未命名'}"
+                    f"(scene_id={s.get('id')}, "
+                    f"{'已写' if (s.get('word_count') or 0) > 0 else '未写'})"
                     for s in scenes
                 )
                 ch_line += f" 场次: {scenes_txt}"
@@ -426,6 +423,8 @@ def _render_framework_section(state: "LoopState") -> str:
             f"{c.get('name') or '?'}({c.get('role') or '角色'}, character_id={c.get('id')})"
             for c in characters[:60]
         )
+        if len(characters) > 60:
+            char_txt += f"；…（还有 {len(characters) - 60} 个角色未列出，用 list_characters 获取）"
         entity_blocks.append(("角色", f"## 角色\n{char_txt}"))
     relations = ctx.get("relations", [])
     if relations:
@@ -434,6 +433,8 @@ def _render_framework_section(state: "LoopState") -> str:
             src = r.get("character_name") or r.get("character_id") or "?"
             tgt = r.get("target_name") or r.get("target_id") or "?"
             rel_lines.append(f"- {src} → {r.get('label') or r.get('rel_type')} → {tgt}")
+        if len(relations) > 40:
+            rel_lines.append(f"- ...（还有 {len(relations) - 40} 条关系未列出，用 list_relations / list_character_relations 获取）")
         entity_blocks.append(("关系", "## 关系\n" + "\n".join(rel_lines)))
     edges = ctx.get("edges", [])
     if edges:
@@ -442,13 +443,35 @@ def _render_framework_section(state: "LoopState") -> str:
             src = e.get("source_title") or e.get("source_id") or "?"
             tgt = e.get("target_title") or e.get("target_id") or "?"
             edge_lines.append(f"- {src} -[{e.get('edge_type')}]-> {tgt}")
+        if len(edges) > 40:
+            edge_lines.append(f"- ...（还有 {len(edges) - 40} 条连线未列出，用 list_edges 获取）")
         entity_blocks.append(("连线", "## 连线\n" + "\n".join(edge_lines)))
 
+    # Entity blocks get their own budget (independent of the tree budget above):
+    # a long detail tree must never starve the character/relation/edge rosters
+    # out of the prompt entirely.  The three blocks share one cap; a single
+    # oversized block is trimmed per-row with an honest note.
+    entity_used = 0
     for label, block in entity_blocks:
-        if not truncated and fits(block):
+        if entity_used + 1 + len(block) <= _ENTITY_SECTION_MAX:
             emit(block)
+            entity_used += 1 + len(block)
+            continue
+        # Block too big for the remaining entity budget: keep the header plus
+        # as many rows as fit, then note the omission honestly.
+        head, _, body = block.partition("\n")
+        remaining = _ENTITY_SECTION_MAX - entity_used - 1 - len(head)
+        if remaining > 40:
+            kept = []
+            used_rows = 0
+            for row in body.split("\n"):
+                if used_rows + 1 + len(row) > remaining:
+                    kept.append(f"- ...（{label}清单较长，其余行未列出，用对应 list_* 工具获取完整清单）")
+                    break
+                kept.append(row)
+                used_rows += 1 + len(row)
+            emit(head + "\n" + "\n".join(kept))
         else:
-            truncated = True
             omitted_labels.append(label)
 
     # Accurate structural truncation note
@@ -481,14 +504,14 @@ async def _build_turn_sections(
     state: "LoopState",
     cowriter_persona: str,
     dynamic_sections: dict[str, str],
-    filtered_tool_desc: str,
-    budget_check: dict,
+    budget_check: dict | None = None,
 ) -> list[str]:
     """Assemble per-turn system-prompt sections (everything after the static base).
 
     Returns an ordered list of section strings that the caller joins together
     and appends to the static ``base_system`` prefix.
     """
+    budget_check = budget_check or {}
     from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
 
     proj = state.project_context.get("project", {})
@@ -530,9 +553,10 @@ async def _build_turn_sections(
         ctx_parts.append(f"类型: {proj_genre}")
     if proj_logline:
         ctx_parts.append(f"一句话梗概: {proj_logline}")
+    gs_total = proj.get("global_settings_chars") or len(proj_global_settings)
     if proj_global_settings:
-        if len(proj_global_settings) > 2000:
-            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {len(proj_global_settings)} 字，已截断。可用 read_project 读取完整设定]"
+        if gs_total > 2000:
+            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {gs_total} 字，已截断。可用 read_global_settings 分页读取完整设定]"
         else:
             gs_snippet = proj_global_settings
         ctx_parts.append(f"全局设定:\n{gs_snippet}")
@@ -549,7 +573,14 @@ async def _build_turn_sections(
         sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
         for a in acts_data
     )
-    stats_parts = [f"项目规模：{len(acts_data)}幕/{total_ch}章/{total_sc}场"]
+    written_sc = sum(
+        1
+        for a in acts_data
+        for ch in a.get("chapters", [])
+        for s in ch.get("scenes", [])
+        if (s.get("word_count") or 0) > 0
+    )
+    stats_parts = [f"项目规模：{len(acts_data)}幕/{total_ch}章/{total_sc}场(已写{written_sc}场)"]
     if characters_data:
         stats_parts.append(f"{len(characters_data)}角色")
     if relations_data:
@@ -563,9 +594,15 @@ async def _build_turn_sections(
     if framework:
         sections.append(framework)
     sections.append(
-        "场景正文需通过 read_scene 工具读取。如需更多细节，使用 read_character / "
-        "read_chapter / list_relations 等工具。项目框架以列表为准，未列出的 ID "
-        "必须通过 list_* 工具获取。"
+        "场景蓝图用 read_scene 读取，正文用 read_scene_content 分页读取。\n"
+        "# --- 获取实体 ID 指南 ---\n"
+        "框架树与幕索引已直接给出部分 act/chapter/scene 的 ID；系统提示中「已知实体 ID」段的 ID 可直接引用。\n"
+        "未在树中列出的实体按以下方式获取 ID：\n"
+        "- 章节 ID：read_chapters(chapter_from, chapter_to)（全局章号 = 前面各幕章数之和 + 幕内序号，幕索引每幕标了章数）\n"
+        "- 场景 ID：read_chapter_scenes(chapter_id)（该章全部场景的 ID/标题清单，轻量）\n"
+        "- 最近写入的实体 ID：read_recent_scenes / read_recent_chapters\n"
+        "- 关键词定位（忘了在哪）：search_nodes(keyword)\n"
+        "- 角色 / 关系 / 连线 ID：list_characters / list_character_relations / list_relations / list_edges"
     )
 
     # 6. Recent scenes hint
@@ -591,11 +628,12 @@ async def _build_turn_sections(
         skill_lines.append("用户也可在消息中以 /技能名称 的形式直接调用。")
         sections.append("\n".join(skill_lines))
 
-    # 8. Active skill prompts
+    # 8. Active skill prompts (bounded: only the most recent activations so a
+    # long session never accumulates unbounded skill guidance)
     active_skills = state.active_skills or []
     if active_skills and state.project_id:
         try:
-            merged_prompts = await _skill_engine.get_merged_prompts(active_skills)
+            merged_prompts = await _skill_engine.get_merged_prompts(active_skills[-5:])
             if merged_prompts:
                 prompt_lines = ["\n# --- 当前已激活技能写作指导 ---"]
                 for key, val in merged_prompts.items():
@@ -605,7 +643,7 @@ async def _build_turn_sections(
             logger.warning("Failed to load active skill prompts", exc_info=True)
 
     # 9. Dynamic sections from AttachmentInjector
-    for section_name in ("id_registry", "session_progress", "plan_reminder", "error_context"):
+    for section_name in ("id_registry", "plan_reminder", "error_context"):
         text = dynamic_sections.get(section_name)
         if text:
             sections.append(text)
@@ -613,9 +651,6 @@ async def _build_turn_sections(
     # 10. Token budget warning
     if state.budget_warn_level:
         sections.append(budget_check["message"])
-
-    # 11. Tool list
-    sections.append(f"# --- 可用工具 ---\n{filtered_tool_desc}")
 
     return sections
 
@@ -638,7 +673,7 @@ async def autonomous_loop(
     tools: dict[str, BaseTool],
     llm_client: LLMClient,
     db: AsyncSession,
-    tool_descriptions: str,
+    tool_descriptions: str = "",
 ) -> AsyncGenerator[dict, None]:
     """Model-driven autonomous agent loop.
 
@@ -667,11 +702,11 @@ async def autonomous_loop(
     base_system += "\n\n# --- 应用参考 ---\n" + APP_GUIDE
     base_system += """
 # --- 项目数据访问规则（必须遵守） ---
-- 项目框架数据（幕/章/场景结构、角色档案、主题、关系）已在上下文中提供，可直接引用。
-- 场景蓝图（Scene.summary）是每场戏的创作计划与事实档案；它随框架数据提供，是续写、
-  分析与规划的优先依据，不需要调用 read_scene 读正文。
-- 场景正文内容不包含在上下文中——需要使用读取工具获取（read_scene 默认只返回蓝图；
-  如需正文做文字编辑，请传 include_content=true）。
+- 项目框架数据（幕/章/场景结构、角色、关系）已在上下文中提供，可直接引用（含 ID）。
+- 场景蓝图（Scene.summary）是每场戏的创作计划与事实档案，是续写、分析与规划的优先依据；
+  蓝图用 read_scene 读取（单场）。
+- 场景正文内容不包含在上下文中——需要正文做文字级编辑时用 read_scene_content 分页读取。
+- 章内场景导航（拿场景 ID）用 read_chapter_scenes；章目标用 read_chapter 或 read_chapters。
 - 写入正文后必须同步场景蓝图：call_writer_agent 会自动同步；直接写正文的工具
   （write_scene_content 等）之后请调用 sync_scene_blueprint。
 - 在进行写入操作之前，先通过读取工具获取最新数据。
@@ -756,26 +791,11 @@ async def autonomous_loop(
 
         # ── Re-filter tools (skills may have changed) ──────────────
         filtered_tools = get_filtered_tools(tools, mode=state.mode)
-        filtered_tool_desc = _get_tool_descriptions_cached(filtered_tools) or tool_descriptions
         tool_schemas = _build_tool_schemas(filtered_tools)
 
-        # ── Token budget check ─────────────────────────────────────
-        budget = compute_budget(state.messages, state.tool_results, MODEL_CONTEXT_LIMIT)
-        budget_check = check_token_budget(budget)
-        state = state.replace(
-            budget_total_estimated=budget.total_estimated_tokens,
-            budget_model_limit=budget.model_limit,
-            budget_warn_level=budget_check["warn"],
-            budget_last_delta=budget.total_estimated_tokens - state.budget_total_estimated,
-        )
-
-        # ── Build system prompt (before compression so the context
-        #    estimate includes it — the system prompt occupies the same
-        #    window and must not be excluded from the compression trigger) ──
-        # Rebuild the merged ID registry from the persisted baseline + this
-        # request's tool-result window.  tool_results survive compression, so
-        # the registry stays available across turns without verbatim message
-        # preservation.
+        # ── Build per-turn system-prompt sections ──────────────────
+        # (before the token-budget check so the budget estimate can count the
+        # system prompt itself — it occupies the same window.)
         state = state.replace(
             id_registry=build_id_registry(
                 state.tool_results,
@@ -786,7 +806,29 @@ async def autonomous_loop(
         dynamic_sections = _attach.build_system_sections(state)
         sections = await _build_turn_sections(
             state, cowriter_persona, dynamic_sections,
-            filtered_tool_desc, budget_check,
+        )
+
+        # ── Token budget check (system prompt + tool schemas included) ──
+        # system prompt + per-turn sections are rebuilt every turn and the
+        # tools[] schema is sent alongside — both live in the same window as
+        # the message history and must count toward the compression trigger.
+        schema_text = json.dumps(
+            [t.to_openai_tool() for t in filtered_tools.values()],
+            ensure_ascii=False,
+        ) if filtered_tools else ""
+        system_tokens = estimate_text_tokens(base_system + "\n\n" + "\n\n".join(sections) + "\n\n" + schema_text)
+        budget = compute_budget(
+            state.messages, state.tool_results,
+            MODEL_CONTEXT_LIMIT, extra_tokens=system_tokens,
+        )
+        budget_check = check_token_budget(budget)
+        if budget_check["warn"] and budget_check["message"]:
+            sections.append(budget_check["message"])
+        state = state.replace(
+            budget_total_estimated=budget.total_estimated_tokens,
+            budget_model_limit=budget.model_limit,
+            budget_warn_level=budget_check["warn"],
+            budget_last_delta=budget.total_estimated_tokens - state.budget_total_estimated,
         )
         system_content = base_system + "\n\n" + "\n\n".join(sections)
 
@@ -875,7 +917,8 @@ async def autonomous_loop(
         # drops below the threshold, so it won't re-fire until messages regrow.
         original_count = len(state.messages)
         compressed = list(state.messages)
-        if should_compress(state.messages, MODEL_CONTEXT_LIMIT):
+        if should_compress(state.messages, MODEL_CONTEXT_LIMIT,
+                           system_prompt=system_content):
             # Anti-oscillation guard: if the context barely grew since the
             # last compression, skip — avoids repeated LLM summaries near the
             # 70% edge (compress → ratio just under → add 1 msg → re-fire).
@@ -1198,9 +1241,10 @@ async def autonomous_loop(
             break
 
         # ── Step 7a: Detect tool-parameter failure cascade ──────────
-        # If 3+ tools failed with "参数缺失" in this turn, inject a
-        # system reminder that breaks the retry loop. This is critical
-        # for DeepSeek flash models which tend to ignore error feedback.
+        # If 3+ tools failed with "参数缺失" (or teaching errors that point at
+        # stale/fabricated IDs) in this turn, inject a system reminder that
+        # breaks the retry loop. This is critical for DeepSeek flash models
+        # which tend to ignore error feedback.
         missing_param_failures = 0
         for r in new_tool_results:
             err = r.get("error")
@@ -1208,13 +1252,14 @@ async def autonomous_loop(
                 continue
             if not isinstance(err, str):
                 err = str(err)
-            if "参数缺失" in err or "未提供" in err:
+            if ("参数缺失" in err or "未提供" in err
+                    or "不是合法的 UUID" in err or "不属于当前用户" in err):
                 missing_param_failures += 1
         if missing_param_failures >= 3:
             reminder = (
-                "⚠️ 本轮有 {} 个工具因为缺少必要参数而调用失败。\n"
+                "⚠️ 本轮有 {} 个工具因为缺少必要参数或使用了无效/过期 ID 而调用失败。\n"
                 "请停止逐一尝试每个工具！先调用 ID 来源工具（read_chapters、"
-                "read_chapter、list_characters、list_relations）获取有效的 ID，然后再用这些 ID "
+                "read_chapter_scenes、list_characters、list_relations、list_edges）获取有效的 ID，然后再用这些 ID "
                 "调用需要它们的工具。\n"
                 "工具列表中每个工具后标注了 (必须: ...) —— 这表示该参数必须提供。"
             ).format(missing_param_failures)
@@ -1268,8 +1313,23 @@ async def autonomous_loop(
         from app.agent.response_builder import build_system_prompt
 
         gen_state = state.to_dict()
+        rag_text = ""
         try:
-            sys_content = await build_system_prompt(gen_state)
+            if state.project_id:
+                import uuid as _uuid
+                from app.agent.context import ContextBuilder
+                hint = ""
+                for m in reversed(state.messages):
+                    if m.role == "user" and m.content:
+                        hint = m.content[:200]
+                        break
+                rag_text = await ContextBuilder(db).get_rag_context(
+                    _uuid.UUID(state.project_id), hint,
+                )
+        except Exception:
+            logger.warning("RAG fetch failed (final pass), continuing without it", exc_info=True)
+        try:
+            sys_content = await build_system_prompt(gen_state, rag_text=rag_text)
         except Exception as e:
             logger.warning("build_system_prompt failed: %s", e)
             # Build a reasonable fallback in Chinese
@@ -1298,7 +1358,7 @@ async def autonomous_loop(
                 temperature=0.7,
                 request_id=state.trace_id,
                 model=active_model,
-                tools=tool_schemas,
+                tools=None,  # final reply is plain text — don't send schemas
                 max_tokens=state.max_tokens,
                 session_id=state.conversation_id,
             ):

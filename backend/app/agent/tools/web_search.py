@@ -300,4 +300,4 @@ class WebSearchTool(BaseTool):
             return ToolResult(success=True, data=safe_results)
         except Exception as e:
             logger.exception("web_search failed for query=%s", query)
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

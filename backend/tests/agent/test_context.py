@@ -111,11 +111,12 @@ class TestInvalidateProject:
         assert _CONTEXT_CACHE.get(f"ctx_cache:{other}:full:") == {"z": 3}
 
 
-class TestBuildSummaryCacheHitRefreshesRag:
-    """M16: cache hits were returning the framework WITHOUT rag_context (RAG was
-    computed after _cache_set). Now RAG is refreshed fresh on every call."""
+class TestRagFetchedOnDemandOnly:
+    """RAG knowledge must be fetched on demand (final response pass), never
+    baked into build_summary's shared per-project cache (it is query-dependent
+    and would pollute other sessions' snapshots)."""
 
-    async def test_cache_hit_includes_fresh_rag_context(self):
+    async def test_get_rag_context_fetches_fresh(self):
         from unittest.mock import AsyncMock
 
         from app.agent.context import ContextBuilder
@@ -123,16 +124,29 @@ class TestBuildSummaryCacheHitRefreshesRag:
 
         builder = ContextBuilder(AsyncMock())
         pid = uuid.uuid4()
-        cached = {"project": {"genre": "fantasy"}, "acts": [], "characters": []}
 
-        builder._cache_get = AsyncMock(return_value=cached)
+        builder._get_project = AsyncMock(return_value=type("P", (), {"genre": "fantasy"})())
         builder._get_rag_context_if_meaningful = AsyncMock(return_value="KNOWLEDGE")
 
-        out = await builder.build_summary(
-            pid, query_hint="请帮我分析这个角色的性格发展", depth="minimal"
-        )
-        assert out["rag_context"] == "KNOWLEDGE"
+        out = await builder.get_rag_context(pid, query_hint="分析角色")
+        assert out == "KNOWLEDGE"
         builder._get_rag_context_if_meaningful.assert_awaited_once()
+
+    async def test_build_summary_never_contains_rag(self):
+        from unittest.mock import AsyncMock
+
+        from app.agent.context import ContextBuilder
+        import uuid
+
+        builder = ContextBuilder(AsyncMock())
+        pid = uuid.uuid4()
+        cached = {"project": {"title": "T", "genre": "", "global_settings": ""},
+                  "acts": [], "characters": [], "relations": [], "edges": []}
+        builder._cache_get = AsyncMock(return_value=cached)
+        builder._get_rag_context_if_meaningful = AsyncMock(return_value="KNOWLEDGE")
+        out = await builder.build_summary(pid, depth="framework")
+        assert "rag_context" not in out
+        builder._get_rag_context_if_meaningful.assert_not_awaited()
 
 
 class TestTrimContextPreservesTier0InsertionOrder:

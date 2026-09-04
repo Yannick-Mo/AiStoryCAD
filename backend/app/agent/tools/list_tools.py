@@ -10,24 +10,35 @@ from app.storycad.models import Chapter, Scene, ChapterEdge, Character, Characte
 from app.utils import row_to_dict
 
 
+def _decorate_relations(rels, char_names):
+    """Light relation rows (browse/network level): identity + type + numeric
+    markers only — the long description text belongs to read_relation."""
+    rows = []
+    for r in rels:
+        rows.append({
+            "id": str(r.id),
+            "character_id": str(r.character_id),
+            "character_name": char_names.get(str(r.character_id), "?"),
+            "target_id": str(r.target_id),
+            "target_name": char_names.get(str(r.target_id), "?"),
+            "rel_type": r.rel_type or "",
+            "label": r.label or "",
+            "trust": r.trust if r.trust is not None else 50,
+            "threat": r.threat if r.threat is not None else 50,
+            "attraction": r.attraction if r.attraction is not None else 50,
+        })
+    return rows
+
+
 class ListRelationsTool(BaseTool):
     meta = ToolMeta(
         name="list_relations",
-        description="读取角色关系数据。每行关系包含：双方角色名/id、关系类型与标签、说明、信任/威胁/吸引力数值(0-100)。"
-                    "用法区分："
-                    "① 不带参数 = 浏览全项目关系网络（了解整体人物关系格局，适合开局摸底）；"
-                    "② 带 character_id = 精读某角色的关系网（写该角色互动戏前调用，确认他与每个人的关系数值）；"
-                    "③ 带 relation_id = 精读单条关系（返回该条完整数据，含详细说明全文——需要某段关系的完整背景细节时用）；"
-                    "④ 带 rel_type = 只看某类关系（如敌对/亲情），配合 character_id 可缩小网络。"
-                    "②③④都会缩小结果集，数据量大时优先使用。若要确认关系说明全文请用 ③",
+        description="浏览全项目角色关系网络：每行 = 双方角色名/id、关系类型、标签、信任/威胁/吸引力数值(0-100)。"
+                    "用于了解整体人物关系格局。不含关系说明全文——需要某条关系的完整背景用 read_relation(relation_id)",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
-            "properties": {
-                "character_id": {"type": "string", "description": "精读某角色的关系网：只返回该角色参与的关系（含该角色主动与被动两端）"},
-                "relation_id": {"type": "string", "description": "精读单条关系：只返回这条关系的完整数据（说明全文不截断）。relation_id 来自本工具返回结果"},
-                "rel_type": {"type": "string", "description": "按关系类型过滤（如 敌对/亲情/师生/好友），可与 character_id 组合缩小结果"},
-            },
+            "properties": {},
         },
     )
 
@@ -35,49 +46,161 @@ class ListRelationsTool(BaseTool):
         try:
             pid = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, pid, kwargs.get("user_id"))
-
-            q = select(CharacterRelation).where(CharacterRelation.project_id == pid)
-            if kwargs.get("relation_id"):
-                # 单条精读：只按项目+ID 过滤，返回完整行
-                q = q.where(CharacterRelation.id == uuid.UUID(kwargs["relation_id"]))
-            else:
-                if kwargs.get("character_id"):
-                    char_id = uuid.UUID(kwargs["character_id"])
-                    q = q.where(
-                        (CharacterRelation.character_id == char_id) |
-                        (CharacterRelation.target_id == char_id)
-                    )
-                if kwargs.get("rel_type"):
-                    q = q.where(CharacterRelation.rel_type == str(kwargs["rel_type"]))
-            rels_result = await db.execute(q)
+            rels_result = await db.execute(
+                select(CharacterRelation).where(CharacterRelation.project_id == pid)
+            )
             rels = rels_result.scalars().all()
-
-            # Load character names
             chars_result = await db.execute(
                 select(Character.id, Character.name).where(Character.project_id == pid)
             )
             char_names = {str(c.id): c.name for c in chars_result}
-
-            result_data = []
-            for r in rels:
-                d = row_to_dict(r)
-                d["character_name"] = char_names.get(str(r.character_id), "?")
-                d["target_name"] = char_names.get(str(r.target_id), "?")
-                result_data.append(d)
-
             return ToolResult(success=True, data={
-                "relations": result_data,
-                "total": len(result_data),
+                "relations": _decorate_relations(rels, char_names),
+                "total": len(rels),
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
+
+
+class ListCharacterRelationsTool(BaseTool):
+    meta = ToolMeta(
+        name="list_character_relations",
+        description="列出某角色参与的全部关系（主动与被动两端）：每行 = 对方角色名/id、关系类型、标签、"
+                    "信任/威胁/吸引力数值(0-100)。写该角色互动戏前调用，确认他与每个人的关系。"
+                    "需要某条关系的完整说明用 read_relation",
+        concurrency=ConcurrencyMode.SAFE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_id": {"type": "string", "description": "角色ID，来自 list_characters"},
+            },
+            "required": ["character_id"],
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            char_id = uuid.UUID(kwargs["character_id"])
+            rels_result = await db.execute(
+                select(CharacterRelation).where(
+                    CharacterRelation.project_id == pid,
+                    (CharacterRelation.character_id == char_id) |
+                    (CharacterRelation.target_id == char_id),
+                )
+            )
+            rels = rels_result.scalars().all()
+            chars_result = await db.execute(
+                select(Character.id, Character.name).where(Character.project_id == pid)
+            )
+            char_names = {str(c.id): c.name for c in chars_result}
+            return ToolResult(success=True, data={
+                "relations": _decorate_relations(rels, char_names),
+                "total": len(rels),
+            })
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
+
+
+class ReadRelationTool(BaseTool):
+    meta = ToolMeta(
+        name="read_relation",
+        description="精读单条角色关系：完整数据（双方角色名/id、类型、标签、信任/威胁/吸引力数值、说明全文）。"
+                    "写互动戏需要某段关系的完整背景细节时用。relation_id 来自 list_relations 或 list_character_relations",
+        concurrency=ConcurrencyMode.SAFE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "relation_id": {"type": "string", "description": "关系ID，来自 list_relations / list_character_relations 返回结果"},
+            },
+            "required": ["relation_id"],
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            rel_id = uuid.UUID(kwargs["relation_id"])
+            rel_result = await db.execute(
+                select(CharacterRelation).where(
+                    CharacterRelation.project_id == pid,
+                    CharacterRelation.id == rel_id,
+                )
+            )
+            rel = rel_result.scalar_one_or_none()
+            if not rel:
+                return self._not_found("Relation in project")
+            chars_result = await db.execute(
+                select(Character.id, Character.name).where(Character.project_id == pid)
+            )
+            char_names = {str(c.id): c.name for c in chars_result}
+            d = row_to_dict(rel)
+            d["character_name"] = char_names.get(str(rel.character_id), "?")
+            d["target_name"] = char_names.get(str(rel.target_id), "?")
+            return ToolResult(success=True, data={"relations": [d], "total": 1})
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
+
+
+class ReadChapterScenesTool(BaseTool):
+    meta = ToolMeta(
+        name="read_chapter_scenes",
+        description="列出某章内全部场景的轻量清单（导航用）：每场 = ID/标题/序号/POV角色/字数/是否已写。"
+                    "不含蓝图全文——拿到场景 ID 后如需要蓝图/正文请用 read_scene / read_scene_content。"
+                    "chapter_id 来自 read_chapters（范围）或项目框架结构概览",
+        concurrency=ConcurrencyMode.SAFE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或项目框架结构概览"},
+            },
+            "required": ["chapter_id"],
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            ch_id = uuid.UUID(kwargs["chapter_id"])
+            ch_result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
+            chapter = ch_result.scalar_one_or_none()
+            if not chapter:
+                return self._not_found("Chapter")
+            await verify_project_owner(db, chapter.project_id, kwargs.get("user_id"))
+            scenes_result = await db.execute(
+                select(Scene).where(Scene.chapter_id == ch_id).order_by(Scene.sort_order)
+            )
+            scenes = [
+                {
+                    "id": str(s.id),
+                    "title": s.title,
+                    "sort_order": s.sort_order,
+                    "pov_character": s.pov_character or "",
+                    "word_count": s.word_count or 0,
+                    "written": bool((s.word_count or 0) > 0),
+                }
+                for s in scenes_result.scalars().all()
+            ]
+            return ToolResult(success=True, data={
+                "chapter_id": str(ch_id),
+                "chapter_title": chapter.title or "",
+                "scenes": scenes,
+                "total": len(scenes),
+            })
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
 
 
 class ListEdgesTool(BaseTool):
     meta = ToolMeta(
         name="list_edges",
-        description="列出项目中所有章节连线（剧情流向）",
+        description="列出项目中所有章节连线（剧情流向）：每行 = 连线ID/源章→目标章(标题与ID)/类型(timeline/causal/foreshadow/character)/标签。"
+                    "用于确认剧情流向、查因果与伏笔链",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
@@ -109,10 +232,15 @@ class ListEdgesTool(BaseTool):
 
             result_data = []
             for e in edges:
-                d = row_to_dict(e)
-                d["source_title"] = ch_map.get(str(e.source_id), "?")
-                d["target_title"] = ch_map.get(str(e.target_id), "?")
-                result_data.append(d)
+                result_data.append({
+                    "id": str(e.id),
+                    "source_id": str(e.source_id),
+                    "source_title": ch_map.get(str(e.source_id), "?"),
+                    "target_id": str(e.target_id),
+                    "target_title": ch_map.get(str(e.target_id), "?"),
+                    "edge_type": e.edge_type or "",
+                    "label": e.label or "",
+                })
 
             return ToolResult(success=True, data={
                 "edges": result_data,
@@ -120,7 +248,7 @@ class ListEdgesTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class SearchNodesTool(BaseTool):
@@ -243,4 +371,4 @@ class SearchNodesTool(BaseTool):
             })
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

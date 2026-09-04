@@ -129,7 +129,7 @@ class AnalyzeChapterTool(BaseTool):
             return ToolResult(success=True, data=parsed)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class AnalyzeCharacterArcTool(BaseTool):
@@ -186,7 +186,7 @@ class AnalyzeCharacterArcTool(BaseTool):
             return ToolResult(success=True, data=parsed)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class SuggestNextTool(BaseTool):
@@ -247,7 +247,7 @@ class SuggestNextTool(BaseTool):
             return ToolResult(success=True, data={**summary, **parsed})
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)
 
 
 class ProjectHealthTool(BaseTool):
@@ -273,4 +273,4 @@ class ProjectHealthTool(BaseTool):
             return ToolResult(success=True, data=snapshot)
         except Exception as e:
             await db.rollback()
-            return ToolResult(success=False, error=str(e))
+            return self._err(e)

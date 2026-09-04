@@ -294,7 +294,7 @@ def test_filtered_snapshot_does_not_replace():
         result("list_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]}),
     ])
     reg = build_id_registry([
-        result("list_relations", {"relations": [{"id": "r2", "character_id": "c9", "target_id": "c2", "label": "乙"}]},
+        result("list_character_relations", {"relations": [{"id": "r2", "character_id": "c9", "target_id": "c2", "label": "乙"}]},
                params={"character_id": "c9"}),
     ], persisted=base)
     # filtered results only upsert — they must NOT replace the persisted type
@@ -303,14 +303,13 @@ def test_filtered_snapshot_does_not_replace():
 
 
 def test_single_relation_read_does_not_replace_type():
-    # relation_id mode returns ONE relation — must upsert, never prune the
+    # read_relation returns ONE relation — must upsert, never prune the
     # persisted type like an unfiltered snapshot would.
     base = build_id_registry([
         result("list_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]}),
     ])
     reg = build_id_registry([
-        result("list_relations", {"relations": [{"id": "r9", "character_id": "c1", "target_id": "c2", "label": "精读条"}]},
-               params={"relation_id": "r9"}),
+        result("read_relation", {"relations": [{"id": "r9", "character_id": "c1", "target_id": "c2", "label": "精读条"}]}),
     ], persisted=base)
     assert "r1" in reg["relation"]
     assert "r9" in reg["relation"]
@@ -341,16 +340,18 @@ def test_older_snapshot_does_not_resurrect_stale_entries():
     assert label(reg, "character", "c2") == "新"
 
 
-def test_older_unfiltered_snapshot_does_not_override_newest_filtered():
-    # newest is a filtered list (non-authoritative) — an older unfiltered
-    # snapshot must NOT wipe it and replace the whole type with stale data.
+def test_relation_browse_snapshot_and_later_detail_reads_coexist():
+    # After the tool split, list_relations (browse, no params) is the only
+    # authoritative relation snapshot — it replaces the type as of its own
+    # position in the window, while detail reads that follow (or precede) it
+    # only upsert, so nothing is lost.
     reg = build_id_registry([
-        result("list_relations", {"relations": [{"id": "r0", "character_id": "c1", "target_id": "c2", "label": "旧全集"}]}),
-        result("list_relations", {"relations": [{"id": "r2", "character_id": "c9", "target_id": "c2", "label": "新过滤"}]},
+        result("list_character_relations", {"relations": [{"id": "r2", "character_id": "c9", "target_id": "c2", "label": "新细读"}]},
                params={"character_id": "c9"}),
+        result("list_relations", {"relations": [{"id": "r0", "character_id": "c1", "target_id": "c2", "label": "全量浏览"}]}),
     ])
+    assert "r0" in reg["relation"]
     assert "r2" in reg["relation"]
-    assert "r0" not in reg["relation"]
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +392,21 @@ def test_empty_persisted_and_window():
 def test_failed_result_is_ignored():
     reg = build_id_registry([result("read_character", {"id": "c1", "name": "x"}, success=False)])
     assert reg == {}
+
+
+def test_recent_tool_results_feed_the_id_registry():
+    # read_recent_* must surface into the known-IDs section: container keys
+    # scenes/chapters drive collection regardless of tool name.
+    reg = build_id_registry([
+        result("read_recent_scenes", {"scenes": [
+            {"id": "s1", "title": "最新一场"},
+        ]}),
+        result("read_recent_chapters", {"chapters": [
+            {"id": "c2", "title": "最近写的章"},
+        ]}),
+    ])
+    assert label(reg, "scene", "s1") == "最新一场"
+    assert label(reg, "chapter", "c2") == "最近写的章"
 
 
 def test_non_json_data_is_ignored():
@@ -438,7 +454,7 @@ def test_executor_injects_params_into_results():
 
 def test_executor_params_drive_filter_detection():
     reg = build_id_registry([
-        result("list_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]},
+        result("list_character_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]},
                params={"character_id": "c1"}),
     ])
     # filtered snapshot upserts instead of replacing

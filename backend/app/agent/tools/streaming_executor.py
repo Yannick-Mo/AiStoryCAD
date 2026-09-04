@@ -39,8 +39,9 @@ _ANALYSIS_TOOL_QUOTAS: dict[str, int] = {
 # The LLM needs ALL items (not just first N) to match user intent to IDs.
 # Per-item long text fields will be truncated to keep total size down.
 _LIST_TOOL_NAMES: set[str] = {
-    "list_characters", "list_relations", "list_edges",
-    "read_chapters", "read_recent",
+    "list_characters", "list_character_relations", "list_relations", "list_edges",
+    "read_chapters", "read_chapter_scenes", "read_recent_scenes", "read_recent_chapters",
+    "read_chapter",
 }
 
 # Generic list/structural tools — the LLM mostly needs IDs and names,
@@ -48,6 +49,30 @@ _LIST_TOOL_NAMES: set[str] = {
 _STRUCTURAL_TOOL_NAMES: set[str] = {
     "list_characters", "list_relations", "list_edges", "search_nodes",
 }
+
+# Keys whose value is the *payload itself* (scene body, blueprint, goal...).
+# For these, blind head-only truncation would hide the ending state the LLM
+# needs for continuity writing — keep head AND tail with an omission marker.
+_LONG_TEXT_KEYS: frozenset[str] = frozenset({
+    "content", "body", "summary", "goal", "description", "global_settings",
+    "setting", "notes", "motivation", "background", "personality",
+    "appearance", "outline", "previous_summary",
+})
+
+_LONG_TEXT_HEAD = 300
+_LONG_TEXT_TAIL = 200
+
+
+def _clip_long_text(value: str) -> str:
+    """Head + tail retention for long payload fields."""
+    n = len(value)
+    if n <= 500:
+        return value
+    omitted = n - _LONG_TEXT_HEAD - _LONG_TEXT_TAIL
+    return (
+        f"{value[:_LONG_TEXT_HEAD]}\n\n..."
+        f" [省略 {omitted} 字符，全文共 {n} 字符] ...\n\n{value[-_LONG_TEXT_TAIL:]}"
+    )
 
 
 def _smart_summarise(data: str, max_chars: int, tool_name: str) -> str:
@@ -159,7 +184,10 @@ def _summarise_json_dict(parsed: dict, max_chars: int, raw_data: str, tool_name:
     truncated = {}
     for k, v in parsed.items():
         if isinstance(v, str) and len(v) > 500:
-            truncated[k] = v[:200] + f"... [{len(v)} chars]"
+            if k in _LONG_TEXT_KEYS:
+                truncated[k] = _clip_long_text(v)
+            else:
+                truncated[k] = v[:200] + f"... [{len(v)} chars]"
         elif isinstance(v, list) and len(v) > 5:
             if tool_name in _LIST_TOOL_NAMES:
                 # Keep all items for ID lookup; truncate per-item fields
