@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_LIMIT = settings.llm_context_window or 100_000  # compression triggers at ~80% of this
 
 # ── Threshold ratios ────────────────────────────────────────────────
-COMPRESS_THRESHOLD = 0.70
+COMPRESS_THRESHOLD = 0.80
 AGGRESSIVE_THRESHOLD = 0.95
 
 # ── Message retention counts ───────────────────────────────────────
@@ -315,7 +315,8 @@ _SUMMARY_PROMPT = """你是一个对话摘要助手。请用简洁的中文摘�
 - 保留用户的关键需求、创作决策、情节设定
 - 保留 AI 给出的重要建议和已执行的操作
 - 标记任何待办事项或未完成的任务
-- 保留所有实体 ID 和名称（角色名、章节名等）
+- 提到的实体（场景/章节/角色/幕/关系/连线）用名称或标题指代并注明状态，
+  不需要保留 UUID（形如 scene_id=xxx 的 ID 一律省略——需要时可用 read_*/list_* 工具随时查询最新 ID）
 - 摘要控制在 300 字以内
 
 对话内容：
@@ -330,7 +331,8 @@ _LIGHTER_SUMMARY_PROMPT = """你是一个对话摘要助手。请用中文详细
 - 保留用户的关键需求、创作决策、情节设定
 - 保留 AI 给出的重要建议和已执行的操作
 - 标记任何待办事项或未完成的任务
-- 保留所有实体 ID 和名称（角色名、章节名等）
+- 提到的实体（场景/章节/角色/幕/关系/连线）用名称或标题指代并注明状态，
+  不需要保留 UUID（形如 scene_id=xxx 的 ID 一律省略——需要时可用 read_*/list_* 工具随时查询最新 ID）
 - 尽量保留对话中的重要细节和上下文信息
 - 摘要控制在 500 字以内
 
