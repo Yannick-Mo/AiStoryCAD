@@ -15,12 +15,12 @@ def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) 
 
 def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
     from .list_tools import (
-        ListChaptersTool, ListScenesTool,
         ListRelationsTool, ListEdgesTool, SearchNodesTool,
     )
+    from .range_tools import ReadChaptersTool, ReadRecentTool
     from .project_tools import (
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
-        ReadFullProjectTool, ReadProjectOverviewTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
+        SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
     )
     from .character_tools import (
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
@@ -42,9 +42,10 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
     from .writer_tool import CallWriterAgentTool, SyncSceneBlueprintTool
     from .word_count_tools import RecalcWordCountsTool
     classes = [
-        ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
+        ListRelationsTool, ListEdgesTool, SearchNodesTool,
+        ReadChaptersTool, ReadRecentTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
-        ReadFullProjectTool, ReadProjectOverviewTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
+        SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
         ConsistencyCheckTool,

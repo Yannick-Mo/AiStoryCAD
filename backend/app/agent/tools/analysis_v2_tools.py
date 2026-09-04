@@ -2,14 +2,28 @@ from __future__ import annotations
 
 import json
 import uuid
-from sqlalchemy import select
+from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import get_shared_client
 from app.llm.types import Message
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.context import ContextBuilder
-from app.storycad.models import Chapter, Scene, SceneContent, Character, CharacterRelation, Act
-from app.utils import row_to_dict
+
+
+def _safe_get(obj: Any, *keys: str, default: Any = None) -> Any:
+    """Safely traverse a nested dict/list structure."""
+    current = obj
+    for key in keys:
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif isinstance(current, (list, tuple)) and isinstance(key, int):
+            try:
+                current = current[key]
+            except (IndexError, TypeError):
+                return default
+        else:
+            return default
+    return current if current is not None else default
 
 
 class AnalyzeChapterTool(BaseTool):
@@ -20,7 +34,7 @@ class AnalyzeChapterTool(BaseTool):
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
             },
             "required": ["chapter_id"],
         },
@@ -38,42 +52,40 @@ class AnalyzeChapterTool(BaseTool):
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
             chapter_id = uuid.UUID(ch_raw)
 
-            # 安全：按项目过滤章节查询，防止跨项目按 UUID 读取（IDOR）
-            ch_result = await db.execute(
-                select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id)
-            )
-            chapter = ch_result.scalar_one_or_none()
-            if not chapter:
+            builder = ContextBuilder(db)
+            focus = await builder.build_chapter_focus(project_id, chapter_id)
+            if focus is None:
                 return ToolResult(success=False, error="Chapter not found")
 
-            scenes_result = await db.execute(
-                select(Scene).where(Scene.chapter_id == chapter_id).order_by(Scene.sort_order)
-            )
-            scenes = scenes_result.scalars().all()
+            chapter = focus["chapter"]
+            act = focus.get("act") or {}
+            scenes = focus.get("scenes", [])
+
             scenes_text = []
             for sc in scenes:
-                cr = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc.id))
-                content = cr.scalar_one_or_none()
+                body = sc.get("content") or ""
                 scenes_text.append(
-                    f"【{sc.title}】(POV:{sc.pov_character} 地点:{sc.setting})\n"
-                    f"{sc.summary or '无梗概'}\n"
-                    f"正文预览:{(content.content or '')[:500] if content else '空'}"
+                    f"【{sc.get('title', '')}】(POV:{sc.get('pov_character', '')} "
+                    f"地点:{sc.get('setting', '')} 时间:{sc.get('scene_time', '')})\n"
+                    f"梗概:{sc.get('summary', '') or '无'}\n"
+                    f"正文:\n{body}"
+                    + ("\n[该场景正文过长，已截断]" if sc.get("content_cut") else "")
                 )
 
-            builder = ContextBuilder(db)
-            full_ctx = await builder.build_full(project_id)
-
-            act_data = None
-            if chapter.act_id:
-                act_result = await db.execute(select(Act).where(Act.id == chapter.act_id))
-                act_obj = act_result.scalar_one_or_none()
-                if act_obj:
-                    act_data = row_to_dict(act_obj)
+            neighbour = []
+            prev_ch = focus.get("prev_chapter")
+            next_ch = focus.get("next_chapter")
+            if prev_ch:
+                neighbour.append(f"上一章《{prev_ch.get('title', '')}》目标:{prev_ch.get('goal', '') or '无'}")
+            if next_ch:
+                neighbour.append(f"下一章《{next_ch.get('title', '')}》目标:{next_ch.get('goal', '') or '无'}")
 
             context_text = json.dumps({
-                "chapter": {"title": chapter.title, "goal": chapter.goal, "status": chapter.status},
-                "scenes_count": len(scenes),
-                "act": act_data,
+                "chapter": {"title": chapter.get("title"), "goal": chapter.get("goal"),
+                            "status": chapter.get("status")},
+                "act": act.get("name") or "",
+                "scenes_count": focus.get("scene_count", 0),
+                "chapter_body_chars": focus.get("body_chars", 0),
             }, ensure_ascii=False)
 
             client = self.llm_client or get_shared_client().fork()
@@ -96,9 +108,11 @@ class AnalyzeChapterTool(BaseTool):
                     role="user",
                     content=(
                         f"项目上下文：{context_text}\n\n"
-                        f"章节：{chapter.title}\n"
-                        f"目标：{chapter.goal}\n\n"
-                        f"场景：\n" + "\n\n".join(scenes_text)
+                        f"章节：{chapter.get('title')}\n"
+                        f"目标：{chapter.get('goal') or '无'}\n\n"
+                        + ("邻接章节（仅作上下文参考，不要分析它们）：\n"
+                           + "\n".join(neighbour) + "\n\n" if neighbour else "")
+                        + f"场景：\n" + "\n\n".join(scenes_text)
                     ),
                 ),
             ]
@@ -108,6 +122,9 @@ class AnalyzeChapterTool(BaseTool):
             except json.JSONDecodeError:
                 parsed = {"scores": {}, "analysis": result.content, "suggestions": [],
                           "_parse_note": "LLM 返回了非 JSON 格式的回复，以上为原始文本，未成功解析为结构化数据"}
+
+            if focus.get("content_truncated"):
+                parsed["_note"] = "本章正文字数超过分析上限，尾部场景正文被截断"
 
             return ToolResult(success=True, data=parsed)
         except Exception as e:
@@ -141,41 +158,10 @@ class AnalyzeCharacterArcTool(BaseTool):
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
             char_id = uuid.UUID(ch_raw)
 
-            # 安全：按项目过滤角色查询，防止跨项目按 UUID 读取（IDOR）
-            result = await db.execute(
-                select(Character).where(Character.id == char_id, Character.project_id == project_id)
-            )
-            char = result.scalar_one_or_none()
-            if not char:
+            builder = ContextBuilder(db)
+            focus = await builder.build_character_focus(project_id, char_id)
+            if focus is None:
                 return ToolResult(success=False, error="Character not found")
-
-            scenes_result = await db.execute(
-                select(Scene).where(Scene.project_id == project_id).order_by(Scene.sort_order)
-            )
-            all_scenes = scenes_result.scalars().all()
-            char_scenes = []
-            for sc in all_scenes:
-                if sc.pov_character == char.name:
-                    cr = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc.id))
-                    content = cr.scalar_one_or_none()
-                    char_scenes.append(
-                        f"场景「{sc.title}」(POV:{sc.pov_character}) - "
-                        f"{(content.content or '')[:300] if content else '空'}"
-                    )
-
-            rels_result = await db.execute(
-                select(CharacterRelation).where(
-                    CharacterRelation.project_id == project_id,
-                    (CharacterRelation.character_id == char_id) | (CharacterRelation.target_id == char_id)
-                )
-            )
-            rels = rels_result.scalars().all()
-
-            context = {
-                "character": row_to_dict(char),
-                "appearances": char_scenes,
-                "relations": [row_to_dict(r) for r in rels],
-            }
 
             client = self.llm_client or get_shared_client().fork()
             msgs = [
@@ -188,7 +174,7 @@ class AnalyzeCharacterArcTool(BaseTool):
                         "'issues': [str], 'suggestions': [str]}"
                     ),
                 ),
-                Message(role="user", content=json.dumps(context, ensure_ascii=False)),
+                Message(role="user", content=json.dumps(focus, ensure_ascii=False)),
             ]
             result = await client.chat(messages=msgs)
             try:
@@ -201,22 +187,6 @@ class AnalyzeCharacterArcTool(BaseTool):
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))
-
-
-def _safe_get(obj: Any, *keys: str, default: Any = None) -> Any:
-    """Safely traverse a nested dict/list structure."""
-    current = obj
-    for key in keys:
-        if isinstance(current, dict):
-            current = current.get(key)
-        elif isinstance(current, (list, tuple)) and isinstance(key, int):
-            try:
-                current = current[key]
-            except (IndexError, TypeError):
-                return default
-        else:
-            return default
-    return current if current is not None else default
 
 
 class SuggestNextTool(BaseTool):
@@ -232,41 +202,18 @@ class SuggestNextTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            pid = uuid.UUID(kwargs["project_id"])
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             builder = ContextBuilder(db)
-            full_ctx = await builder.build_full(pid)
+            progress = await builder.build_writing_progress(pid)
 
-            acts = full_ctx.get("acts", []) if isinstance(full_ctx, dict) else []
-            total_chapters = sum(len(_safe_get(a, "chapters", default=[])) for a in acts)
-            total_scenes = sum(
-                sum(len(_safe_get(ch, "scenes", default=[])) for ch in _safe_get(a, "chapters", default=[]))
-                for a in acts
-            )
-            written_scenes = sum(
-                sum(
-                    1 for ch in _safe_get(a, "chapters", default=[])
-                    for s in _safe_get(ch, "scenes", default=[]) if s.get("content_preview")
-                )
-                for a in acts
-            )
-
-            summary = {
-                "total_acts": len(acts),
-                "total_chapters": total_chapters,
-                "total_scenes": total_scenes,
-                "written_scenes": written_scenes,
-                "progress_pct": round(written_scenes / total_scenes * 100) if total_scenes else 0,
-            }
-
-            unwritten = []
-            for a in acts:
-                for ch in _safe_get(a, "chapters", default=[]):
-                    for s in _safe_get(ch, "scenes", default=[]):
-                        if not s.get("content_preview"):
-                            unwritten.append(
-                                f"幕'{a.get('name', '')}'→章'{ch.get('title', '')}'→场景'{s.get('title', '')}'"
-                            )
+            summary = {k: progress[k] for k in (
+                "total_acts", "total_chapters", "total_scenes",
+                "written_scenes", "progress_pct",
+            )}
 
             client = self.llm_client or get_shared_client().fork()
             msgs = [
@@ -281,7 +228,11 @@ class SuggestNextTool(BaseTool):
                 Message(
                     role="user",
                     content=json.dumps(
-                        {"summary": summary, "unwritten_scenes": unwritten[:20]},
+                        {
+                            "summary": summary,
+                            "recent_written": progress.get("recent_written", []),
+                            "unwritten_scenes": progress.get("unwritten_candidates", [])[:20],
+                        },
                         ensure_ascii=False,
                     ),
                 ),
@@ -312,54 +263,14 @@ class ProjectHealthTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            pid = uuid.UUID(kwargs["project_id"])
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             builder = ContextBuilder(db)
-            full_ctx = await builder.build_full(pid)
-
-            acts = full_ctx.get("acts", []) if isinstance(full_ctx, dict) else []
-            chars = full_ctx.get("characters", []) if isinstance(full_ctx, dict) else []
-            edges = full_ctx.get("edges", []) if isinstance(full_ctx, dict) else []
-
-            empty_chapters = []
-            unwritten_scenes = []
-            for a in acts:
-                for ch in _safe_get(a, "chapters", default=[]):
-                    if not _safe_get(ch, "scenes", default=[]):
-                        empty_chapters.append(
-                            f"幕'{a.get('name', '')}'→章'{ch.get('title', '')}'（无场景）"
-                        )
-                    for s in _safe_get(ch, "scenes", default=[]):
-                        if not s.get("content_preview"):
-                            unwritten_scenes.append(
-                                f"幕'{a.get('name', '')}'→章'{ch.get('title', '')}'→场景'{s.get('title', '')}'"
-                            )
-
-            chars_with_relations = set()
-            for r in full_ctx.get("relations", []) if isinstance(full_ctx, dict) else []:
-                chars_with_relations.add(r.get("character_id"))
-                chars_with_relations.add(r.get("target_id"))
-            isolated_chars = [
-                c.get("name", "") for c in chars
-                if str(c.get("id", "")) not in chars_with_relations
-            ]
-
-            return ToolResult(success=True, data={
-                "total_acts": len(acts),
-                "total_chapters": sum(len(_safe_get(a, "chapters", default=[])) for a in acts),
-                "total_scenes": sum(
-                    sum(len(_safe_get(ch, "scenes", default=[])) for ch in _safe_get(a, "chapters", default=[]))
-                    for a in acts
-                ),
-                "unwritten_scenes_count": len(unwritten_scenes),
-                "unwritten_scenes": unwritten_scenes[:20],
-                "empty_chapters_count": len(empty_chapters),
-                "empty_chapters": empty_chapters[:10],
-                "total_characters": len(chars),
-                "isolated_characters_count": len(isolated_chars),
-                "isolated_characters": isolated_chars[:10],
-                "total_edges": len(edges),
-            })
+            snapshot = await builder.build_health_snapshot(pid)
+            return ToolResult(success=True, data=snapshot)
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))

@@ -8,8 +8,8 @@ Design (agreed with product):
   confirmations, and internal-LLM products like ``analyze_*``) passes
   through untouched — compressing those would break tool-call chaining
   (hallucinated IDs) or double-process LLM answers.
-* Project/DB query tools (``read_scene``, ``read_project_overview``,
-  ``read_full_project``) are deliberately NOT whitelisted: their data is
+* Project/DB query tools (``read_scene``, ``read_chapters``,
+  ``read_chapter``) are deliberately NOT whitelisted: their data is
   the story outline/framework the loop LLM must see verbatim (truncating
   or summarizing it risks losing the exact structure/IDs the model relies
   on for navigation), and their size is bounded by the outline fields.

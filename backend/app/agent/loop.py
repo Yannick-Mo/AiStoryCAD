@@ -147,8 +147,8 @@ def _invalidate_after_write(
     if tool and tool.is_write_operation:
         section = _section_for_tool(tool_name)
         invalidated = set(state._invalidated_sections) | {section}
-        # Drop the shared 300s context cache so read tools (read_full_project,
-        # read_project_overview, list_*) in the SAME turn see fresh data.
+        # Drop the shared 300s context cache so read tools (read_chapters,
+        # read_scene, read_character) in the SAME turn see fresh data.
         try:
             from app.agent.context import ContextBuilder
             ContextBuilder.invalidate_project(state.project_id)
@@ -276,42 +276,6 @@ def _build_skill_probe_paths(ctx: dict) -> list[str]:
     return paths
 
 
-def _get_recent_scenes_hint(
-    context: dict,
-    max_scenes: int = 5,
-) -> str | None:
-    """Build a compact hint of the most recent scene summaries.
-
-    Extracts the last *max_scenes* scenes from the loaded project context
-    (ordered by their position in the structure) so the AI has a quick
-    reference to recent narrative progress without an extra tool call.
-    """
-    acts = context.get("acts", [])
-    all_scenes: list[dict] = []
-    for act in acts:
-        for ch in act.get("chapters", []):
-            for sc in ch.get("scenes", []):
-                all_scenes.append(sc)
-
-    if not all_scenes:
-        return None
-
-    # Take the last N scenes (they're already in sort_order)
-    recent = all_scenes[-max_scenes:]
-    lines = ["\n最近场景快照："]
-    for sc in recent:
-        title = sc.get("title", "?")
-        summary = sc.get("summary", "") or ""
-        pov = sc.get("pov_character", "") or ""
-        snippet = f"- {title}"
-        if pov:
-            snippet += f" [{pov}]"
-        if summary:
-            snippet += f": {summary[:100]}"
-        lines.append(snippet)
-    return "\n".join(lines)
-
-
 def _detect_plan_decision(user_content: str, pending_plan: dict) -> str:
     """Check if *user_content* confirms or rejects a pending plan.
 
@@ -353,7 +317,8 @@ def _render_cowriter_persona() -> str:
     return result if result else ""
 
 
-_FRAMEWORK_SECTION_MAX = 6000
+_FRAMEWORK_SECTION_MAX = 12000
+_ACT_INDEX_MAX = 3000
 
 
 def _render_framework_section(state: "LoopState") -> str:
@@ -368,7 +333,13 @@ def _render_framework_section(state: "LoopState") -> str:
     they fit, and the cut always lands on a complete act/chapter/list boundary
     (never mid-line).  When something is omitted, an accurate note lists the
     remaining counts so the model knows exactly what to fetch via
-    ``read_project_overview``.
+    ``read_chapters`` / ``read_chapter``.
+
+    An **act index** (every act with its chapter/scene counts) is emitted
+    first under a small dedicated budget: even when the detail tree is cut
+    off, the model still sees the full act map — chapter counts let it
+    convert story order to global chapter numbers and jump straight to any
+    act with ``read_chapters``.
     """
     ctx = state.project_context or {}
     acts = ctx.get("acts", [])
@@ -379,14 +350,6 @@ def _render_framework_section(state: "LoopState") -> str:
     used = len(lines[0])
     truncated = False
 
-    total_chapters = sum(len(a.get("chapters", [])) for a in acts)
-    total_scenes = sum(
-        sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
-        for a in acts
-    )
-    shown_chapters = 0
-    shown_scenes = 0
-
     def fits(text: str) -> bool:
         return used + 1 + len(text) <= budget
 
@@ -394,6 +357,35 @@ def _render_framework_section(state: "LoopState") -> str:
         nonlocal used
         lines.append(text)
         used += 1 + len(text)
+
+    # ── Act index (all acts, small dedicated budget) ────────────────
+    index_used = 0
+    index_emitted = 0
+    for act in acts:
+        chs = act.get("chapters", [])
+        n_ch = len(chs)
+        n_sc = sum(len(ch.get("scenes", [])) for ch in chs)
+        index_line = (
+            f"- 幕 {act.get('sort_order')}. {act.get('name') or '未命名'} "
+            f"(act_id={act.get('id')}): {n_ch}章/{n_sc}场"
+        )
+        if index_used + 1 + len(index_line) > _ACT_INDEX_MAX:
+            rest = f"- ... 另有 {len(acts) - index_emitted} 幕索引未列出"
+            lines.append(rest)
+            used += 1 + len(rest)
+            break
+        lines.append(index_line)
+        index_used += 1 + len(index_line)
+        used += 1 + len(index_line)
+        index_emitted += 1
+
+    total_chapters = sum(len(a.get("chapters", [])) for a in acts)
+    total_scenes = sum(
+        sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
+        for a in acts
+    )
+    shown_chapters = 0
+    shown_scenes = 0
 
     for act in acts:
         act_line = (
@@ -475,7 +467,7 @@ def _render_framework_section(state: "LoopState") -> str:
             parts.append(f"{remaining_sc}场")
         if omitted_labels:
             parts.append("、".join(omitted_labels) + "未列出")
-        note = f"... [项目框架较长，以下未完整列出: {'、'.join(parts) if parts else '部分章节'}。完整结构请调用 read_project_overview]"
+        note = f"... [项目框架较长，以下未完整列出: {'、'.join(parts) if parts else '部分章节'}。未列出的章节可用 read_chapters 按全局章号范围读取]"
         lines.append(note)
 
     truncated_note = ctx.get("truncated_note", "")
@@ -724,8 +716,11 @@ async def autonomous_loop(
                     skip_cache=skip_ctx_cache,
                 )
 
-                # Prepend recent scene summaries hint
-                recent_hint = _get_recent_scenes_hint(ctx)
+                # Prepend recent scene summaries hint (dedicated light query —
+                # the framework tree no longer carries scene summaries)
+                recent_hint = await builder.build_recent_scenes_hint(
+                    _uuid.UUID(state.project_id)
+                )
                 if recent_hint:
                     ctx["_recent_scenes_hint"] = recent_hint
 
@@ -1218,8 +1213,8 @@ async def autonomous_loop(
         if missing_param_failures >= 3:
             reminder = (
                 "⚠️ 本轮有 {} 个工具因为缺少必要参数而调用失败。\n"
-                "请停止逐一尝试每个工具！先调用 list_* 系列工具（list_chapters、"
-                "list_scenes、list_characters）获取有效的 ID，然后再用这些 ID "
+                "请停止逐一尝试每个工具！先调用 ID 来源工具（read_chapters、"
+                "read_chapter、list_characters、list_relations）获取有效的 ID，然后再用这些 ID "
                 "调用需要它们的工具。\n"
                 "工具列表中每个工具后标注了 (必须: ...) —— 这表示该参数必须提供。"
             ).format(missing_param_failures)

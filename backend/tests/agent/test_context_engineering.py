@@ -128,9 +128,40 @@ class TestFrameworkStructuralTruncation:
         # Never exceeds budget by more than the truncation note
         assert len(out) <= _FRAMEWORK_SECTION_MAX + 200
         # Ends with the structural note, not a half-rendered line
-        assert out.rstrip().endswith("read_project_overview]")
+        assert out.rstrip().endswith("read_chapters 按全局章号范围读取]")
         assert "项目框架较长" in out
         assert "以下未完整列出" in out
+
+    def test_act_index_lists_all_acts_even_when_details_truncated(self):
+        # Detail tree only fits the first acts, but the act index must still
+        # name EVERY act with its chapter/scene counts (so the model can
+        # compute global chapter numbers and jump with read_chapters).
+        state = LoopState.from_initial({"project_context": self._big_context()})
+        out = _render_framework_section(state)
+        assert "幕" in out
+        for i in range(4):
+            act_name = f"第{i}幕"
+            assert act_name in out, f"act index lost act: {act_name}"
+            assert f"(act_id=a{i}): 60章/600场" in out, f"counts missing for {act_name}"
+
+    def test_act_index_counts_scenes_per_chapter(self):
+        ctx = {
+            "acts": [
+                {
+                    "id": "a1", "name": "第一幕", "sort_order": 1,
+                    "chapters": [
+                        {"id": "c1", "title": "第一章", "sort_order": 1,
+                         "scenes": [{"id": "s1", "title": "开场", "sort_order": 1},
+                                    {"id": "s2", "title": "冲突", "sort_order": 2}]},
+                        {"id": "c2", "title": "第二章", "sort_order": 2,
+                         "scenes": [{"id": "s3", "title": "高潮", "sort_order": 1}]},
+                    ],
+                }
+            ],
+        }
+        state = LoopState.from_initial({"project_context": ctx})
+        out = _render_framework_section(state)
+        assert "(act_id=a1): 2章/3场" in out
 
     def test_small_context_untruncated(self):
         ctx = {
@@ -147,6 +178,7 @@ class TestFrameworkStructuralTruncation:
         out = _render_framework_section(state)
         assert "项目框架较长" not in out
         assert "第一幕" in out and "主角" in out
+        assert "(act_id=a1): 1章/1场" in out
 
 
 class TestMiddleCompressWhitelist:
@@ -162,14 +194,14 @@ class TestMiddleCompressWhitelist:
     def test_project_query_tools_never_compress(self):
         # DB project-query results (outline/framework + scene/character data)
         # are always injected verbatim — the loop LLM needs exact structure.
-        for tool in ("read_scene", "read_project_overview", "read_full_project"):
+        for tool in ("read_scene", "read_chapters", "read_chapter"):
             result = {"tool": tool, "success": True, "data": "数据" * (LLM_COMPRESS_MIN_CHARS + 100)}
             assert not should_middle_process(tool, result), tool
 
     def test_id_list_tools_never_compress(self):
         # list_* results are navigation maps for tool chaining — never compressed
-        big_list = {"tool": "list_scenes", "success": True, "data": [{"id": f"id{i}", "title": f"场景{i}"} for i in range(500)]}
-        assert not should_middle_process("list_scenes", big_list)
+        big_list = {"tool": "list_relations", "success": True, "data": [{"id": f"id{i}", "title": f"关系{i}"} for i in range(500)]}
+        assert not should_middle_process("list_relations", big_list)
 
     def test_search_cleaned_not_compressed(self):
         small = {"tool": "web_search", "success": True, "data": [{"title": "t", "url": "https://x.com", "snippet": "s"}]}
@@ -287,7 +319,7 @@ class TestMiddleCompressEndToEnd:
             called["flag"] = True
             return type("R", (), {"content": "nope"})
 
-        for tool in ("read_scene", "read_project_overview", "read_full_project"):
+        for tool in ("read_scene", "read_chapters", "read_chapter"):
             result = {"tool": tool, "success": True, "data": "数据" * (LLM_COMPRESS_MIN_CHARS + 100)}
             out = await middle_process_tool_result(tool, result, fake_chat)
             assert not called["flag"], tool

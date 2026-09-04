@@ -14,7 +14,7 @@ from app.utils import row_to_dict
 class ReadProjectTool(BaseTool):
     meta = ToolMeta(
         name="read_project",
-        description="加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景。获取完整结构请用 read_full_project",
+        description="加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景。按范围读章节请用 read_chapters；读某章及场景请用 read_chapter/read_scene",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
@@ -46,12 +46,12 @@ class ReadProjectTool(BaseTool):
 class ReadChapterTool(BaseTool):
     meta = ToolMeta(
         name="read_chapter",
-        description="获取章节及其场景列表（章节ID可在 list_chapters 返回或结构概览 [ch:xxx] 中找到）",
+        description="获取章节及其场景列表（章节ID来自 read_chapters 范围读取或项目框架结构概览 (chapter_id=…)）",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 返回结果或 read_full_project 结构概览"},
+                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或项目框架结构概览"},
             },
             "required": ["chapter_id"],
         },
@@ -83,13 +83,18 @@ class ReadChapterTool(BaseTool):
 class ReadSceneTool(BaseTool):
     meta = ToolMeta(
         name="read_scene",
-        description="获取场景蓝图与元数据（标题、蓝图、POV、地点、时间、是否已写正文）。scene_id 来自 list_scenes 或 read_full_project。默认不含正文——续写/分析以蓝图为依据即可；仅当需要做文字级编辑（expand_selection/compress_selection/rewrite 等）时才传 include_content=true 读取正文",
+        description="获取场景蓝图与元数据（标题、蓝图、POV、地点、时间、是否已写正文、正文长度）。"
+                    "scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes。"
+                    "默认不含正文——续写/分析以蓝图为依据即可；仅当需要做文字级编辑（expand_selection/compress_selection/rewrite 等）时才传 include_content=true 读取正文。"
+                    "正文超长时用 content_offset/content_limit 分页读取（body_chars 为正文总长，content_has_more=true 表示还有后续）",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 返回结果或 read_full_project 结构概览"},
-                "include_content": {"type": "boolean", "description": "是否包含场景正文本（默认 false）"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）、read_recent 或 search_nodes"},
+                "include_content": {"type": "boolean", "description": "是否包含场景正文（默认 false）"},
+                "content_offset": {"type": "integer", "description": "正文读取起点（字符偏移，仅 include_content=true 时生效，默认0）"},
+                "content_limit": {"type": "integer", "description": "本次最多读取的正文长度（字符数，默认6000，0=读取到末尾）"},
             },
             "required": ["scene_id"],
         },
@@ -111,9 +116,26 @@ class ReadSceneTool(BaseTool):
             content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
             sc_content = content_result.scalar_one_or_none()
             body = sc_content.content if sc_content else ""
-            data["written"] = bool(body and body.strip())
+            body = body or ""
+            data["written"] = bool(body.strip())
+            data["body_chars"] = len(body)
             if include_content:
-                data["content"] = body
+                try:
+                    offset = int(kwargs.get("content_offset") or 0)
+                except (TypeError, ValueError):
+                    offset = 0
+                try:
+                    limit = int(kwargs.get("content_limit") or 6000)
+                except (TypeError, ValueError):
+                    limit = 6000
+                if offset < 0:
+                    offset = 0
+                if limit < 0:
+                    limit = 0
+                page = body[offset:offset + limit] if limit > 0 else body[offset:]
+                data["content"] = page
+                data["content_offset"] = offset
+                data["content_has_more"] = (offset + len(page)) < len(body)
             else:
                 data["content"] = None
             return ToolResult(success=True, data=data)
@@ -125,12 +147,12 @@ class ReadSceneTool(BaseTool):
 class CreateSceneTool(BaseTool):
     meta = ToolMeta(
         name="create_scene",
-        description="在指定章节中创建新场景，需提供章节ID和标题。chapter_id 来自 list_chapters 或 read_full_project",
+        description="在指定章节中创建新场景，需提供章节ID和标题。chapter_id 来自 read_chapters（范围读取）或 read_chapter",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "所属章节ID，来自 list_chapters 或 read_full_project"},
+                "chapter_id": {"type": "string", "description": "所属章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "title": {"type": "string", "description": "场景标题"},
                 "sort_order": {"type": "integer", "description": "排序序号"},
                 "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
@@ -183,12 +205,12 @@ class CreateSceneTool(BaseTool):
 class UpdateSceneTool(BaseTool):
     meta = ToolMeta(
         name="update_scene",
-        description="更新场景内容、标题、POV、地点、时间、梗概等。scene_id 来自 list_scenes 或 read_full_project",
+        description="更新场景内容、标题、POV、地点、时间、梗概等。scene_id 来自 read_chapter（该章场景列表）或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
                 "title": {"type": "string", "description": "场景标题"},
                 "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
                 "content": {"type": "string", "description": "场景正文"},
@@ -233,54 +255,6 @@ class UpdateSceneTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
-class ReadProjectOverviewTool(BaseTool):
-    meta = ToolMeta(
-        name="read_project_overview",
-        description="加载项目结构概览：幕/章/场景的树状骨架（仅名称和ID）、角色名和类型、主题名。不包含正文、性格描述、关系详情。这是了解项目全貌的入口工具",
-        concurrency=ConcurrencyMode.SAFE,
-        parameters={
-            "type": "object",
-            "properties": {},
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            pid = uuid.UUID(kwargs["project_id"])
-            await verify_project_owner(db, pid, kwargs.get("user_id"))
-            from app.agent.context import ContextBuilder
-            builder = ContextBuilder(db)
-            ctx = await builder.build_summary(pid, depth="minimal")
-            return ToolResult(success=True, data=ctx)
-        except Exception as e:
-            await db.rollback()
-            return ToolResult(success=False, error=str(e))
-
-
-class ReadFullProjectTool(BaseTool):
-    meta = ToolMeta(
-        name="read_full_project",
-        description="加载完整项目上下文，包括所有幕、章节、场景、角色、关系、主题",
-        concurrency=ConcurrencyMode.SAFE,
-        parameters={
-            "type": "object",
-            "properties": {},
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            pid = uuid.UUID(kwargs["project_id"])
-            await verify_project_owner(db, pid, kwargs.get("user_id"))
-            from app.agent.context import ContextBuilder
-            builder = ContextBuilder(db)
-            ctx = await builder.build_full(pid)
-            return ToolResult(success=True, data=ctx)
-        except Exception as e:
-            await db.rollback()
-            return ToolResult(success=False, error=str(e))
-
-
 class SetChapterGoalTool(BaseTool):
     meta = ToolMeta(
         name="set_chapter_goal",
@@ -289,7 +263,7 @@ class SetChapterGoalTool(BaseTool):
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "goal": {"type": "string", "description": "章节蓝图（含【章核心】【预期节拍】【情绪弧线】【结尾钩】【角色侧重】【主题浸染】）"},
             },
             "required": ["chapter_id", "goal"],
@@ -322,12 +296,12 @@ class SetChapterGoalTool(BaseTool):
 class UpdateChapterTool(BaseTool):
     meta = ToolMeta(
         name="update_chapter",
-        description="更新章节信息（标题、状态、目标）。章节ID可在 list_chapters 或结构概览 [ch:xxx] 中找到",
+        description="更新章节信息（标题、状态、目标）。章节ID来自 read_chapters（范围读取）或项目框架结构概览",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "title": {"type": "string", "description": "章节标题"},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
                 "goal": {"type": "string", "description": "章节蓝图（章级创作计划）"},
@@ -375,7 +349,7 @@ class UpdateActTool(BaseTool):
         parameters={
             "type": "object",
             "properties": {
-                "act_id": {"type": "string", "description": "幕ID，来自 read_full_project 结构概览"},
+                "act_id": {"type": "string", "description": "幕ID，来自项目框架结构概览或 read_chapters 返回的 act_id"},
                 "name": {"type": "string", "description": "幕名称"},
                 "color": {"type": "string", "description": "颜色代码"},
             },

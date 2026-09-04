@@ -12,14 +12,14 @@ from app.agent.privacy import sanitise_event, TOOL_DISPLAY_NAMES
 class TestToolDone:
     def test_maps_tool_name_and_strips_internal_id(self):
         td = sanitise_event("tool_done", json.dumps({
-            "tool": "list_chapters",
+            "tool": "list_characters",
             "success": True,
             "data": "x",
             "error": None,
             "_tool_use_id": "abc",
         }))
         d = json.loads(td)
-        assert d["tool"] == "列出章节"
+        assert d["tool"] == "列出角色"
         assert "_tool_use_id" not in d
 
     def test_search_nodes_display_name(self):
@@ -61,28 +61,28 @@ class TestPlan:
     def test_strips_params_and_tool_use_id(self):
         plan = sanitise_event("plan", json.dumps({
             "steps": [{
-                "tool": "list_scenes",
+                "tool": "list_relations",
                 "params": {"project_id": "x"},
-                "description": "列出场景",
+                "description": "列出关系",
                 "tool_use_id": "t1",
             }],
-            "reasoning": "需要列出场景",
+            "reasoning": "需要列出关系",
             "status": "awaiting_confirmation",
         }))
         p = json.loads(plan)
         step = p["steps"][0]
-        assert step["tool"] == "列出场景"
+        assert step["tool"] == "列出关系"
         assert "params" not in step
         assert "tool_use_id" not in step
         assert p["status"] == "awaiting_confirmation"
 
     def test_description_falls_back_to_display_name(self):
         plan = sanitise_event("plan", json.dumps({
-            "steps": [{"tool": "list_scenes", "description": "list_scenes"}],
+            "steps": [{"tool": "list_relations", "description": "list_relations"}],
             "reasoning": "",
         }))
         step = json.loads(plan)["steps"][0]
-        assert step["description"] == "列出场景"
+        assert step["description"] == "列出关系"
 
     def test_reasoning_sanitises_internal_names(self):
         plan = sanitise_event("plan", json.dumps({
@@ -116,9 +116,9 @@ class TestError:
         assert e == "操作 failed: DB error"
 
     def test_json_error_dict_sanitised(self):
-        e = sanitise_event("error", json.dumps({"message": "Tool 'list_scenes' failed"}))
+        e = sanitise_event("error", json.dumps({"message": "Tool 'list_relations' failed"}))
         d = json.loads(e)
-        assert "list_scenes" not in d["message"]
+        assert "list_relations" not in d["message"]
         assert "操作" in d["message"]
 
     def test_malformed_json_passes_through(self):

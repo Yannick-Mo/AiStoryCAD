@@ -94,8 +94,6 @@ _FLAT_ENTITY_TOOL: dict[str, str] = {
 # they REPLACE the whole type (pruning deleted entities deterministically).
 # Tool → entity type.
 _SNAPSHOT_TOOLS: dict[str, str] = {
-    "list_chapters": "chapter",
-    "list_scenes": "scene",
     "list_characters": "character",
     "list_relations": "relation",
     "list_edges": "edge",
@@ -104,9 +102,7 @@ _SNAPSHOT_TOOLS: dict[str, str] = {
 # Params that, if present, make a list_* result a *filtered* (non-authoritative)
 # subset.
 _FILTER_PARAMS: dict[str, set[str]] = {
-    "list_chapters": {"act_id"},
-    "list_scenes": {"chapter_id"},
-    "list_relations": {"character_id"},
+    "list_relations": {"character_id", "relation_id", "rel_type"},
     "list_characters": set(),
     "list_edges": set(),
 }

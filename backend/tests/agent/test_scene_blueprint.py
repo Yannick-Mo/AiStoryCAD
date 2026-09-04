@@ -28,23 +28,25 @@ def test_verify_tool_registry_no_drift():
     assert verify_tool_registry(get_tool_registry()) == []
 
 
-def test_sync_scene_blueprint_meta_links_list_scenes():
+def test_sync_scene_blueprint_meta_links_id_source_tool():
     from app.agent.tools import get_tool_registry
 
     tool = get_tool_registry()["sync_scene_blueprint"]
-    assert "list_scenes" in tool.meta.description
+    assert "read_chapter" in tool.meta.description
     params = tool.meta.parameters["properties"]
-    assert "scene_id" in params and "list_scenes" in params["scene_id"]["description"]
+    assert "scene_id" in params and "read_chapter" in params["scene_id"]["description"]
 
 
-def test_read_scene_meta_mentions_list_scenes_and_include_content():
+def test_read_scene_meta_mentions_id_source_and_include_content():
     from app.agent.tools import get_tool_registry
 
     tool = get_tool_registry()["read_scene"]
-    assert "list_scenes" in tool.meta.description
+    assert "read_chapter" in tool.meta.description
     assert "include_content" in tool.meta.description
     props = tool.meta.parameters["properties"]
     assert "include_content" in props
+    assert "content_offset" in props
+    assert "content_limit" in props
 
 
 def test_loop_base_sections_include_blueprint_discipline():

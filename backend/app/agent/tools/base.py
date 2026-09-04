@@ -144,17 +144,17 @@ class BaseTool(ABC):
     # Centralised entity-not-found messages so every tool returns
     # consistent Chinese-language errors with self-correction guidance.
     ENTITY_NOT_FOUND = {
-        "Act": "幕（Act）不存在，请先调用 read_full_project 或查看项目结构概览确认幕ID",
-        "Chapter": "章节（Chapter）不存在，请先调用 list_chapters 获取可用的章节ID",
-        "Scene": "场景（Scene）不存在，请先调用 list_scenes 获取可用的场景ID",
+        "Act": "幕（Act）不存在，请先调用 read_chapters 或查看项目框架结构概览确认幕ID",
+        "Chapter": "章节（Chapter）不存在，请先调用 read_chapters（范围读取）或 read_chapter 获取可用的章节ID",
+        "Scene": "场景（Scene）不存在，请先调用 read_chapter（其返回该章全部场景）或 read_recent 获取可用的场景ID",
         "SceneContent": "场景正文（SceneContent）不存在，请先调用 write_scene_content 写入内容",
         "Character": "角色（Character）不存在，请先调用 list_characters 获取可用的角色ID",
         "CharacterRelation": "角色关系（Relation）不存在，请先调用 list_relations 获取可用的关系ID",
         "ChapterEdge": "章节连线（Edge）不存在，请先调用 list_edges 获取可用的连线ID",
         "Project": "项目（Project）不存在，请检查项目ID是否正确",
-        "Act in project": "该项目中不存在此幕ID，请查看项目结构概览确认",
-        "Chapter in project": "该项目中不存在此章节ID，请调用 list_chapters 确认",
-        "Scene in project": "该项目中不存在此场景ID，请调用 list_scenes 确认",
+        "Act in project": "该项目中不存在此幕ID，请查看项目框架结构概览确认",
+        "Chapter in project": "该项目中不存在此章节ID，请调用 read_chapters 或 read_chapter 确认",
+        "Scene in project": "该项目中不存在此场景ID，请调用 read_chapter 或 read_recent 确认",
         "Character in project": "该项目中不存在此角色ID，请调用 list_characters 确认",
         "Edge in project": "该项目中不存在此连线ID，请调用 list_edges 确认",
         "Relation in project": "该项目中不存在此关系ID，请调用 list_relations 确认",
@@ -209,16 +209,16 @@ class BaseTool(ABC):
         failure mode with DeepSeek flash models.
         """
         hints = {
-            "chapter_id": "必须！请先调用 list_chapters 获取章节ID，然后立即用该ID调用本工具",
-            "scene_id": "必须！请先调用 list_scenes 获取场景ID，然后立即用该ID调用本工具",
+            "chapter_id": "必须！请先调用 read_chapters（按章号范围）或 read_chapter 获取章节ID，然后立即用该ID调用本工具",
+            "scene_id": "必须！请先调用 read_chapter（返回该章全部场景）或 read_recent 获取场景ID，然后立即用该ID调用本工具",
             "character_id": "必须！请先调用 list_characters 获取角色ID，然后立即用该ID调用本工具",
-            "act_id": "必须！请先调用 list_chapters 或查看项目结构概览获取幕ID",
+            "act_id": "必须！请先调用 read_chapters 或查看项目框架结构概览获取幕ID",
             "keyword": "必须提供搜索关键词（不能为空字符串）",
             "project_id": "项目ID由系统自动注入，通常无需显式传入",
             "edge_id": "必须！请先调用 list_edges 获取连线ID",
             "relation_id": "必须！请先调用 list_relations 获取关系ID",
-            "source_id": "必须！请先调用 list_chapters 获取源章节ID",
-            "target_id": "必须！请先调用 list_chapters 获取目标章节ID",
+            "source_id": "必须！请先调用 read_chapters（范围读取）或 read_chapter 获取源章节ID",
+            "target_id": "必须！请先调用 read_chapters（范围读取）或 read_chapter 获取目标章节ID",
             "content": "必须提供场景正文内容",
             "additional_content": "必须提供续写的内容",
             "name": "必须提供名称",
@@ -236,14 +236,14 @@ class BaseTool(ABC):
             "edge_type": "必须提供连线类型（timeline/causal/foreshadow/character）",
         }
         correction_tools = {
-            "chapter_id": "list_chapters",
-            "scene_id": "list_scenes",
+            "chapter_id": "read_chapters",
+            "scene_id": "read_chapter",
             "character_id": "list_characters",
-            "act_id": "list_chapters",
+            "act_id": "read_chapters",
             "edge_id": "list_edges",
             "relation_id": "list_relations",
-            "source_id": "list_chapters",
-            "target_id": "list_chapters",
+            "source_id": "read_chapters",
+            "target_id": "read_chapters",
         }
         hint = hints.get(key, f"请在调用工具前检查参数说明，确保提供了 {key} 参数")
         source_tool = correction_tools.get(key, "list_* 系列")

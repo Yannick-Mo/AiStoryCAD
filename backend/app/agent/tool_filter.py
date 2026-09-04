@@ -7,11 +7,12 @@
 from app.agent.tools.base import BaseTool
 
 READ_ONLY_TOOLS: set[str] = {
-    "read_project", "read_chapter", "read_scene", "read_full_project", "read_project_overview", "read_character",
+    "read_project", "read_chapter", "read_scene", "read_character",
     "search_knowledge",
     "analyze_chapter", "analyze_character_arc", "project_health",
     "check_consistency", "suggest_next",
-    "list_characters", "list_chapters", "list_scenes",
+    "read_chapters", "read_recent",
+    "list_characters",
     "list_relations", "list_edges", "search_nodes",
     "web_search", "web_fetch",
     "invoke_skill",

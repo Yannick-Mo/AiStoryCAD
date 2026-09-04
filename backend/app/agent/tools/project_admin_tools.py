@@ -57,12 +57,12 @@ class CreateActTool(BaseTool):
 class CreateChapterTool(BaseTool):
     meta = ToolMeta(
         name="create_chapter",
-        description="在指定幕（Act）中创建新章节（Chapter），需提供幕ID。act_id 来自 read_full_project 结构概览",
+        description="在指定幕（Act）中创建新章节（Chapter），需提供幕ID。act_id 来自项目框架结构概览或 read_chapters 返回的 act_id",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "act_id": {"type": "string", "description": "所属幕ID，来自 read_full_project 结构概览"},
+                "act_id": {"type": "string", "description": "所属幕ID，来自项目框架结构概览或 read_chapters 返回的 act_id"},
                 "title": {"type": "string", "description": "章节标题"},
                 "goal": {"type": "string", "description": "章节蓝图（章级创作计划：含【章核心】【预期节拍】【情绪弧线】【结尾钩】【角色侧重】【主题浸染】）"},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
@@ -109,14 +109,14 @@ class CreateChapterTool(BaseTool):
 class DeleteSceneTool(BaseTool):
     meta = ToolMeta(
         name="delete_scene",
-        description="删除指定场景（Scene），同时删除场景正文内容。scene_id 来自 list_scenes",
+        description="删除指定场景（Scene），同时删除场景正文内容。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
             },
             "required": ["scene_id"],
         },
@@ -150,14 +150,14 @@ class DeleteSceneTool(BaseTool):
 class DeleteChapterTool(BaseTool):
     meta = ToolMeta(
         name="delete_chapter",
-        description="删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文。chapter_id 来自 list_chapters",
+        description="删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文。chapter_id 来自 read_chapters（范围读取）或 read_chapter",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
             },
             "required": ["chapter_id"],
         },
@@ -200,14 +200,14 @@ class DeleteChapterTool(BaseTool):
 class DeleteActTool(BaseTool):
     meta = ToolMeta(
         name="delete_act",
-        description="删除指定幕（Act），同时删除该幕下的所有章节和场景。act_id 来自 read_full_project",
+        description="删除指定幕（Act），同时删除该幕下的所有章节和场景。act_id 来自项目框架结构概览或 read_chapters",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
         parameters={
             "type": "object",
             "properties": {
-                "act_id": {"type": "string", "description": "幕ID，来自 read_full_project 结构概览"},
+                "act_id": {"type": "string", "description": "幕ID，来自项目框架结构概览或 read_chapters 返回的 act_id"},
             },
             "required": ["act_id"],
         },
@@ -478,14 +478,14 @@ class CreateEdgeTool(BaseTool):
     meta = ToolMeta(
         name="create_edge",
         description="在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系。"
-                    "source_id/target_id 来自 list_chapters 或 read_full_project。"
+                    "source_id/target_id 来自 read_chapters（范围读取）或 read_chapter。"
                     "注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "source_id": {"type": "string", "description": "源章节ID，来自 list_chapters 或 read_full_project"},
-                "target_id": {"type": "string", "description": "目标章节ID，来自 list_chapters 或 read_full_project"},
+                "source_id": {"type": "string", "description": "源章节ID，来自 read_chapters（范围读取）或 read_chapter"},
+                "target_id": {"type": "string", "description": "目标章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "edge_type": {
                     "type": "string",
                     "description": "timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）",

@@ -13,14 +13,14 @@ class RecalcWordCountsTool(BaseTool):
     meta = ToolMeta(
         name="recalc_word_counts",
         description="重算项目所有场景和章节的字数。读取每个场景的正文内容重新计算字数，"
-                    "然后汇总更新每个章节的总字数。project_id 来自 read_full_project",
+                    "然后汇总更新每个章节的总字数。project_id 来自 read_project（项目元数据）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
                 "project_id": {
                     "type": "string",
-                    "description": "项目ID，来自 read_full_project",
+                    "description": "项目ID，来自项目框架结构概览或 read_chapters",
                 },
             },
             "required": ["project_id"],

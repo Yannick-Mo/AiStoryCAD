@@ -71,12 +71,12 @@ def _fuzzy_locate(content: str, snippet: str, threshold: float = 0.6) -> int:
 class WriteSceneContentTool(BaseTool):
     meta = ToolMeta(
         name="write_scene_content",
-        description="写入场景正文内容，更新场景字数。scene_id 来自 list_scenes 或 read_full_project",
+        description="写入场景正文内容，更新场景字数。scene_id 来自 read_chapter（该章场景列表）或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
                 "content": {"type": "string", "description": "场景正文内容"},
             },
             "required": ["scene_id", "content"],
@@ -116,12 +116,12 @@ class WriteSceneContentTool(BaseTool):
 class ContinueSceneTool(BaseTool):
     meta = ToolMeta(
         name="continue_scene",
-        description="基于前文风格分析，续写场景内容（追加到已有内容后）。scene_id 来自 list_scenes",
+        description="基于前文风格分析，续写场景内容（追加到已有内容后）。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
                 "additional_content": {"type": "string", "description": "续写的内容"},
             },
             "required": ["scene_id", "additional_content"],
@@ -157,12 +157,12 @@ class ContinueSceneTool(BaseTool):
 class RewriteSceneTool(BaseTool):
     meta = ToolMeta(
         name="rewrite_scene",
-        description="以指定风格或要求重写场景内容。scene_id 来自 list_scenes",
+        description="以指定风格或要求重写场景内容。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
                 "content": {"type": "string", "description": "重写后的内容"},
                 "style": {"type": "string", "description": "风格说明（更悬疑/更简洁/更有张力等）"},
             },
@@ -195,12 +195,12 @@ class RewriteSceneTool(BaseTool):
 class ExpandSelectionTool(BaseTool):
     meta = ToolMeta(
         name="expand_selection",
-        description="扩写指定段落，保持风格一致。scene_id 来自 list_scenes，original_text 需与场景正文精确匹配",
+        description="扩写指定段落，保持风格一致。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes，original_text 需与场景正文精确匹配",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
                 "original_text": {"type": "string", "description": "原始文本（用于定位，需先调用 read_scene 获取精确文本）"},
                 "expanded_text": {"type": "string", "description": "扩写后的完整段落"},
             },
@@ -248,12 +248,12 @@ class ExpandSelectionTool(BaseTool):
 class CompressSelectionTool(BaseTool):
     meta = ToolMeta(
         name="compress_selection",
-        description="压缩指定段落，保持关键信息。scene_id 来自 list_scenes",
+        description="压缩指定段落，保持关键信息。scene_id 来自 read_chapter（该章场景列表）、read_recent 或 search_nodes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes"},
                 "original_text": {"type": "string", "description": "原始文本（需先调用 read_scene 获取精确文本）"},
                 "compressed_text": {"type": "string", "description": "压缩后的文本"},
             },

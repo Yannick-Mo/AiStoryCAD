@@ -39,15 +39,14 @@ _ANALYSIS_TOOL_QUOTAS: dict[str, int] = {
 # The LLM needs ALL items (not just first N) to match user intent to IDs.
 # Per-item long text fields will be truncated to keep total size down.
 _LIST_TOOL_NAMES: set[str] = {
-    "list_chapters", "list_scenes", "list_characters",
-    "list_relations", "list_edges", "read_full_project",
+    "list_characters", "list_relations", "list_edges",
+    "read_chapters", "read_recent",
 }
 
 # Generic list/structural tools — the LLM mostly needs IDs and names,
 # not the full content of each entity.
 _STRUCTURAL_TOOL_NAMES: set[str] = {
-    "list_chapters", "list_scenes", "list_characters",
-    "list_relations", "list_edges", "search_nodes",
+    "list_characters", "list_relations", "list_edges", "search_nodes",
 }
 
 

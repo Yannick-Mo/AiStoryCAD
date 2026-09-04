@@ -145,14 +145,14 @@ class TestSummariseJsonList:
     def test_top_level_array_keeps_all_ids(self):
         items = self._make_long_array()
         raw = json.dumps(items, ensure_ascii=False)
-        out = _smart_summarise(raw, max_chars=8000, tool_name="list_scenes")
+        out = _smart_summarise(raw, max_chars=8000, tool_name="list_relations")
         for i in range(50):
             assert f"id-{i}" in out, f"id-{i} lost in summarised output"
 
     def test_top_level_array_extreme_truncation_no_nameerror(self):
         """Force the final truncation branch — must not raise NameError."""
         items = self._make_long_array(n=200, field_len=500)
-        out = _summarise_json_list(items, max_chars=500, tool_name="list_scenes")
+        out = _summarise_json_list(items, max_chars=500, tool_name="list_relations")
         assert isinstance(out, str)
         assert "truncated" in out
 

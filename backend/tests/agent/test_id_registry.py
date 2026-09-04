@@ -59,7 +59,7 @@ def label(reg, etype: str, eid: str) -> str:
 
 def test_flat_list_extraction():
     reg = build_id_registry([
-        result("list_chapters", {
+        result("read_chapters", {
             "chapters": [
                 {"id": "c1", "title": "第一章"},
                 {"id": "c2", "title": "第二章"},
@@ -279,27 +279,41 @@ def test_single_character_survives_relation_delete():
 
 def test_snapshot_replaces_unfiltered():
     base = build_id_registry([
-        result("list_chapters", {"chapters": [{"id": "c1", "title": "旧"}]}),
+        result("list_characters", {"characters": [{"id": "c1", "name": "旧"}]}),
     ])
     reg = build_id_registry([
-        result("list_chapters", {"chapters": [{"id": "c2", "title": "新"}]}),
+        result("list_characters", {"characters": [{"id": "c2", "name": "新"}]}),
     ], persisted=base)
-    assert "c1" not in reg["chapter"]
-    assert label(reg, "chapter", "c2") == "新"
-    assert len(reg["chapter"]) == 1
+    assert "c1" not in reg["character"]
+    assert label(reg, "character", "c2") == "新"
+    assert len(reg["character"]) == 1
 
 
 def test_filtered_snapshot_does_not_replace():
     base = build_id_registry([
-        result("list_scenes", {"scenes": [{"id": "s1", "title": "甲"}]}),
+        result("list_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]}),
     ])
     reg = build_id_registry([
-        result("list_scenes", {"scenes": [{"id": "s2", "title": "乙"}]},
-               params={"chapter_id": "ch9"}),
+        result("list_relations", {"relations": [{"id": "r2", "character_id": "c9", "target_id": "c2", "label": "乙"}]},
+               params={"character_id": "c9"}),
     ], persisted=base)
     # filtered results only upsert — they must NOT replace the persisted type
-    assert label(reg, "scene", "s1") == "甲"
-    assert label(reg, "scene", "s2") == "乙"
+    assert "r1" in reg["relation"]
+    assert "r2" in reg["relation"]
+
+
+def test_single_relation_read_does_not_replace_type():
+    # relation_id mode returns ONE relation — must upsert, never prune the
+    # persisted type like an unfiltered snapshot would.
+    base = build_id_registry([
+        result("list_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]}),
+    ])
+    reg = build_id_registry([
+        result("list_relations", {"relations": [{"id": "r9", "character_id": "c1", "target_id": "c2", "label": "精读条"}]},
+               params={"relation_id": "r9"}),
+    ], persisted=base)
+    assert "r1" in reg["relation"]
+    assert "r9" in reg["relation"]
 
 
 def test_truncated_snapshot_does_not_replace():
@@ -316,27 +330,27 @@ def test_truncated_snapshot_does_not_replace():
 
 def test_older_snapshot_does_not_resurrect_stale_entries():
     base = build_id_registry([
-        result("list_chapters", {"chapters": [{"id": "c1", "title": "旧"}]}),
+        result("list_characters", {"characters": [{"id": "c1", "name": "旧"}]}),
     ])
     reg = build_id_registry([
-        result("list_chapters", {"chapters": [{"id": "c1", "title": "旧"}]}),
-        result("list_chapters", {"chapters": [{"id": "c2", "title": "新"}]}),
+        result("list_characters", {"characters": [{"id": "c1", "name": "旧"}]}),
+        result("list_characters", {"characters": [{"id": "c2", "name": "新"}]}),
     ], persisted=base)
     # newest snapshot replaces the type; older snapshot must not resurrect c1
-    assert "c1" not in reg["chapter"]
-    assert label(reg, "chapter", "c2") == "新"
+    assert "c1" not in reg["character"]
+    assert label(reg, "character", "c2") == "新"
 
 
 def test_older_unfiltered_snapshot_does_not_override_newest_filtered():
     # newest is a filtered list (non-authoritative) — an older unfiltered
     # snapshot must NOT wipe it and replace the whole type with stale data.
     reg = build_id_registry([
-        result("list_scenes", {"scenes": [{"id": "s0", "title": "旧全集"}]}),
-        result("list_scenes", {"scenes": [{"id": "s2", "title": "新过滤"}]},
-               params={"chapter_id": "ch9"}),
+        result("list_relations", {"relations": [{"id": "r0", "character_id": "c1", "target_id": "c2", "label": "旧全集"}]}),
+        result("list_relations", {"relations": [{"id": "r2", "character_id": "c9", "target_id": "c2", "label": "新过滤"}]},
+               params={"character_id": "c9"}),
     ])
-    assert label(reg, "scene", "s2") == "新过滤"
-    assert "s0" not in reg["scene"]
+    assert "r2" in reg["relation"]
+    assert "r0" not in reg["relation"]
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +394,7 @@ def test_failed_result_is_ignored():
 
 
 def test_non_json_data_is_ignored():
-    r = {"tool": "list_chapters", "success": True, "data": "not json at all"}
+    r = {"tool": "list_relations", "success": True, "data": "not json at all"}
     assert build_id_registry([r]) == {}
 
 
@@ -424,11 +438,11 @@ def test_executor_injects_params_into_results():
 
 def test_executor_params_drive_filter_detection():
     reg = build_id_registry([
-        result("list_scenes", {"scenes": [{"id": "s1", "title": "甲"}]},
-               params={"chapter_id": "ch9"}),
+        result("list_relations", {"relations": [{"id": "r1", "character_id": "c1", "target_id": "c2", "label": "甲"}]},
+               params={"character_id": "c1"}),
     ])
     # filtered snapshot upserts instead of replacing
-    assert label(reg, "scene", "s1") == "甲"
+    assert "r1" in reg["relation"]
 
 
 # ---------------------------------------------------------------------------
@@ -438,17 +452,16 @@ def test_executor_params_drive_filter_detection():
 
 def test_render_groups_by_type():
     reg = build_id_registry([
-        result("list_chapters", {"chapters": [
-            {"id": "c1", "title": "第一章"},
-            {"id": "c2", "title": "第二章"},
+        result("list_characters", {"characters": [
+            {"id": "c1", "name": "甲角色"},
+            {"id": "c2", "name": "乙角色"},
         ]}),
-        result("create_character", {"id": "c5", "name": "林晓"}),
     ])
     out = render_id_registry(reg)
     assert "# --- 已知实体 ID" in out
-    assert "## 章（2）" in out
-    assert "  第一章 | c1" in out
-    assert "  林晓 | c5" in out
+    assert "## 角色（2）" in out
+    assert "  甲角色 | c1" in out
+    assert "  乙角色 | c2" in out
     assert "（注：ID 可能已过期" in out
 
 

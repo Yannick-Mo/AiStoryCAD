@@ -49,11 +49,11 @@ class TestMissingParam:
         result = BaseTool._missing_param("chapter_id")
         assert result.success is False
         assert "chapter_id" in result.error
-        assert "list_chapters" in result.error
+        assert "read_chapters" in result.error
 
     def test_scene_id_hint(self):
         result = BaseTool._missing_param("scene_id")
-        assert "list_scenes" in result.error
+        assert "read_chapter" in result.error
 
     def test_character_id_hint(self):
         result = BaseTool._missing_param("character_id")

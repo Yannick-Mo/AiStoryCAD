@@ -147,8 +147,8 @@ class ContextBuilder:
         """Drop all cached context for a project (synchronous, in-memory).
 
         Must be called after a successful write so read tools (e.g.
-        ``read_full_project``) don't serve a stale skeleton from the shared
-        300s cache within the same turn.
+        ``read_chapters`` / ``read_scene``) don't serve a stale skeleton from
+        the shared 300s cache within the same turn.
         """
         prefix = _REDIS_CACHE_PREFIX + str(project_id) + ":"
         _CONTEXT_CACHE.delete_prefix(prefix)
@@ -170,10 +170,15 @@ class ContextBuilder:
         await self._invalidate_redis_project(project_id)
 
     # ------------------------------------------------------------------
-    # Shared project tree loader (used by both build_full and build_summary)
+    # Shared project tree loader (used by build_summary)
     # ------------------------------------------------------------------
 
-    async def _load_project_tree(self, project_id: uuid.UUID, limit_chapters: int = 200, limit_scenes: int = 1000) -> dict:
+    async def _load_project_tree(
+        self,
+        project_id: uuid.UUID,
+        limit_chapters: int = 3500,
+        limit_scenes: int = 3500,
+    ) -> dict:
         acts_result = await self.db.execute(
             select(Act).where(Act.project_id == project_id).order_by(Act.sort_order)
         )
@@ -184,7 +189,8 @@ class ContextBuilder:
         )
         chapter_total = chapter_total_result.scalar_one() or 0
         chapters_result = await self.db.execute(
-            select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order).limit(limit_chapters)
+            select(Chapter).where(Chapter.project_id == project_id)
+            .order_by(Chapter.sort_order).limit(limit_chapters)
         )
         all_chapters = chapters_result.scalars().all()
         chapter_truncated = chapter_total > len(all_chapters)
@@ -198,7 +204,8 @@ class ContextBuilder:
         )
         scene_total = scene_total_result.scalar_one() or 0
         scenes_result = await self.db.execute(
-            select(Scene).where(Scene.chapter_id.in_(chapter_ids)).order_by(Scene.sort_order).limit(limit_scenes)
+            select(Scene).where(Scene.chapter_id.in_(chapter_ids))
+            .order_by(Scene.sort_order).limit(limit_scenes)
         )
         all_scenes = scenes_result.scalars().all()
         scene_truncated = scene_total > len(all_scenes)
@@ -230,104 +237,716 @@ class ContextBuilder:
             f"{len(tree.get('all_chapters', []))} 章 / {len(tree.get('all_scenes', []))} 场，"
             f"其余未在列表中显示）"
         )
-
     # ------------------------------------------------------------------
-    # Build full
+    # Focused data builders — analysis tools' material source.  These never
+    # dump the whole project: each one assembles exactly the data a single
+    # analysis object (chapter / character / writing progress) needs.
     # ------------------------------------------------------------------
 
-    async def build_full(self, project_id: uuid.UUID, query_hint: str = "") -> dict:
-        ck = self._cache_key(project_id, "full", "")
-        cached = await self._cache_get(ck)
-        if cached is not None:
-            # RAG is query-dependent — never serve it stale from the framework
-            # cache; refresh it fresh so cache hits still get relevant context.
-            result = dict(cached)
-            genre = (result.get("project") or {}).get("genre") or ""
-            rag_context = await self._get_rag_context_if_meaningful(query_hint, genre)
-            result["rag_context"] = rag_context or ""
-            return result
+    _ANALYSIS_BODY_CHARS = 60_000  # chapter-level cap for full scene body text
 
-        proj = await self._get_project(project_id)
-        if not proj:
-            return {}
+    async def build_chapter_focus(
+        self, project_id: uuid.UUID, chapter_id: uuid.UUID
+    ) -> dict | None:
+        """Material for a single-chapter analysis.
 
-        config = await self._get_config(project_id)
-        tree = await self._load_project_tree(project_id)
-        acts = tree["acts"]
-        all_chapters = tree["all_chapters"]
-        chapters_by_act = tree["chapters_by_act"]
-        all_scenes = tree["all_scenes"]
-        scenes_by_chapter = tree["scenes_by_chapter"]
-        chapter_ids = tree["chapter_ids"]
+        Returns the chapter, ALL of its scenes with full body text (not
+        truncated previews), its act, and the nearest neighbouring chapters
+        (title + goal) for structural context.  ``None`` if the chapter does
+        not exist in this project.
+        """
+        result = await self.db.execute(
+            select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id)
+        )
+        chapter = result.scalar_one_or_none()
+        if not chapter:
+            return None
 
-        scene_ids = [sc.id for sc in all_scenes]
-        # Blueprints (Scene.summary) are the canonical story memory — the full
-        # context never carries body text.  Only a cheap "has body?" flag so
-        # the model knows a scene was written without reading it.
-        written_by_scene: dict[uuid.UUID, bool] = {}
-        if scene_ids:
-            sc_content_result = await self.db.execute(
-                select(SceneContent.scene_id).where(
-                    SceneContent.scene_id.in_(scene_ids),
-                    SceneContent.content.isnot(None),
-                    SceneContent.content != "",
+        scenes_result = await self.db.execute(
+            select(Scene).where(Scene.chapter_id == chapter_id).order_by(Scene.sort_order)
+        )
+        scenes = scenes_result.scalars().all()
+
+        # Single batched query for all body text — no N+1.
+        body_by_scene: dict[uuid.UUID, str] = {}
+        if scenes:
+            content_result = await self.db.execute(
+                select(SceneContent.scene_id, SceneContent.content).where(
+                    SceneContent.scene_id.in_([s.id for s in scenes])
                 )
             )
-            written_by_scene = {sc_id: True for (sc_id,) in sc_content_result.all()}
+            body_by_scene = {sid: (body or "") for sid, body in content_result.all()}
 
-        acts_data = []
-        for act in acts:
-            chapters_data = []
-            for ch in chapters_by_act.get(act.id, []):
-                scenes_data = []
-                for sc in scenes_by_chapter.get(ch.id, []):
-                    sc_d = row_to_dict(sc)
-                    sc_d["written"] = written_by_scene.get(sc.id, False)
-                    scenes_data.append(sc_d)
-                ch_d = row_to_dict(ch)
-                ch_d["scenes"] = scenes_data
-                chapters_data.append(ch_d)
-            act_d = row_to_dict(act)
-            act_d["chapters"] = chapters_data
-            acts_data.append(act_d)
+        act_data = None
+        if chapter.act_id:
+            act_result = await self.db.execute(select(Act).where(Act.id == chapter.act_id))
+            act = act_result.scalar_one_or_none()
+            act_data = row_to_dict(act) if act else None
 
-        chars_result = await self.db.execute(
-            select(Character).where(Character.project_id == project_id).order_by(Character.sort_order)
+        scenes_data = []
+        total_chars = 0
+        for sc in scenes:
+            body = body_by_scene.get(sc.id, "")
+            total_chars += len(body)
+            scenes_data.append({
+                "id": str(sc.id),
+                "title": sc.title or "",
+                "pov_character": sc.pov_character or "",
+                "setting": sc.setting or "",
+                "scene_time": sc.scene_time or "",
+                "summary": sc.summary or "",
+                "sort_order": sc.sort_order,
+                "content": body,
+            })
+        content_truncated = False
+        if total_chars > self._ANALYSIS_BODY_CHARS:
+            # Keep earlier scenes whole; cut the tail at scene boundaries.
+            content_truncated = True
+            remaining = self._ANALYSIS_BODY_CHARS
+            for entry in scenes_data:
+                n = len(entry["content"])
+                if remaining <= 0:
+                    entry["content"] = ""
+                    entry["content_cut"] = True
+                elif n > remaining:
+                    entry["content"] = entry["content"][:remaining]
+                    entry["content_cut"] = True
+                    remaining = 0
+                else:
+                    remaining -= n
+
+        prev_ch = await self._neighbour_chapter(project_id, chapter, -1)
+        next_ch = await self._neighbour_chapter(project_id, chapter, 1)
+
+        return {
+            "chapter": {
+                "id": str(chapter.id),
+                "title": chapter.title or "",
+                "goal": chapter.goal or "",
+                "status": chapter.status or "",
+                "sort_order": chapter.sort_order,
+                "act_id": str(chapter.act_id) if chapter.act_id else "",
+            },
+            "act": act_data,
+            "prev_chapter": prev_ch,
+            "next_chapter": next_ch,
+            "scenes": scenes_data,
+            "scene_count": len(scenes_data),
+            "body_chars": total_chars,
+            "content_truncated": content_truncated,
+        }
+
+    async def _neighbour_chapter(
+        self, project_id: uuid.UUID, chapter: Chapter, direction: int
+    ) -> dict | None:
+        """Adjacent chapter in story order (same act first, then across the
+        act boundary).  ``direction``: -1 previous, +1 next."""
+        result = await self.db.execute(
+            select(Chapter)
+            .where(
+                Chapter.project_id == project_id,
+                Chapter.act_id == chapter.act_id,
+                Chapter.sort_order == (chapter.sort_order or 0) + direction,
+            )
+            .limit(1)
         )
-        characters_data = [row_to_dict(c) for c in chars_result.scalars().all()]
+        nbr = result.scalar_one_or_none()
+        if nbr:
+            return {"title": nbr.title or "", "goal": (nbr.goal or "")[:800],
+                    "sort_order": nbr.sort_order}
+
+        act_result = await self.db.execute(select(Act).where(Act.id == chapter.act_id))
+        act = act_result.scalar_one_or_none()
+        if not act:
+            return None
+        if direction < 0:
+            act_q = (select(Act).where(Act.project_id == project_id,
+                                       Act.sort_order < (act.sort_order or 0))
+                     .order_by(Act.sort_order.desc()).limit(1))
+        else:
+            act_q = (select(Act).where(Act.project_id == project_id,
+                                       Act.sort_order > (act.sort_order or 0))
+                     .order_by(Act.sort_order.asc()).limit(1))
+        other = (await self.db.execute(act_q)).scalar_one_or_none()
+        if not other:
+            return None
+        if direction < 0:
+            ch_q = (select(Chapter).where(Chapter.project_id == project_id,
+                                          Chapter.act_id == other.id)
+                    .order_by(Chapter.sort_order.desc()).limit(1))
+        else:
+            ch_q = (select(Chapter).where(Chapter.project_id == project_id,
+                                          Chapter.act_id == other.id)
+                    .order_by(Chapter.sort_order.asc()).limit(1))
+        nbr2 = (await self.db.execute(ch_q)).scalar_one_or_none()
+        if not nbr2:
+            return None
+        return {"title": nbr2.title or "", "goal": (nbr2.goal or "")[:800],
+                "sort_order": nbr2.sort_order}
+
+    async def build_character_focus(
+        self, project_id: uuid.UUID, character_id: uuid.UUID
+    ) -> dict | None:
+        """Material for a character-arc analysis: full profile, on-page
+        appearances (POV scenes matched leniently by name, ordered by
+        act → chapter → scene, with body previews), and relations.
+        ``None`` if the character does not exist in this project.
+        """
+        result = await self.db.execute(
+            select(Character).where(Character.id == character_id,
+                                    Character.project_id == project_id)
+        )
+        char = result.scalar_one_or_none()
+        if not char:
+            return None
+        name = char.name or ""
+        if not name:
+            return {
+                "character": row_to_dict(char),
+                "appearances": [],
+                "appearance_count": 0,
+                "relations": [],
+            }
+
+        scenes_q = (
+            select(
+                Scene.id, Scene.chapter_id, Scene.title, Scene.sort_order,
+                Scene.scene_time, Scene.setting, Scene.pov_character, Scene.summary,
+                Chapter.title.label("chapter_title"),
+                Chapter.sort_order.label("chapter_order"),
+                Act.sort_order.label("act_order"),
+            )
+            .join(Chapter, Chapter.id == Scene.chapter_id)
+            .join(Act, Act.id == Chapter.act_id)
+            .where(Scene.project_id == project_id)
+            .where(Scene.pov_character.ilike(f"%{name}%"))
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc())
+            .limit(60)
+        )
+        rows = (await self.db.execute(scenes_q)).all()
+
+        body_by_scene: dict[uuid.UUID, str] = {}
+        scene_ids = [r.id for r in rows]
+        if scene_ids:
+            content_result = await self.db.execute(
+                select(SceneContent.scene_id, SceneContent.content).where(
+                    SceneContent.scene_id.in_(scene_ids)
+                )
+            )
+            body_by_scene = {sid: (body or "") for sid, body in content_result.all()}
+
+        appearances = []
+        for r in rows:
+            body = body_by_scene.get(r.id, "")
+            appearances.append({
+                "scene_id": str(r.id),
+                "chapter_id": str(r.chapter_id) if r.chapter_id else "",
+                "chapter_title": r.chapter_title or "",
+                "chapter_order": r.chapter_order,
+                "act_order": r.act_order,
+                "scene_title": r.title or "",
+                "scene_order": r.sort_order,
+                "scene_time": r.scene_time or "",
+                "setting": r.setting or "",
+                "pov_character": r.pov_character or "",
+                "summary": r.summary or "",
+                "body_preview": body[:800],
+                "body_len": len(body),
+            })
 
         rels_result = await self.db.execute(
-            select(CharacterRelation).where(CharacterRelation.project_id == project_id)
+            select(CharacterRelation).where(
+                CharacterRelation.project_id == project_id,
+                (CharacterRelation.character_id == character_id)
+                | (CharacterRelation.target_id == character_id),
+            )
         )
-        relations_data = [row_to_dict(r) for r in rels_result.scalars().all()]
-        relations_data = await self._decorate_relations(relations_data, project_id)
+        rels = rels_result.scalars().all()
+        char_ids = {character_id}
+        for rel in rels:
+            char_ids.add(rel.character_id)
+            char_ids.add(rel.target_id)
+        names: dict[uuid.UUID, str] = {}
+        if char_ids:
+            names_result = await self.db.execute(
+                select(Character.id, Character.name).where(Character.id.in_(list(char_ids)))
+            )
+            names = {cid: nm for cid, nm in names_result.all()}
+        relations_data = [{
+            "character_name": names.get(rel.character_id, str(rel.character_id)),
+            "target_name": names.get(rel.target_id, str(rel.target_id)),
+            "rel_type": rel.rel_type or "",
+            "label": rel.label or "",
+            "description": (rel.description or "")[:300],
+            "trust": rel.trust or 0,
+            "threat": rel.threat or 0,
+            "attraction": rel.attraction or 0,
+        } for rel in rels]
+
+        return {
+            "character": {
+                "id": str(char.id),
+                "name": char.name or "",
+                "role": char.role or "",
+                "personality": char.personality or "",
+                "appearance": char.appearance or "",
+                "background": char.background or "",
+                "motivation": char.motivation or "",
+            },
+            "appearances": appearances,
+            "appearance_count": len(appearances),
+            "relations": relations_data,
+        }
+
+    async def build_writing_progress(self, project_id: uuid.UUID) -> dict:
+        """Compact project state for ``suggest_next``: aggregate counts,
+        the most recently written scenes (by SceneContent.updated_at), and
+        the next unwritten candidates in story order."""
+        count_q = (
+            select(
+                func.count().select_from(Act).where(Act.project_id == project_id),
+                func.count().select_from(Chapter).where(Chapter.project_id == project_id),
+                func.count().select_from(Scene).where(Scene.project_id == project_id),
+            )
+        )
+        row = (await self.db.execute(count_q)).first()
+        total_acts, total_chapters, total_scenes = (int(v) for v in row) if row else (0, 0, 0)
+
+        written_ids: set[uuid.UUID] = set()
+        written_result = await self.db.execute(
+            select(SceneContent.scene_id).where(
+                SceneContent.project_id == project_id,
+                SceneContent.content.isnot(None),
+                SceneContent.content != "",
+            )
+        )
+        written_ids = {sid for (sid,) in written_result.all()}
+
+        # Recently written (by edit time)
+        recent_rows = await self.db.execute(
+            select(SceneContent.scene_id)
+            .where(SceneContent.project_id == project_id,
+                   SceneContent.content.isnot(None),
+                   SceneContent.content != "")
+            .order_by(SceneContent.updated_at.desc())
+            .limit(5)
+        )
+        recent_ids = [sid for (sid,) in recent_rows.all()]
+
+        # Story-ordered light rows for locating scenes
+        ordered_q = (
+            select(
+                Scene.id, Scene.chapter_id, Scene.title,
+                Chapter.id.label("chapter_id_x"), Chapter.title.label("chapter_title"),
+                Chapter.sort_order.label("chapter_order"),
+                Act.sort_order.label("act_order"), Act.name.label("act_name"),
+            )
+            .join(Chapter, Chapter.id == Scene.chapter_id)
+            .join(Act, Act.id == Chapter.act_id)
+            .where(Scene.project_id == project_id)
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc())
+        )
+        ordered_rows = (await self.db.execute(ordered_q)).all()
+        id_to_loc = {r.id: r for r in ordered_rows}
+
+        recent_written = []
+        for sid in recent_ids:
+            r = id_to_loc.get(sid)
+            if r:
+                recent_written.append({
+                    "act": r.act_name or "",
+                    "chapter": r.chapter_title or "",
+                    "scene": r.title or "",
+                    "scene_id": str(r.id),
+                })
+
+        unwritten_candidates = []
+        for r in ordered_rows:
+            if r.id in written_ids:
+                continue
+            unwritten_candidates.append({
+                "act": r.act_name or "",
+                "chapter": r.chapter_title or "",
+                "scene": r.title or "",
+                "scene_id": str(r.id),
+            })
+            if len(unwritten_candidates) >= 20:
+                break
+
+        written_scenes = len(written_ids)
+        return {
+            "total_acts": total_acts,
+            "total_chapters": total_chapters,
+            "total_scenes": total_scenes,
+            "written_scenes": written_scenes,
+            "progress_pct": round(written_scenes / total_scenes * 100) if total_scenes else 0,
+            "recent_written": recent_written,
+            "unwritten_candidates": unwritten_candidates,
+        }
+
+    async def build_health_snapshot(self, project_id: uuid.UUID) -> dict:
+        """Deterministic whole-project health snapshot (SQL aggregations +
+        light projection rows — never loads scene body/blueprint text)."""
+        total_acts_result = await self.db.execute(
+            select(func.count()).select_from(Act).where(Act.project_id == project_id)
+        )
+        total_acts = int(total_acts_result.scalar_one() or 0)
+        total_chapters_result = await self.db.execute(
+            select(func.count()).select_from(Chapter).where(Chapter.project_id == project_id)
+        )
+        total_chapters = int(total_chapters_result.scalar_one() or 0)
+        total_scenes_result = await self.db.execute(
+            select(func.count()).select_from(Scene).where(Scene.project_id == project_id)
+        )
+        total_scenes = int(total_scenes_result.scalar_one() or 0)
+        written_result = await self.db.execute(
+            select(SceneContent.scene_id).where(
+                SceneContent.project_id == project_id,
+                SceneContent.content.isnot(None),
+                SceneContent.content != "",
+            )
+        )
+        written_ids = {sid for (sid,) in written_result.all()}
+        written_scenes = len(written_ids)
+        unwritten_count = max(0, total_scenes - written_scenes)
+
+        # Unwritten scene details (first 20 in story order)
+        ordered_q = (
+            select(
+                Scene.id,
+                Chapter.title.label("chapter_title"),
+                Act.name.label("act_name"),
+                Scene.title.label("scene_title"),
+            )
+            .join(Chapter, Chapter.id == Scene.chapter_id)
+            .join(Act, Act.id == Chapter.act_id)
+            .where(Scene.project_id == project_id)
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc())
+        )
+        ordered_rows = (await self.db.execute(ordered_q)).all()
+        unwritten_scenes = []
+        for r in ordered_rows:
+            if r.id in written_ids:
+                continue
+            unwritten_scenes.append({
+                "act": r.act_name or "",
+                "chapter": r.chapter_title or "",
+                "scene": r.scene_title or "",
+            })
+            if len(unwritten_scenes) >= 20:
+                break
+
+        # Chapters without any scene
+        chapters_result = await self.db.execute(
+            select(Chapter).where(Chapter.project_id == project_id)
+        )
+        chapters = chapters_result.scalars().all()
+        chapter_scene_map: dict[uuid.UUID, int] = defaultdict(int)
+        for sc_row in (await self.db.execute(
+            select(Scene.chapter_id).where(Scene.project_id == project_id)
+        )).all():
+            chapter_scene_map[sc_row[0]] += 1
+        act_name_map = {}
+        for act in (await self.db.execute(
+            select(Act).where(Act.project_id == project_id)
+        )).scalars().all():
+            act_name_map[act.id] = act.name or ""
+        empty_chapters = []
+        for ch in chapters:
+            if chapter_scene_map.get(ch.id, 0) == 0:
+                empty_chapters.append({
+                    "act": act_name_map.get(ch.act_id, ""),
+                    "chapter": ch.title or "",
+                })
+                if len(empty_chapters) >= 10:
+                    break
+        empty_chapters_count = sum(1 for ch in chapters if chapter_scene_map.get(ch.id, 0) == 0)
+
+        # Isolated characters (no relations at all)
+        chars_result = await self.db.execute(
+            select(Character).where(Character.project_id == project_id)
+        )
+        chars = chars_result.scalars().all()
+        rel_endpoints: set[uuid.UUID] = set()
+        for rel in (await self.db.execute(
+            select(CharacterRelation.character_id, CharacterRelation.target_id).where(
+                CharacterRelation.project_id == project_id)
+        )).all():
+            rel_endpoints.add(rel[0])
+            rel_endpoints.add(rel[1])
+        isolated_chars = [
+            c.name or "" for c in chars if c.id not in rel_endpoints
+        ]
+        isolated_count = len(isolated_chars)
 
         edges_result = await self.db.execute(
-            select(ChapterEdge).where(ChapterEdge.project_id == project_id)
+            select(func.count()).select_from(ChapterEdge).where(
+                ChapterEdge.project_id == project_id)
         )
-        edges_data = [row_to_dict(e) for e in edges_result.scalars().all()]
-        edges_data = await self._decorate_edges(edges_data, project_id)
+        total_edges = int(edges_result.scalar_one() or 0)
 
-        available_skills = await self._get_available_skills()
-
-        rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
-
-        result = {
-            "project": row_to_dict(proj),
-            "config": row_to_dict(config) if config else {},
-            "acts": acts_data,
-            "characters": characters_data,
-            "relations": relations_data,
-            "edges": edges_data,
-            "available_skills": available_skills,
-            "rag_context": rag_context or "",
+        return {
+            "total_acts": total_acts,
+            "total_chapters": total_chapters,
+            "total_scenes": total_scenes,
+            "written_scenes": written_scenes,
+            "unwritten_scenes_count": unwritten_count,
+            "unwritten_scenes": unwritten_scenes[:20],
+            "empty_chapters_count": empty_chapters_count,
+            "empty_chapters": empty_chapters[:10],
+            "total_characters": len(chars),
+            "isolated_characters_count": isolated_count,
+            "isolated_characters": isolated_chars[:10],
+            "total_edges": total_edges,
         }
-        note = self._truncation_note(tree)
-        if note:
-            result["truncated_note"] = note
 
-        await self._cache_set(ck, result)
-        return result
+    async def build_recent_scenes_hint(
+        self, project_id: uuid.UUID, max_scenes: int = 5
+    ) -> str | None:
+        """Compact hint of the scenes at the tail of the story order (title,
+        POV, blueprint snippet): the very last scene gets up to 800 chars,
+        the preceding scenes up to 200 chars each.
+
+        Loaded on demand with a single light query instead of carrying every
+        scene summary inside the framework tree.
+        """
+        rows = (await self.db.execute(
+            select(Scene.title, Scene.pov_character, Scene.summary)
+            .join(Chapter, Chapter.id == Scene.chapter_id)
+            .join(Act, Act.id == Chapter.act_id)
+            .where(Scene.project_id == project_id)
+            .order_by(Act.sort_order.desc(), Chapter.sort_order.desc(),
+                      Scene.sort_order.desc())
+            .limit(max_scenes)
+        )).all()
+        if not rows:
+            return None
+        lines = ["\n最近场景快照："]
+        last_idx = len(rows) - 1
+        for idx, (title, pov, summary) in enumerate(reversed(rows)):
+            cap = 800 if idx == last_idx else 200
+            snippet = f"- {title or '?'}"
+            if pov:
+                snippet += f" [{pov}]"
+            if summary:
+                snippet += f": {(summary or '')[:cap]}"
+            lines.append(snippet)
+        return "\n".join(lines)
+
+    async def build_chapter_window(
+        self,
+        project_id: uuid.UUID,
+        chapter_from: int,
+        chapter_to: int,
+        include_goals: bool = True,
+        budget_chars: int = 11000,
+    ) -> dict:
+        """Range window of chapters by *global* story order (act sort →
+        chapter sort, numbering continues across acts).
+
+        Only the requested window's chapter rows (title/status/goal) are
+        loaded — never the whole project's text.  The output is budget
+        trimmed here (not by the 8000-char executor ceiling) so the
+        ``truncated``/``next_from`` markers stay structurally intact.
+        """
+        ordered_result = await self.db.execute(
+            select(Chapter.id)
+            .join(Act, Act.id == Chapter.act_id)
+            .where(Chapter.project_id == project_id)
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc())
+        )
+        ordered_ids = [rid for (rid,) in ordered_result.all()]
+        total = len(ordered_ids)
+
+        if chapter_to > total:
+            chapter_to = total
+        if chapter_from < 1:
+            chapter_from = 1
+
+        if chapter_to < chapter_from:
+            return {
+                "chapter_from": chapter_from,
+                "chapter_to": chapter_to,
+                "total_chapters": total,
+                "act_map": {},
+                "chapters": [],
+                "truncated": False,
+                "next_from": None,
+            }
+
+        window_ids = ordered_ids[chapter_from - 1 : chapter_to]
+
+        # Light projection: window rows only (goals included).  Two passes
+        # keep the big ORDER BY JOIN away from the full text columns.
+        window_result = await self.db.execute(
+            select(Chapter).where(Chapter.id.in_(window_ids))
+        )
+        chapter_map = {ch.id: ch for ch in window_result.scalars().all()}
+
+        act_result = await self.db.execute(
+            select(Act.id, Act.name).where(Act.project_id == project_id)
+        )
+        act_map = {a_id: (a_name or "") for a_id, a_name in act_result.all()}
+
+        entries: list[dict[str, Any]] = []
+        truncated = False
+        next_from: int | None = None
+        used = 0
+        for idx, cid in enumerate(window_ids, start=chapter_from):
+            ch = chapter_map.get(cid)
+            if ch is None:
+                continue
+            entry: dict[str, Any] = {
+                "global_order": idx,
+                "id": str(ch.id),
+                "title": ch.title or "",
+                "sort_order": ch.sort_order,
+                "act_id": str(ch.act_id) if ch.act_id else "",
+                "act_name": act_map.get(ch.act_id, ""),
+                "status": ch.status or "",
+            }
+            if include_goals:
+                entry["goal"] = ch.goal or ""
+            est = len(json.dumps(entry, ensure_ascii=False))
+            if used + est + 2 > budget_chars:
+                truncated = True
+                next_from = idx
+                break
+            entries.append(entry)
+            used += est + 2
+
+        return {
+            "chapter_from": chapter_from,
+            "chapter_to": chapter_to,
+            "total_chapters": total,
+            "act_map": {str(k): v for k, v in act_map.items()},
+            "chapters": entries,
+            "truncated": truncated,
+            "next_from": next_from,
+        }
+
+    async def build_recent_items(
+        self,
+        project_id: uuid.UUID,
+        kind: str = "scenes",
+        n: int = 5,
+        budget_chars: int = 11000,
+    ) -> dict:
+        """Most recently written/updated scenes (SceneContent.updated_at
+        descending) or their containing chapters — by edit time, NOT story
+        position.  Never returns full scene body text.
+        """
+        recent_limit = n if kind == "scenes" else max(n * 4, 20)
+        recent_result = await self.db.execute(
+            select(SceneContent.scene_id, SceneContent.updated_at)
+            .where(
+                SceneContent.project_id == project_id,
+                SceneContent.content.isnot(None),
+                SceneContent.content != "",
+            )
+            .order_by(SceneContent.updated_at.desc())
+            .limit(recent_limit)
+        )
+        recent_rows = recent_result.all()
+        if not recent_rows:
+            return {"kind": kind, "items": [], "truncated": False}
+
+        scene_ids = [sid for (sid, _ts) in recent_rows]
+
+        detail_result = await self.db.execute(
+            select(Scene, Chapter.title.label("chapter_title"),
+                   Act.name.label("act_name"))
+            .join(Chapter, Chapter.id == Scene.chapter_id)
+            .join(Act, Act.id == Chapter.act_id)
+            .where(Scene.id.in_(scene_ids))
+        )
+        detail_map: dict[uuid.UUID, dict[str, Any]] = {}
+        for sc, chapter_title, act_name in detail_result.all():
+            detail_map[sc.id] = {
+                "scene": sc,
+                "chapter_id": str(sc.chapter_id) if sc.chapter_id else "",
+                "chapter_title": chapter_title or "",
+                "act_name": act_name or "",
+            }
+
+        if kind == "chapters":
+            seen: list[uuid.UUID] = []
+            for sid, _ts in recent_rows:
+                info = detail_map.get(sid)
+                if not info:
+                    continue
+                ch_id_uuid = None
+                try:
+                    ch_id_uuid = uuid.UUID(info["chapter_id"])
+                except (ValueError, TypeError):
+                    continue
+                if ch_id_uuid not in seen:
+                    seen.append(ch_id_uuid)
+                if len(seen) >= n:
+                    break
+
+            chapter_items: list[dict[str, Any]] = []
+            truncated = False
+            used = 0
+            if seen:
+                ch_result = await self.db.execute(
+                    select(Chapter).where(Chapter.id.in_(seen))
+                )
+                ch_map = {ch.id: ch for ch in ch_result.scalars().all()}
+                for ch_id_uuid in seen:
+                    ch = ch_map.get(ch_id_uuid)
+                    if ch is None:
+                        continue
+                    entry: dict[str, Any] = {
+                        "chapter_id": str(ch.id),
+                        "chapter_title": ch.title or "",
+                        "status": ch.status or "",
+                        "goal": ch.goal or "",
+                    }
+                    # newest scene inside this chapter
+                    for sid, _ts in recent_rows:
+                        info = detail_map.get(sid)
+                        if info and info["chapter_id"] == str(ch.id):
+                            entry["act_name"] = info["act_name"]
+                            entry["latest_scene_id"] = str(sid)
+                            entry["latest_scene_title"] = info["scene"].title or ""
+                            entry["latest_updated_at"] = _ts.isoformat() if hasattr(_ts, "isoformat") else str(_ts)
+                            break
+                    est = len(json.dumps(entry, ensure_ascii=False))
+                    if used + est + 2 > budget_chars:
+                        truncated = True
+                        break
+                    chapter_items.append(entry)
+                    used += est + 2
+            return {"kind": kind, "items": chapter_items, "truncated": truncated}
+
+        items: list[dict[str, Any]] = []
+        truncated = False
+        used = 0
+        for sid, ts in recent_rows[:n]:
+            info = detail_map.get(sid)
+            if info is None:
+                continue
+            sc = info["scene"]
+            entry = {
+                "scene_id": str(sc.id),
+                "scene_title": sc.title or "",
+                "chapter_id": info.get("chapter_id", ""),
+                "chapter_title": info.get("chapter_title", ""),
+                "act_name": info.get("act_name", ""),
+                "sort_order": sc.sort_order,
+                "summary_preview": (sc.summary or "")[:500],
+                "word_count": sc.word_count or 0,
+                "updated_at": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            }
+            est = len(json.dumps(entry, ensure_ascii=False))
+            if used + est + 2 > budget_chars:
+                truncated = True
+                break
+            items.append(entry)
+            used += est + 2
+        return {"kind": kind, "items": items, "truncated": truncated}
+
 
     # ------------------------------------------------------------------
     # Build summary (with depth parameter)
@@ -368,6 +987,17 @@ class ContextBuilder:
             for ch in chapters_by_act.get(act.id, []):
                 scenes_data = []
                 for sc in scenes_by_chapter.get(ch.id, []):
+                    if depth == "framework":
+                        # Framework = bare structure tree for the main loop:
+                        # scene text fields (summary/pov/setting/time) are NOT
+                        # loaded — the loop renderer only shows titles/IDs and
+                        # scene goals are read on demand via read_scene.
+                        scenes_data.append({
+                            "id": str(sc.id),
+                            "title": sc.title,
+                            "sort_order": sc.sort_order,
+                        })
+                        continue
                     entry: dict[str, Any] = {
                         "id": str(sc.id),
                         "title": sc.title,
@@ -375,7 +1005,7 @@ class ContextBuilder:
                         "summary": (sc.summary or "")[:500],
                         "pov_character": sc.pov_character or "",
                     }
-                    if depth in ("summary", "framework"):
+                    if depth == "summary":
                         entry["setting"] = sc.setting or ""
                         entry["scene_time"] = sc.scene_time or ""
                         entry["summary"] = (sc.summary or "")[:1000]
@@ -385,10 +1015,11 @@ class ContextBuilder:
                     "id": str(ch.id),
                     "title": ch.title,
                     "sort_order": ch.sort_order,
-                    "goal_preview": (ch.goal or "")[:100],
                     "scenes": scenes_data,
                 }
-                if depth in ("summary", "full", "framework"):
+                if depth != "framework":
+                    ch_entry["goal_preview"] = (ch.goal or "")[:100]
+                if depth == "summary":
                     ch_entry["goal"] = ch.goal or ""
                     ch_entry["status"] = ch.status or ""
                 chapters_data.append(ch_entry)
@@ -410,13 +1041,13 @@ class ContextBuilder:
                 "name": c.name,
                 "role": c.role or "",
             }
+            if depth == "framework":
+                # Framework = 名单即可：渲染只显示名称/类型/ID。全档案文本
+                # 由 read_character 按需读取，不在每轮缓存中搬运。
+                characters_data.append(entry)
+                continue
             if depth in ("summary", "full"):
                 entry["personality"] = (c.personality or "")[:200]
-            if depth == "framework":
-                entry["personality"] = c.personality or ""
-                entry["motivation"] = c.motivation or ""
-                entry["background"] = c.background or ""
-                entry["appearance"] = c.appearance or ""
             characters_data.append(entry)
 
         available_skills = await self._get_available_skills()

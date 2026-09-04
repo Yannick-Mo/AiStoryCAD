@@ -39,12 +39,12 @@ class ListCharactersTool(BaseTool):
 class ReadCharacterTool(BaseTool):
     meta = ToolMeta(
         name="read_character",
-        description="获取单个角色的完整档案（名称、类型、性格、外貌、背景、动机）。character_id 来自 list_characters 或 read_project_overview",
+        description="获取单个角色的完整档案（名称、类型、性格、外貌、背景、动机）。character_id 来自 list_characters 或 read_recent",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
             "properties": {
-                "character_id": {"type": "string", "description": "角色ID，来自 list_characters 或 read_project_overview 返回结果"},
+                "character_id": {"type": "string", "description": "角色ID，来自 list_characters 或 read_recent 返回结果"},
             },
             "required": ["character_id"],
         },

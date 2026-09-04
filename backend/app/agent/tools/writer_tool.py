@@ -38,7 +38,7 @@ class CallWriterAgentTool(BaseTool):
             "properties": {
                 "scene_id": {
                     "type": "string",
-                    "description": "场景ID，来自 list_scenes 或 read_full_project",
+                    "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes",
                 },
                 "action": {
                     "type": "string",
@@ -201,7 +201,7 @@ class SyncSceneBlueprintTool(BaseTool):
         name="sync_scene_blueprint",
         description=(
             "同步场景蓝图：读取场景正文（仅在后端子代理中），将对齐后的创作蓝图写回场景概述。"
-            "scene_id 来自 list_scenes 或 read_full_project。任何写入正文的操作"
+            "scene_id 来自 read_chapter（该章场景列表）或 search_nodes。任何写入正文的操作"
             "（write_scene_content/continue_scene/rewrite_scene/expand_selection/"
             "compress_selection/update_scene）之后都应调用此工具，确保项目读取工具只读蓝图即可继续创作。"
         ),
@@ -212,7 +212,7 @@ class SyncSceneBlueprintTool(BaseTool):
             "properties": {
                 "scene_id": {
                     "type": "string",
-                    "description": "场景ID，来自 list_scenes 或 read_full_project",
+                    "description": "场景ID，来自 read_chapter（该章场景列表）或 search_nodes",
                 },
                 "note": {
                     "type": "string",
