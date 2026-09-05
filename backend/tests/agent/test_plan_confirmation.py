@@ -205,3 +205,76 @@ class TestConfirmResumesLoop:
         assert final["pending_plan"] == {}
         assert final["plan_confirmed"] is True
 
+
+class TestEmptyAssistantStripped:
+    """A restored plan snapshot may leave an empty assistant message
+    (content=None, tool_calls stripped).  The DeepSeek/OpenAI API rejects
+    assistant messages without content or tool_calls, so the messages sent
+    to the LLM after a plan confirmation must never contain one."""
+
+    def _initial_with_empty_assistant(self) -> dict:
+        # Reproduces the real bug shape: turn 1 the LLM emitted only
+        # tool_calls (content=None) for a destructive tool; the snapshot
+        # restore strips the tool_calls and keeps an empty assistant shell;
+        # the user then confirms.
+        return {
+            "project_id": "",
+            "user_id": "u1",
+            "mode": "chat",
+            "messages": [
+                Message(role="user", content="把那个角色删掉"),
+                Message(role="assistant", content=None),  # 空壳 — 必须被剔除
+                Message(role="user", content="确认"),
+            ],
+            "pending_plan": {
+                "steps": [
+                    {
+                        "tool": "delete_character",
+                        "params": {"character_id": "00000000-0000-0000-0000-000000000001"},
+                        "tool_use_id": "tc_empty",
+                    }
+                ]
+            },
+        }
+
+    async def test_no_empty_assistant_message_reaches_llm(self):
+        llm = MagicMock()
+        seen_calls: list[list[Message]] = []
+
+        async def fake_stream_with_tools(**kwargs):
+            seen_calls.append(kwargs["messages"])
+            yield {"content": "", "tool_call": None}
+
+        llm.chat_stream_with_tools = fake_stream_with_tools
+
+        async def fake_stream_tokens(**kwargs):
+            yield "删除完成"
+
+        llm.chat_stream_tokens = fake_stream_tokens
+        db = AsyncMock()
+
+        events = []
+        with patch(
+            "app.agent.response_builder.build_system_prompt",
+            new=AsyncMock(return_value="SYS"),
+        ):
+            async for ev in autonomous_loop(self._initial_with_empty_assistant(), {}, llm, db, ""):
+                events.append(ev)
+
+        assert any(e.get("_loop_done") for e in events)
+
+        # Every LLM call must be free of content-less, tool_call-less
+        # assistant messages — otherwise the API returns 400
+        # "Invalid assistant message: content or tool_calls must be set".
+        for msgs in seen_calls:
+            bad = [
+                m for m in msgs
+                if m.role == "assistant" and not m.content and not m.tool_calls
+            ]
+            assert not bad, f"empty assistant message reached the LLM: {bad}"
+
+        # The confirm path still executed the plan step
+        tool_events = [e for e in events if "_tool_done" in e]
+        assert len(tool_events) == 1
+        assert tool_events[0]["_tool_done"]["tool"] == "delete_character"
+

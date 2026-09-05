@@ -113,6 +113,12 @@ def _strip_orphan_tool_messages(messages: list[Message]) -> list[Message]:
             if prev_assistant is None or not prev_assistant.tool_calls:
                 # Orphaned tool message — drop it
                 continue
+        if m.role == "assistant" and not m.content and not m.tool_calls:
+            # Empty assistant placeholder (e.g. produced when restoring a
+            # plan snapshot whose assistant tool_calls were stripped) — the
+            # DeepSeek/OpenAI API rejects assistant messages without content
+            # or tool_calls, so drop it before it reaches the wire.
+            continue
         cleaned.append(m)
     return cleaned
 
@@ -532,7 +538,7 @@ async def _build_turn_sections(
             "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
             "- 你可以根据用户的思路提供完整段落草稿作为示范或起点\n"
             "- 场景蓝图先行：创建/规划场景时必须写好完整的场景蓝图（summary 含【目标】【节拍】【关键信息】【结尾状态】）\n"
-            "- 写完正文后必须调用 sync_scene_blueprint 同步场景蓝图并做自评；一章收尾后调用 check_consistency 做事实检查"
+            "- 写完正文后必须调用 sync_scene_blueprint 同步场景蓝图并做自评；整章完成后 update_chapter(status=final)"
         )
     else:
         sections.append(

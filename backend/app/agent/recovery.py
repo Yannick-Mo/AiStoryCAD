@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from app.agent.privacy import sanitise_error_text_for_client
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +305,6 @@ def get_fallback_models() -> list[str]:
     try:
         primary = get_primary_name()
     except KeyError:
-        from app.config import settings
         primary = settings.llm_model
     fallback_str = getattr(settings, "llm_fallback_models", "")
     if not fallback_str:

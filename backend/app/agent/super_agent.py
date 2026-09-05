@@ -215,9 +215,15 @@ class SuperAgent:
         )
         log.info("chat_stream start | mode=%s | msg_len=%d", mode, len(message))
 
-        # 1. Input guard
+        # 1. Input guard — user messages skip the prompt-injection blocklist
+        # (product decision: fiction writing language overlaps heavily with the
+        # old lexicon and kept false-blocking normal requests).  Length check +
+        # rate limiting still apply.  Web-fetched content keeps its own
+        # injection check (check_web_content_safety) since that is the one
+        # genuinely untrusted input surface.
         guard_error = await self.input_guard.async_check(
-            message, rate_limit_key=f"{user_id}:{conversation_id or ''}"
+            message, rate_limit_key=f"{user_id}:{conversation_id or ''}",
+            safety=False,
         )
         if guard_error:
             log.warning("guard blocked | reason=%s", guard_error)
@@ -328,8 +334,16 @@ class SuperAgent:
             while msgs and getattr(msgs[-1], "role", "") == "tool":
                 msgs.pop()
             if msgs and getattr(msgs[-1], "role", "") == "assistant" and getattr(msgs[-1], "tool_calls", None):
+                # Keep the closing assistant message ONLY if it has real text.
+                # An empty shell (tool_calls stripped, no content) would be
+                # rejected by the LLM API and is meaningless as history —
+                # the confirm/reject path rebuilds a fresh tool_calls message
+                # from the pending plan anyway.
                 last = msgs[-1]
-                msgs[-1] = Message(role="assistant", content=last.content)
+                if last.content:
+                    msgs[-1] = Message(role="assistant", content=last.content)
+                else:
+                    msgs.pop()
             msgs.append(Message(role="user", content=message))
 
             initial_state: dict = {

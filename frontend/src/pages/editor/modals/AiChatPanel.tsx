@@ -422,6 +422,104 @@ export default function AiChatPanel({
   const [input, setInput] = useState('')
   const inputRef = useRef(input)
   inputRef.current = input
+
+  // ── Floating-window mode (undock from the right edge) ──────────────
+  const FLOAT_STORAGE_KEY = 'aistorycad_ai_panel_float'
+  const [floating, setFloating] = useState(false)
+  const [floatRect, setFloatRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FLOAT_STORAGE_KEY)
+      if (raw) {
+        const saved = JSON.parse(raw)
+        if (typeof saved?.x === 'number') setFloatRect(saved)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (!floating || !floatRect) return
+    try { localStorage.setItem(FLOAT_STORAGE_KEY, JSON.stringify(floatRect)) } catch { /* ignore */ }
+  }, [floating, floatRect])
+
+  // Keep the floating window at least partially visible on viewport changes.
+  useEffect(() => {
+    if (!floating) return
+    const onResize = () => {
+      setFloatRect(r => {
+        if (!r) return r
+        return {
+          x: Math.max(0, Math.min(r.x, window.innerWidth - 80)),
+          y: Math.max(0, Math.min(r.y, window.innerHeight - 60)),
+          w: Math.min(r.w, window.innerWidth),
+          h: Math.min(r.h, window.innerHeight),
+        }
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [floating])
+
+  const enterFloat = useCallback(() => {
+    if (!floatRect) {
+      const w = Math.min(460, Math.max(340, window.innerWidth - 200))
+      const h = Math.min(Math.round(window.innerHeight * 0.78), window.innerHeight - 40)
+      setFloatRect({ x: Math.max(12, window.innerWidth - w - 16), y: 72, w, h })
+    }
+    setFloating(true)
+  }, [floatRect])
+
+  // Drag the floating window by its header (skip interactive children).
+  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
+  const onHeaderPointerDown = useCallback((e: React.PointerEvent) => {
+    if (!floating) return
+    if ((e.target as HTMLElement).closest('button, input, textarea')) return
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: floatRect?.x ?? 0, oy: floatRect?.y ?? 0 }
+    document.body.style.userSelect = 'none'
+  }, [floating, floatRect])
+
+  useEffect(() => {
+    if (!floating) return
+    const move = (e: PointerEvent) => {
+      const d = dragRef.current
+      if (!d) return
+      setFloatRect(r => {
+        if (!r) return r
+        const x = Math.max(0, Math.min(d.ox + (e.clientX - d.sx), window.innerWidth - 80))
+        const y = Math.max(0, Math.min(d.oy + (e.clientY - d.sy), window.innerHeight - 60))
+        return { ...r, x, y }
+      })
+    }
+    const up = () => { dragRef.current = null; document.body.style.userSelect = '' }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
+    return () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up) }
+  }, [floating])
+
+  // Resize from the bottom-right corner of the floating window.
+  const resizeRef = useRef<{ sx: number; sy: number; ow: number; oh: number } | null>(null)
+  const onCornerPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    resizeRef.current = { sx: e.clientX, sy: e.clientY, ow: floatRect?.w ?? 400, oh: floatRect?.h ?? 600 }
+    document.body.style.userSelect = 'none'
+  }, [floatRect])
+
+  useEffect(() => {
+    if (!floating) return
+    const move = (e: PointerEvent) => {
+      const r = resizeRef.current
+      if (!r) return
+      const w = Math.min(window.innerWidth, Math.max(320, r.ow + (e.clientX - r.sx)))
+      const h = Math.min(window.innerHeight, Math.max(400, r.oh + (e.clientY - r.sy)))
+      setFloatRect(prev => prev ? { ...prev, w, h } : prev)
+    }
+    const up = () => { resizeRef.current = null; document.body.style.userSelect = '' }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
+    return () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up) }
+  }, [floating])
+
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const { size: width, handleMouseDown: panelResizeDown } = useResizePanel({ initial: 380, min: 300, max: 800, direction: 'horizontal' })
@@ -527,14 +625,28 @@ export default function AiChatPanel({
   useEffect(() => { if (renameId) renameInputRef.current?.focus() }, [renameId])
 
   return (
-    <div className="fixed right-0 top-0 h-full z-50 flex flex-col bg-gray-900 border-l border-gray-800 shadow-2xl" style={{ width }}>
-      {/* Resize handle (left edge) */}
+    <div
+      className={`fixed z-50 flex flex-col bg-gray-900 shadow-2xl ${
+        floating
+          ? 'rounded-lg border border-gray-700 overflow-hidden'
+          : 'right-0 top-0 h-full border-l border-gray-800'
+      }`}
+      style={floating && floatRect
+        ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
+        : { width }}
+    >
+      {/* Resize handle (left edge) — docked only */}
+      {!floating && (
+        <div
+          onMouseDown={panelResizeDown}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:w-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all z-10"
+        />
+      )}
+      {/* Header — also the drag handle when floating */}
       <div
-        onMouseDown={panelResizeDown}
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:w-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all z-10"
-      />
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80">
+        onPointerDown={onHeaderPointerDown}
+        className={`flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
+      >
         <div className="flex items-center gap-2 min-w-0">
           {/* Conversation switcher — always visible when conversations exist */}
           {chat.conversations.length > 0 ? (
@@ -603,10 +715,23 @@ export default function AiChatPanel({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {floating ? (
+            <button
+              onClick={() => setFloating(false)}
+              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-colors"
+              title="停靠回右侧面板"
+            >⤵ 停靠右侧</button>
+          ) : (
+            <button
+              onClick={enterFloat}
+              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-colors"
+              title="将面板变成可拖动的独立窗口"
+            >⤢ 独立窗口</button>
+          )}
           <button onClick={handleNewChat}
             className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
             title="新建对话">{UI_TEXT.newConversation}</button>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">x</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none" title="关闭">x</button>
         </div>
       </div>
 
@@ -700,6 +825,16 @@ export default function AiChatPanel({
         onMouseDown={inputResizeDown}
         className="cursor-ns-resize h-1 hover:h-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all shrink-0"
       />
+      {/* Corner resize handle — floating only */}
+      {floating && (
+        <div
+          onPointerDown={onCornerPointerDown}
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-10"
+          title="拖拽调整大小"
+        >
+          <div className="absolute bottom-0.5 right-0.5 w-2 h-2 border-b-2 border-r-2 border-gray-600 hover:border-amber-500 transition-colors" />
+        </div>
+      )}
       {/* Input */}
       <div className="p-3 border-t border-gray-800 shrink-0 bg-gray-950/80" style={{ height: inputHeight }}>
         <ChatInput

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.context_compressor import async_compress_context, estimate_tokens
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.models import Conversation
-from app.agent.privacy import sanitise_event
+from app.agent.privacy import sanitise_event, sanitise_error_text_for_client
 from app.agent.super_agent import SuperAgent
 from app.agent.tools.base import verify_project_owner as _verify_tool_owner
 from app.api.deps import get_db, get_current_user, get_redis
@@ -136,9 +136,20 @@ async def _stream_chat(
                         break
                     safe_data = sanitise_event(payload['type'], payload['data'])
                     yield _format_sse(payload['type'], safe_data)
+                    if payload['type'] == 'error':
+                        # An error event is the terminal state of the agent
+                        # stream — always close with a done signal so clients
+                        # don't report the stream as "ended without completion".
+                        yield _format_sse("done", "")
         except BaseException as exc:
             logger.error("AI chat error: {}", exc, exc_info=True)
-            yield f"event: error\ndata: {json.dumps({'message': 'Internal error', 'detail': 'An unexpected error occurred'})}\n\n"
+            # Surface the SANITISED real error instead of a generic message —
+            # super_agent already redacts credentials/paths before this point,
+            # and a cryptic fallback hides genuine bugs (and their fixes) from
+            # both the user and the AI panel.
+            safe_msg = sanitise_error_text_for_client(str(exc))
+            yield f"event: error\ndata: {json.dumps({'message': 'Internal error', 'detail': f'An unexpected error occurred: {safe_msg}' if safe_msg else 'An unexpected error occurred'}, ensure_ascii=False)}\n\n"
+            yield _format_sse("done", "")
         finally:
             chat_task.cancel()
 

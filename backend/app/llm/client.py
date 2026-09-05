@@ -179,14 +179,15 @@ class LLMClient:
         response_format: Literal["json_object"] | None,
         reasoning_effort: str | None = None,
     ) -> dict:
-        # reasoning_content is thinking-trace state for us, NOT for the model:
-        # DeepSeek guidance is to never send prior reasoning back as context
-        # (it wastes tokens and can confuse the current pass).
+        # reasoning_content is KEPT for DeepSeek thinking-mode models: the
+        # API rejects requests with a 400 ("The reasoning_content in the
+        # thinking mode must be passed back to the API") when an assistant
+        # message that carried reasoning is re-sent without it.  Cost is
+        # contained by the context compressor, which folds old turns
+        # (reasoning included) into summaries.
         serialized = []
         for m in messages:
-            d = _message_to_dict(m)
-            d.pop("reasoning_content", None)
-            serialized.append(d)
+            serialized.append(_message_to_dict(m))
         body: dict[str, Any] = {
             "model": model_name,
             "messages": serialized,

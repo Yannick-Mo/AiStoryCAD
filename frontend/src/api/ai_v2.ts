@@ -72,6 +72,10 @@ const HEARTBEAT_INTERVAL = 10000
 export function sendMessage(options: SendMessageOptions): AbortController {
   const controller = new AbortController()
 
+  // Whether the stream ended with a terminal event (done or error).
+  // A plain EOF without either means the connection died mid-stream.
+  let receivedDone = false
+
   if (options.signal) {
     options.signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
@@ -80,8 +84,10 @@ export function sendMessage(options: SendMessageOptions): AbortController {
     conv_id: (data) => options.onConvId?.(data),
     step: (data) => options.onStep?.(data),
     token: (data) => options.onToken(data),
-    done: () => options.onDone?.(),
-    tool_done: (data) => options.onToolDone?.(data),
+    done: () => {
+      receivedDone = true
+      options.onDone?.()
+    },
     plan: (data) => {
       try {
         const parsed = JSON.parse(data)
@@ -92,8 +98,14 @@ export function sendMessage(options: SendMessageOptions): AbortController {
         }
       } catch { /* ignore */ }
     },
+    tool_done: (data) => options.onToolDone?.(data),
     project_updated: () => options.onProjectUpdated?.(),
     error: (data: string) => {
+      // An error event is a completion signal too: the agent stream has ended
+      // (possibly after a backend-side failure).  Without this, an error that
+      // ends the stream would ALSO surface the misleading
+      // "stream ended without a completion signal" message.
+      receivedDone = true
       let msg = data
       try {
         const parsed = JSON.parse(data)
@@ -106,15 +118,6 @@ export function sendMessage(options: SendMessageOptions): AbortController {
   const mode = options.mode ?? 'chat'
 
   ;(async () => {
-    let receivedDone = false
-
-    // Track whether the stream ended with a proper done event
-    const origOnDone = options.onDone
-    options.onDone = () => {
-      receivedDone = true
-      origOnDone?.()
-    }
-
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',

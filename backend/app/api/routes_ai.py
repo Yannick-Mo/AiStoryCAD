@@ -80,7 +80,7 @@ async def ai_inline(
     if not payload.selected_text.strip():
         raise HTTPException(status_code=400, detail="selected_text cannot be empty")
 
-    guard_err = InputGuard().check(payload.selected_text)
+    guard_err = InputGuard().check(payload.selected_text, safety=False)
     if guard_err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=guard_err)
 
@@ -216,7 +216,7 @@ async def create_from_material(
     if len(material) > 5000:
         raise HTTPException(status_code=400, detail="素材不能超过5000字")
 
-    guard_err = InputGuard().check(material)
+    guard_err = InputGuard().check(material, safety=False)
     if guard_err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=guard_err)
 
