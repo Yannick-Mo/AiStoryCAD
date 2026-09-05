@@ -25,14 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Tools whose output is typically very long and should be summarized.
 _ANALYSIS_TOOL_NAMES: set[str] = {
-    "analyze_chapter", "project_health", "check_consistency",
+    "analyze_chapter", "project_health",
     "suggest_next",
-}
-
-# Consistency reports are the one analysis output the LLM still needs to act
-# on in detail; give them a larger budget than the generic 2000 chars.
-_ANALYSIS_TOOL_QUOTAS: dict[str, int] = {
-    "check_consistency": 6000,
 }
 
 # List/structural tools whose output the LLM uses for ID lookup.
@@ -220,7 +214,7 @@ def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | 
     # ``_effective_max_result_chars`` always exists via the BaseTool property).
     max_chars = tool._effective_max_result_chars if tool is not None else 8000
     if tool_name in _ANALYSIS_TOOL_NAMES:
-        max_chars = min(max_chars, _ANALYSIS_TOOL_QUOTAS.get(tool_name, 2000))
+        max_chars = min(max_chars, 2000)
     elif tool_name in _STRUCTURAL_TOOL_NAMES:
         max_chars = min(max_chars, 4000)
 
@@ -544,10 +538,8 @@ class StreamingToolExecutor:
         try:
             # SAFE tools that DON'T manage their own session share the
             # executor's AsyncSession (not coroutine-safe), so serialise their
-            # DB access through the executor lock. Own-session tools (e.g. the
-            # long-running check_consistency) never touch the shared session,
-            # so they run lock-free — otherwise a minutes-long check would
-            # block every other SAFE tool in the loop.
+            # DB access through the executor lock. Own-session tools never
+            # touch the shared session, so they run lock-free.
             if tool._effective_concurrency == ConcurrencyMode.SAFE and not uses_own_session:
                 async with self._safe_lock:
                     try:

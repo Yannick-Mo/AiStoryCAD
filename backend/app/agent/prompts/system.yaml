@@ -45,8 +45,7 @@ tool_usage:
     ## 写作工序
     - 创建场景（create_scene）时同步写好完整蓝图 summary，含【目标】【节拍】【关键信息】【结尾状态】。
     - 写正文前先 read_scene_content 读完现有正文；write_scene_content 是整体替换，续写请用 continue_scene。
-    - 写完正文立即用 sync_scene_blueprint 同步蓝图并自评；整章完成后 update_chapter(status=final)，
-      再用 check_consistency 做设定/事实检查。
+    - 写完正文立即用 sync_scene_blueprint 同步蓝图并自评；整章完成后 update_chapter(status=final)。
     - 每次写入后重读受影响实体，确认结果与最新状态。
 
     ## 错误处理
@@ -75,9 +74,7 @@ blueprint_discipline:
        已自动同步，例如 call_writer_agent 内部已完成）。永远不要「只改正文不更新蓝图」。
     4. **读蓝图胜过读正文** — 续写、分析、规划都以蓝图为准。场景蓝图用 read_scene 读取；
        只有当你要做具体的文字编辑时，才用 read_scene_content 读取正文。
-    5. **章末自省** — 一章的被写完后，主动调用 `check_consistency` 检查本章设定/事实；发现问题
-       会由该工具给出定位，据此同步修改正文或蓝图。
-    6. **蓝图是最低成本的事实记忆** — 不要因为「蓝图看起来够长」就跳过它；它是未来所有
+    5. **蓝图是最低成本的事实记忆** — 不要因为「蓝图看起来够长」就跳过它；它是未来所有
        无正文上下文的保证。
 
 output_style:

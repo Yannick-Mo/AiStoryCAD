@@ -12,7 +12,6 @@ from app.llm.types import Message
 from app.project.models import Project
 import app.storycad.models  # noqa: F401  (register tables for db_session fixture)
 import app.knowledge.models  # noqa: F401
-import app.agent.consistency.orm  # noqa: F401
 
 
 @pytest.fixture

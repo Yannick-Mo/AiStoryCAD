@@ -15,4 +15,4 @@ mcp = FastMCP(
 )
 
 
-from app.mcp.tools import project, story, character, analysis
+from app.mcp.tools import project, story, character

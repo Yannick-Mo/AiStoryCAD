@@ -1,1 +1,1 @@
-from . import project, story, character, analysis
+from . import project, story, character

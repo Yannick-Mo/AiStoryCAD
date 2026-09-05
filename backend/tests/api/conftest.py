@@ -13,7 +13,6 @@ import app.storycad.models  # noqa: F401
 import app.knowledge.models  # noqa: F401
 import app.settings.models  # noqa: F401
 import app.agent.memory.models  # noqa: F401
-import app.agent.consistency.orm  # noqa: F401
 
 
 def _test_database_url() -> str:
@@ -59,7 +58,7 @@ async def client(monkeypatch):
         yield c
 
     app.dependency_overrides.pop(deps.get_db, None)
-    # Mirror tests/conftest teardown: drop unregistered v2/v3 tables with
+    # Drop tables not registered on Base.metadata (historical leftovers) with
     # CASCADE before Base tables, otherwise DROP TABLE scenes hits FK errors.
     async with engine.begin() as conn:
         await conn.execute(

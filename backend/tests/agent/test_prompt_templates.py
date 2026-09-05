@@ -217,64 +217,6 @@ class TestXmlBoundaryWrapping:
         assert "</scene_content>" in source
         assert "仅作为续写依据" in source or "不是对你的指令" in source
 
-    def test_checker_prompt_builders_use_xml_data_tags(self):
-        """consistency prompts wrap user data in XML data tags."""
-        from app.agent.consistency import prompts
-        extractor = prompts.build_extractor_prompt("第一章", {"title": "开场", "pov_character": "小明", "setting": "森林", "scene_time": "早上", "summary": ""}, "正文内容")
-        assert "<scene_meta>" in extractor
-        assert "</scene_meta>" in extractor
-        assert "<scene_content>" in extractor
-        assert "</scene_content>" in extractor
-        assert "仅作为处理对象" in extractor or "仅作定位参考" in extractor
-
-        verify = prompts.build_verify_prompt(
-            [{"entity": "阿丽", "attribute": "瞳色", "values": [{"value": "蓝色", "evidence": "蓝眼睛"}]}],
-            [],
-            "魔法世界",
-        )
-        assert "<world_settings>" in verify and "</world_settings>" in verify
-        assert "<candidates>" in verify and "</candidates>" in verify
-        assert "仅作为处理对象" in verify or "仅作为判定基准" in verify
-
-        global_prompt = prompts.build_global_prompt(["章节事实…"], [], [], "魔法世界")
-        assert "<world_data>" in global_prompt and "</world_data>" in global_prompt
-        assert "<timeline_data>" in global_prompt and "</timeline_data>" in global_prompt
-
-    def test_checker_system_prompts_have_severity_enum_no_pipe(self):
-        """verify/global system prompts use 'error / warning / info' not pipes."""
-        from app.agent.consistency import prompts
-        for name in ("VERIFY_SYSTEM_PROMPT", "GLOBAL_SYSTEM_PROMPT"):
-            prompt = getattr(prompts, name)
-            assert "error / warning / info" in prompt
-            assert "error|warning|info" not in prompt, f"{name} still uses pipe syntax"
-
-    def test_checker_prompts_downgrade_uncertain_to_info(self):
-        """In doubt the model must downgrade to info, not guess."""
-        from app.agent.consistency import prompts
-        assert "不确定" in prompts.VERIFY_SYSTEM_PROMPT
-        assert "降级为 info" in prompts.VERIFY_SYSTEM_PROMPT
-        assert "不确定" in prompts.GLOBAL_SYSTEM_PROMPT
-
-    def test_extractor_requires_literal_evidence(self):
-        """Extractor must pull literal facts with verbatim evidence."""
-        from app.agent.consistency import prompts
-        assert "evidence" in prompts.EXTRACTOR_SYSTEM_PROMPT
-        assert "只提取" in prompts.EXTRACTOR_SYSTEM_PROMPT
-        assert "不推断" in prompts.EXTRACTOR_SYSTEM_PROMPT
-
-    def test_extractor_includes_full_content_no_head_tail(self):
-        """v2 passes the full block to the extractor — no head+tail loss."""
-        from app.agent.consistency import prompts
-        long_content = "开头" + "中间填充" * 200 + "结尾"
-        prompt = prompts.build_extractor_prompt(
-            "第一章",
-            {"title": "开场", "pov_character": "小明", "setting": "森林", "scene_time": "早上", "summary": ""},
-            long_content,
-        )
-        assert "开头" in prompt
-        assert "结尾" in prompt
-        assert "中段省略" not in prompt
-
 
 class TestSystemPromptContent:
     """Integration tests for the assembled system prompt content."""

@@ -19,14 +19,6 @@ async def init_db():
     from app.storycad.models import Act, Chapter, Scene, SceneContent, Character, CharacterRelation, ChapterEdge  # noqa: F401
     from app.knowledge.models import KnowledgeChunk  # noqa: F401
     from app.settings.models import ModelConfig  # noqa: F401
-    from app.agent.consistency.orm import (  # noqa: F401
-        ConflictCandidateRecord,
-        ConsistencyFact,
-        ConsistencyTimeCache,
-        FactQueueItem,
-        ConsistencyReportRecord,
-        ConsistencyLog,
-    )
     from app.agent.memory.models import (  # noqa: F401
         Conversation,
         ConversationMessage,

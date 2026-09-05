@@ -44,7 +44,7 @@ async def _prepare_test_database():
     # 重写 settings，使被测代码路径（get_db / app.database.engine 等）也指向测试库
     settings.database_url = url
     await _ensure_test_database(url)
-    # consistency_facts 使用 pgvector 的 vector 类型，测试库需启用扩展
+    # pgvector 扩展：知识库/检索模型需要
     engine = create_async_engine(url, echo=False, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
@@ -66,10 +66,9 @@ async def db_session():
         yield session
         await session.close()
         await conn.rollback()
-    # 遗留表（v2 scene_fact_cache）与 v3 ledger 表不在 Base.metadata 注册表
-    # 集合里（被测模块按需 import），drop_all 不会清理它们，而它们的 FK
-    # 指向 scenes → 必须在 drop_all 之前 CASCADE 清理，否则 DROP TABLE scenes
-    # 触发 DependentObjectsStillExistError。
+    # 历史上遗留、不在 Base.metadata 注册集合里的表（被测模块按需 import），
+    # drop_all 不会清理它们，而它们的 FK 指向 scenes → 必须在 drop_all 之前
+    # CASCADE 清理，否则 DROP TABLE scenes 触发 DependentObjectsStillExistError。
     async with engine.begin() as conn:
         await conn.execute(
             text(

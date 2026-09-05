@@ -11,7 +11,7 @@ READ_ONLY_TOOLS: set[str] = {
     "read_chapter", "read_scene", "read_scene_content", "read_character",
     "search_knowledge",
     "analyze_chapter", "analyze_character_arc", "project_health",
-    "check_consistency", "suggest_next",
+    "suggest_next",
     "read_chapters", "read_recent_scenes", "read_recent_chapters",
     "read_chapter_scenes", "read_relation",
     "list_characters", "list_character_relations",

@@ -17,7 +17,6 @@ import SceneGoalModal from '../modals/SceneGoalModal'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
 import AiPanel from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
-import ConsistencyCheckModal from '../modals/ConsistencyCheckModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
 import { loadEditorData, saveSceneContent } from '../../../api/editor'
@@ -45,7 +44,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [aiContextView, setAiContextView] = useState<string>('chat')
   const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
-  const [consistencyOpen, setConsistencyOpen] = useState(false)
 
   const { addToast } = useToast()
 
@@ -427,7 +425,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <ActionButtons
             onAIChat={handleAiChatOpen}
             onInspiration={() => setInspirationOpen(true)}
-            onConsistencyCheck={() => setConsistencyOpen(true)}
           />
         </div>
 
@@ -498,33 +495,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onApplyStarter={(title: string) => {
               if (store.data) store.setData({ ...store.data, projectTitle: title })
               setInspirationOpen(false)
-            }}
-          />
-        )}
-
-        {consistencyOpen && (
-          <ConsistencyCheckModal
-            projectId={projectId}
-            onClose={() => setConsistencyOpen(false)}
-            onNavigate={(location) => {
-              setConsistencyOpen(false)
-              if (location.scene_id) {
-                const chapter = data.chapters?.find(c => c.scenes.some(s => s.id === location.scene_id))
-                const scene = chapter?.scenes.find(s => s.id === location.scene_id)
-                if (scene) {
-                  if (chapter) {
-                    setSelectedChapter(chapter)
-                    views.switchView('narrative-plot')
-                  }
-                  setEditingScene(scene)
-                }
-              } else if (location.chapter_id) {
-                const idx = data.chapters?.findIndex(c => c.id === location.chapter_id)
-                if (idx >= 0 && data.chapters) {
-                  setSelectedChapter(data.chapters[idx])
-                  views.switchView('narrative-plot')
-                }
-              }
             }}
           />
         )}

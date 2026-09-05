@@ -29,7 +29,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
     )
-    from .analysis_tools import ConsistencyCheckTool
     from .analysis_v2_tools import AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool
     from .writing_tools import WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool
     from .knowledge_tools import SearchKnowledgeTool
@@ -54,7 +53,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
-        ConsistencyCheckTool,
         AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
         WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool,
         SearchKnowledgeTool,

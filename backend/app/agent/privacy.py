@@ -62,7 +62,6 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     # Agents
     "call_writer_agent": "调用写作智能体",
     # Analysis
-    "check_consistency": "检查一致性",
     "analyze_chapter": "分析章节",
     "analyze_character_arc": "分析角色弧",
     "suggest_next": "建议下一步",
