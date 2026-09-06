@@ -700,38 +700,67 @@ class ContextBuilder:
             "total_edges": total_edges,
         }
 
-    async def build_recent_scenes_hint(
-        self, project_id: uuid.UUID, max_scenes: int = 5
+    async def build_completed_tail_snapshot(
+        self, project_id: uuid.UUID, n: int = 5, summary_chars: int = 500
     ) -> str | None:
-        """Compact hint of the scenes at the tail of the story order (title,
-        POV, blueprint snippet): the very last scene gets up to 800 chars,
-        the preceding scenes up to 200 chars each.
+        """Tail snapshot of the *contiguous completed prefix* of the story.
 
-        Loaded on demand with a single light query instead of carrying every
-        scene summary inside the framework tree.
+        Walks scenes in story order (act sort → chapter sort → scene sort)
+        and stops at the FIRST unwritten scene (``word_count <= 0``).  Anything
+        after that break — including isolated written scenes further down the
+        outline — is deliberately ignored: only the run that is continuously
+        written from the start counts as "completed so far".
+
+        Returns a compact multi-line text block (title/pov/字数/蓝图摘要/IDs)
+        for the last *n* scenes of that prefix, plus where the prefix ends.
         """
         rows = (await self.db.execute(
-            select(Scene.id, Scene.title, Scene.pov_character,
-                   Scene.summary, Scene.word_count)
+            select(
+                Scene.id, Scene.title, Scene.pov_character, Scene.word_count,
+                Scene.summary,
+                Chapter.id.label("chapter_id"), Chapter.title.label("chapter_title"),
+                Act.name.label("act_name"),
+            )
             .join(Chapter, Chapter.id == Scene.chapter_id)
             .join(Act, Act.id == Chapter.act_id)
             .where(Scene.project_id == project_id)
-            .order_by(Act.sort_order.desc(), Chapter.sort_order.desc(),
-                      Scene.sort_order.desc())
-            .limit(max_scenes)
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(),
+                      Scene.sort_order.asc())
         )).all()
         if not rows:
             return None
-        lines = ["\n最近场景快照："]
-        last_idx = len(rows) - 1
-        for idx, (sid, title, pov, summary, word_count) in enumerate(reversed(rows)):
-            cap = 800 if idx == last_idx else 200
-            snippet = f"- {title or '?'}(scene_id={sid})"
-            if pov:
-                snippet += f" [{pov}]"
-            snippet += f" {'已写' if (word_count or 0) > 0 else '未写'}"
-            if summary:
-                snippet += f": {(summary or '')[:cap]}"
+
+        # Contiguous completed prefix: cut at the first unwritten scene.
+        prefix: list = []
+        break_at: tuple | None = None
+        for row in rows:
+            if (row.word_count or 0) > 0:
+                prefix.append(row)
+            else:
+                break_at = (row.title or "未命名场景")
+                break
+
+        if not prefix:
+            return None
+        if not break_at and len(prefix) < len(rows):
+            break_at = "故事结尾"
+
+        last = prefix[-1]
+        lines = [
+            "已完成正文（自开头连续写入）部分尾部快照：",
+            f"- 连续完成进度：共 {len(prefix)} 场，截至「{last.chapter_title}」"
+            f"{last.title or ''}(scene_id={last.id})"
+            + (f"；下一个未写场景：{break_at}" if break_at else ""),
+        ]
+        for row in prefix[-n:]:
+            snippet = f"- {row.title or '?'}(scene_id={row.id})"
+            if row.pov_character:
+                snippet += f" [{row.pov_character}]"
+            if row.chapter_title:
+                snippet += f" 《{row.chapter_title}》"
+            snippet += f" {row.word_count or 0}字"
+            if row.summary:
+                snippet += f": {(row.summary or '')[:summary_chars]}"
             lines.append(snippet)
         return "\n".join(lines)
 

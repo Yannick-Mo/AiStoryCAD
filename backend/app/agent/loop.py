@@ -608,17 +608,14 @@ async def _build_turn_sections(
         "按当前创作实际依赖取离散区间，例如依赖第1-3章与第15-20章就分别调 read_chapters(1,3) 与 read_chapters(15,20)；"
         "不要一次读很长的连续范围——单次窗口过大后半会被截断，且大半内容与当前写作无关会浪费上下文\n"
         "- 场景 ID：read_chapter_scenes(chapter_id)（该章全部场景的 ID/标题清单，轻量）\n"
-        "- 最近写入的实体 ID：read_recent_scenes / read_recent_chapters\n"
+        "- 「写到哪了」：read_completed_tail(n)——自开头连续写完部分的尾部快照（跳过未写断点之后的孤立已写场景），"
+        "含下一个未写位置；续写/核对进度首选\n"
+        "- 「最近在改什么」：read_recent_scenes(n) 场景级 / read_recent_chapters(n) 章级——按正文修改时间倒序\n"
         "- 关键词定位（忘了在哪）：search_nodes(keyword)\n"
         "- 角色 / 关系 / 连线 ID：list_characters / list_character_relations / list_relations / list_edges"
     )
 
-    # 6. Recent scenes hint
-    recent_hint = state.project_context.get("_recent_scenes_hint")
-    if recent_hint:
-        sections.append(recent_hint)
-
-    # 7. Available skills
+    # 6. Available skills
     available_skills = state.project_context.get("available_skills", [])
     if available_skills:
         skill_lines = ["\n# --- 可用写作技能（AI 可主动调用） ---"]
@@ -758,14 +755,6 @@ async def autonomous_loop(
                     depth="framework",
                     skip_cache=skip_ctx_cache,
                 )
-
-                # Prepend recent scene summaries hint (dedicated light query —
-                # the framework tree no longer carries scene summaries)
-                recent_hint = await builder.build_recent_scenes_hint(
-                    _uuid.UUID(state.project_id)
-                )
-                if recent_hint:
-                    ctx["_recent_scenes_hint"] = recent_hint
 
                 state = state.replace(project_context=ctx, _context_loaded=True,
                                       _invalidated_sections=set(),

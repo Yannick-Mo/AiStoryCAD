@@ -18,7 +18,10 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ListCharacterRelationsTool, ReadRelationTool, ReadChapterScenesTool,
     )
-    from .range_tools import ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool
+    from .range_tools import (
+        ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool,
+        ReadCompletedTailTool,
+    )
     from .project_tools import (
         ReadProjectTool, ReadChapterTool, ReadSceneTool, ReadSceneContentTool,
         ReadGlobalSettingsTool,
@@ -47,6 +50,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ListCharacterRelationsTool, ReadRelationTool, ReadChapterScenesTool,
         ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool,
+        ReadCompletedTailTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, ReadSceneContentTool,
         ReadGlobalSettingsTool,
         CreateSceneTool, UpdateSceneTool,

@@ -227,7 +227,6 @@ async def build_system_prompt(state: dict, rag_text: str = "") -> str:
 
     available_skills = project_ctx.get("available_skills", [])
     active_skills = state.get("active_skills", [])
-    recent_hint = project_ctx.get("_recent_scenes_hint", "")
 
     persona = _load_persona()
     sections: list[_ContextSection] = []
@@ -294,10 +293,6 @@ async def build_system_prompt(state: dict, rag_text: str = "") -> str:
             plan_lines.append(f"{i}. {step.get('description') or step.get('tool', '')}")
         plan_lines.append("请询问用户确认是否执行此计划。")
         sections.append(_ContextSection(tier=1, label="pending_plan", text="\n".join(plan_lines)))
-
-    # Recent scenes hint
-    if recent_hint:
-        sections.append(_ContextSection(tier=1, label="recent_scenes", text=recent_hint))
 
     # Available skills
     if available_skills:

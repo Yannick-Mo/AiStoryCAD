@@ -35,6 +35,7 @@ _ANALYSIS_TOOL_NAMES: set[str] = {
 _LIST_TOOL_NAMES: set[str] = {
     "list_characters", "list_character_relations", "list_relations", "list_edges",
     "read_chapters", "read_chapter_scenes", "read_recent_scenes", "read_recent_chapters",
+    "read_completed_tail",
     "read_chapter",
 }
 

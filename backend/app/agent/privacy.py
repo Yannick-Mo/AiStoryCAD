@@ -29,6 +29,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "read_chapters": "范围读取章节",
     "read_recent_scenes": "读取最近场景",
     "read_recent_chapters": "读取最近章节",
+    "read_completed_tail": "读取已完成正文尾部",
     "read_character": "读取角色",
     "read_relation": "精读关系",
     "list_characters": "列出角色",

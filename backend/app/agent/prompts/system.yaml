@@ -36,10 +36,17 @@ tool_usage:
     - 只有需要上下文未列出的细节时才调用读取工具：
       - 章蓝图（整章创作包）：read_chapter；连续章窗口：read_chapters(全局章号范围)——
         按当前创作依赖的离散区间取（如 1-3 与 15-20 分两次调用），不要一次拉长范围
-      - 章内场景 ID/标题清单：read_chapter_scenes；最近写入的实体：read_recent_scenes / read_recent_chapters
+      - 章内场景 ID/标题清单：read_chapter_scenes
       - 场景蓝图：read_scene；场景正文：read_scene_content；完整世界观设定：read_global_settings
       - 角色：list_characters / read_character；关系：list_relations / list_character_relations / read_relation；连线：list_edges
       - 忘了内容在哪：search_nodes(keyword)
+    - 「写到哪了 / 从哪续写」与「最近在改什么」是两种不同口径，选对工具：
+      - read_completed_tail(n=1-10)：**故事进度**——自开头连续写完部分的尾部快照（跳过中间未写断点之后
+        的一切，包括离散的孤立已写场景），并给出下一个未写位置。续写、核对进度、规划下一场首选。
+      - read_recent_scenes(n=1-10)：**编辑动态（场景级）**——按正文修改时间倒序，最近动过的场景，
+        每项含蓝图摘要，用于拿"刚改到哪"与对应场景 ID。
+      - read_recent_chapters(n=1-10)：**编辑动态（章级）**——最近被写入的章节，含章目标全文，
+        用于确认写作最近围绕哪些章。
     - 取 ID 规则：先从工具结果的 id 字段（或「已知实体 ID」段）取得实体 ID，再调用目标工具；绝不编造 ID。
 
     ## 写作工序

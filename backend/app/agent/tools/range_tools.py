@@ -133,3 +133,45 @@ class ReadRecentChaptersTool(BaseTool):
         except Exception as e:
             await db.rollback()
             return self._err(e)
+
+
+class ReadCompletedTailTool(BaseTool):
+    meta = ToolMeta(
+        name="read_completed_tail",
+        description="读取自开头**连续写完**的正文部分的尾部快照：从第1幕起按故事顺序逐个场景检查，"
+                    "遇第一个未写场景即停止——其后的孤立已写场景不计入。每项 = 场景ID/标题/POV/字数/"
+                    "所在章/蓝图前500字，另给出连续完成总场数与下一个未写位置。"
+                    "用于确认故事当前实际完成到哪、以及续写该从哪个场景开始。",
+        concurrency=ConcurrencyMode.SAFE,
+        timeout=30,
+        parameters={
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "description": "返回连续尾部场景条数（1-10，默认5）"},
+            },
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            try:
+                n = int(kwargs.get("n") or 5)
+            except (TypeError, ValueError):
+                n = 5
+            n = max(1, min(n, 10))
+            builder = ContextBuilder(db)
+            text = await builder.build_completed_tail_snapshot(pid, n=n)
+            if not text:
+                return ToolResult(
+                    success=True,
+                    data="（还没有从开头连续写完的场景——尚未完成任何正文或首场景仍未写。）",
+                )
+            return ToolResult(success=True, data=text)
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
