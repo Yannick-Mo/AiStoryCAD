@@ -10,6 +10,7 @@ interface PreviewModalProps {
 
 export default function PreviewModal({ open, chapters, acts, onClose }: PreviewModalProps) {
   const [index, setIndex] = useState(0)
+  const [goalExpanded, setGoalExpanded] = useState(false)
   const chapter = chapters[index]
 
   useEffect(() => {
@@ -19,6 +20,11 @@ export default function PreviewModal({ open, chapters, acts, onClose }: PreviewM
       setIndex(chapters.length - 1)
     }
   }, [chapters.length, index])
+
+  // 切换章节时收起章核心
+  useEffect(() => {
+    setGoalExpanded(false)
+  }, [index])
 
   const prev = () => setIndex(i => Math.max(0, i - 1))
   const next = () => setIndex(i => Math.min(chapters.length - 1, i + 1))
@@ -32,17 +38,43 @@ export default function PreviewModal({ open, chapters, acts, onClose }: PreviewM
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[680px] max-w-[90vw] max-h-[85vh] flex flex-col p-6 backdrop-blur-xl" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-4">
-          <div>
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div className="min-w-0 pr-2">
             {showActHeader && (
               <div className="text-xs text-amber-500/70 font-medium mb-0.5">{act!.name}</div>
             )}
-            <h3 className="text-amber-600 font-medium">{chapter.title}</h3>
-            <div className="text-xs text-gray-500 mt-0.5">{chapter.goal} · {chapter.scenes.length} 场 · {chapter.wordCount} 字</div>
+            <h3 className="text-amber-600 font-medium truncate">{chapter.title}</h3>
+            <div className="text-xs text-gray-500 mt-0.5 truncate">{chapter.scenes.length} 场 · {chapter.wordCount} 字</div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg flex-shrink-0 -mr-1 mt-1 leading-none" aria-label="关闭预览">✕</button>
         </div>
-        <div className="flex-1 bg-gray-950 rounded-xl p-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap border border-gray-800 min-h-[300px] mb-4 overflow-y-auto">
+        {chapter.goal && (
+          <div className={`mb-3 shrink-0 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2 ${goalExpanded ? '' : 'overflow-hidden'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-amber-500/60 font-medium">章核心</span>
+              <button
+                onClick={() => setGoalExpanded(!goalExpanded)}
+                className="text-[11px] text-gray-500 hover:text-amber-400 transition-colors flex items-center gap-1 flex-shrink-0"
+                aria-expanded={goalExpanded}
+              >
+                {goalExpanded ? (
+                  <>收起 <span className="text-xs leading-none">▲</span></>
+                ) : (
+                  <>展开 <span className="text-xs leading-none">▼</span></>
+                )}
+              </button>
+            </div>
+            <div
+              title={goalExpanded ? undefined : chapter.goal}
+              className={goalExpanded
+                ? 'text-xs text-gray-400 whitespace-pre-wrap leading-relaxed overflow-y-auto mt-1 pr-1 max-h-[50vh]'
+                : 'text-xs text-gray-400 truncate mt-1'}
+            >
+              {chapter.goal}
+            </div>
+          </div>
+        )}
+        <div className="flex-1 min-h-0 bg-gray-950 rounded-xl p-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap border border-gray-800 mb-4 overflow-y-auto">
           {chapter.scenes.length > 0 ? chapter.scenes.map((scene, si) => (
             <div key={scene.id}>
               {si > 0 && <hr className="border-gray-800 my-3" />}
