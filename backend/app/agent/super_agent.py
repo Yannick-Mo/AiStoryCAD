@@ -341,7 +341,13 @@ class SuperAgent:
                 # from the pending plan anyway.
                 last = msgs[-1]
                 if last.content:
-                    msgs[-1] = Message(role="assistant", content=last.content)
+                    # Keep reasoning_content: DeepSeek thinking-mode history
+                    # messages must be passed back verbatim (400 otherwise).
+                    msgs[-1] = Message(
+                        role="assistant",
+                        content=last.content,
+                        reasoning_content=getattr(last, "reasoning_content", None),
+                    )
                 else:
                     msgs.pop()
             msgs.append(Message(role="user", content=message))

@@ -850,63 +850,97 @@ async def autonomous_loop(
 
             decision = _detect_plan_decision(last_user_msg, state.pending_plan)
             if decision == "confirm":
-                logger.info("Plan confirmed by user — executing plan steps directly")
-                yield _event_step("执行已确认的计划...")
-
-                # Build a synthetic assistant message with tool_calls from
-                # the pending_plan so the tool-result messages that follow
-                # have a valid preceding tool_calls message (OpenAI API req).
-                from app.llm.types import ToolCall
-                plan_tool_calls = []
-                for step in state.pending_plan.get("steps", []):
-                    tc = ToolCall(
-                        id=step.get("tool_use_id", f"plan_{step.get('tool', '')}"),
-                        function={"name": step.get("tool", ""), "arguments": json.dumps(step.get("params", {}))},
+                if state.pending_plan.get("_executing"):
+                    # ── Replay guard ──
+                    # An earlier confirmed execution was interrupted (network /
+                    # process) after we persisted the _executing marker.  Some
+                    # steps may already have taken effect, so we must NOT replay
+                    # the whole plan.  Clear it and let the LLM verify reality.
+                    plan_desc = "、".join(
+                        str(s.get("tool", "")) for s in state.pending_plan.get("steps", [])
                     )
-                    plan_tool_calls.append(tc)
+                    logger.warning(
+                        "plan execution interrupted earlier — not replaying (steps: %s)", plan_desc,
+                    )
+                    state = state.replace(
+                        pending_plan={},
+                        plan_confirmed=False,
+                        transition="plan_execution_interrupted",
+                        messages=state.messages + [Message(role="system", content=(
+                            f"【执行中断】一个已确认的计划（步骤工具：{plan_desc}）上次执行时被网络中断，"
+                            "部分步骤可能已经生效。请先调用读取工具核对项目当前状态（相关场景/角色/章节是否"
+                            "已被删除或修改），再根据实际状态决定是否需要补做，不要重做该计划。"
+                        ))],
+                    )
+                    yield _event_step("检测到上次执行被中断，先核对项目状态...")
+                    # Fall through to a normal LLM turn — do NOT execute the plan.
+                else:
+                    logger.info("Plan confirmed by user — executing plan steps directly")
+                    yield _event_step("执行已确认的计划...")
 
-                state = state.replace(
-                    messages=state.messages + [
-                        Message(role="assistant", content=None, tool_calls=plan_tool_calls)
-                    ],
-                )
-
-                for step in state.pending_plan.get("steps", []):
-                    tool_name = step.get("tool", "")
-                    args = step.get("params", {})
-                    tool_use_id = step.get("tool_use_id", "")
+                    # Persist an _executing marker BEFORE any step runs, so a
+                    # crash / disconnect mid-execution is detected on resume
+                    # (see the _executing branch above) instead of replaying
+                    # already-applied destructive steps.
                     try:
-                        result = await StreamingToolExecutor(
-                            filtered_tools, db,
-                            project_id=state.project_id,
-                            user_id=state.user_id,
-                            active_skills=state.active_skills,
-                        ).execute_tool(tool_name, args, tool_use_id)
-                    except Exception as exc:
-                        result = {"tool": tool_name, "success": False, "error": str(exc)}
-                    yield _event_tool_done(result)
-                    state = _invalidate_after_write(state, tool_name, result, filtered_tools)
+                        await _persist_plan_execution_marker(db, state)
+                    except Exception:
+                        logger.exception("failed to persist plan execution marker")
 
-                    # Build tool result message (large results are
-                    # semantically compressed — full data stays in tool_results)
-                    new_tr = list(state.tool_results) + [result]
-                    content = await _tool_message_content(result, llm)
+                    # Build a synthetic assistant message with tool_calls from
+                    # the pending_plan so the tool-result messages that follow
+                    # have a valid preceding tool_calls message (OpenAI API req).
+                    from app.llm.types import ToolCall
+                    plan_tool_calls = []
+                    for step in state.pending_plan.get("steps", []):
+                        tc = ToolCall(
+                            id=step.get("tool_use_id", f"plan_{step.get('tool', '')}"),
+                            function={"name": step.get("tool", ""), "arguments": json.dumps(step.get("params", {}))},
+                        )
+                        plan_tool_calls.append(tc)
 
                     state = state.replace(
-                        messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
-                        tool_results=new_tr,
+                        messages=state.messages + [
+                            Message(role="assistant", content=None, tool_calls=plan_tool_calls)
+                        ],
                     )
 
-                state = state.replace(
-                    pending_plan={},
-                    plan_confirmed=True,
-                    transition="plan_confirmed_and_executed",
-                )
-                # Do NOT break here: the user confirmed the plan, so resume the
-                # SAME loop iteration.  Context is reloaded (writes invalidated
-                # it), the tool results are fed to the LLM, and the loop keeps
-                # executing chained steps of the original multi-step task.
-                continue
+                    for step in state.pending_plan.get("steps", []):
+                        tool_name = step.get("tool", "")
+                        args = step.get("params", {})
+                        tool_use_id = step.get("tool_use_id", "")
+                        try:
+                            result = await StreamingToolExecutor(
+                                filtered_tools, db,
+                                project_id=state.project_id,
+                                user_id=state.user_id,
+                                active_skills=state.active_skills,
+                            ).execute_tool(tool_name, args, tool_use_id)
+                        except Exception as exc:
+                            result = {"tool": tool_name, "success": False, "error": str(exc)}
+                        yield _event_tool_done(result)
+                        state = _invalidate_after_write(state, tool_name, result, filtered_tools)
+
+                        # Build tool result message (large results are
+                        # semantically compressed — full data stays in tool_results)
+                        new_tr = list(state.tool_results) + [result]
+                        content = await _tool_message_content(result, llm)
+
+                        state = state.replace(
+                            messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
+                            tool_results=new_tr,
+                        )
+
+                    state = state.replace(
+                        pending_plan={},
+                        plan_confirmed=True,
+                        transition="plan_confirmed_and_executed",
+                    )
+                    # Do NOT break here: the user confirmed the plan, so resume the
+                    # SAME loop iteration.  Context is reloaded (writes invalidated
+                    # it), the tool results are fed to the LLM, and the loop keeps
+                    # executing chained steps of the original multi-step task.
+                    continue
 
             elif decision == "reject":
                 logger.info("Plan rejected by user — clearing pending plan")
@@ -1214,7 +1248,22 @@ async def autonomous_loop(
 
                     new_tool_results.append(result)
                     yield _event_tool_done(result)
+                    # A successful write under a NEW user instruction means the
+                    # pending (still unconfirmed) plan is superseded — discard it
+                    # so a later stray "好的/继续" cannot fire the old plan.
+                    stale_plan = bool(state.pending_plan) and not state.plan_confirmed
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
+                    if stale_plan and result.get("success"):
+                        tool_obj = filtered_tools.get(tool_name)
+                        if tool_obj is not None and tool_obj.is_write_operation:
+                            logger.info(
+                                "new write tool '%s' executed — discarding pending unconfirmed plan",
+                                tool_name,
+                            )
+                            state = state.replace(
+                                pending_plan={},
+                                transition="plan_superseded_by_new_task",
+                            )
 
                     # Build tool result message (compressed via middle LLM
                     # for large whitelisted tools)
@@ -1407,6 +1456,43 @@ async def autonomous_loop(
 
 
 # ── Recovery helper ─────────────────────────────────────────────────────
+
+
+async def _persist_plan_execution_marker(db, state: LoopState) -> None:
+    """Best-effort persist of the ``_executing`` marker on agent_state.
+
+    Runs in the confirmed-plan branch BEFORE the first destructive step, so an
+    interrupted execution (network drop / process kill) can be detected on the
+    next resume and NOT replayed.  Keeps the previously stored loop snapshot
+    untouched; never raises.
+    """
+    from app.agent.memory.conversation import ConversationMemory
+
+    conv_id = state.conversation_id
+    if not conv_id:
+        return
+    mem = ConversationMemory(db)
+    try:
+        (_, options, confirmed, mode, session, id_reg,
+         id_reg_version, snapshot) = await mem.load_agent_state(conv_id)
+    except Exception:
+        logger.exception("load_agent_state failed in plan marker persist")
+        options, confirmed, mode, session, id_reg = [], False, "chat", {}, {}
+        id_reg_version, snapshot = 0, None
+
+    marked = dict(state.pending_plan)
+    marked["_executing"] = True
+    await mem.save_agent_state(
+        conv_id,
+        pending_plan=marked,
+        current_options=options or state.current_options,
+        plan_confirmed=bool(confirmed),
+        mode=mode or state.mode,
+        cowriter_session=session or state.cowriter_session,
+        id_registry=id_reg or state.id_registry,
+        id_registry_version=int(id_reg_version or 0),
+        loop_snapshot=snapshot,
+    )
 
 
 async def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
