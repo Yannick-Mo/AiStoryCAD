@@ -145,6 +145,10 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
         if (requestIdRef.current !== currentReqId) return
         setPendingPlan(plan)
       },
+      onSystemNote: (text: string) => {
+        if (requestIdRef.current !== currentReqId) return
+        setMessages(prev => [...prev, { id: generateId(), role: 'system', content: text }])
+      },
       onConvId: (id: string) => {
         if (requestIdRef.current !== currentReqId) return
         convIdRef.current = id
@@ -240,7 +244,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
       const detail = await getConversation(projectId, convId)
       setMessages(detail.messages.map(m => ({
         id: m.id,
-        role: m.role as 'user' | 'assistant',
+        role: m.role as 'user' | 'assistant' | 'system',
         content: m.content,
       })))
     } catch (e) {
@@ -583,6 +587,13 @@ export default function AiChatPanel({
     try {
       const result = await compressContext(projectId, chat.conversationId)
       if (result.compressed && result.saved_percent !== undefined) {
+        // 压缩成功后自动重拉历史：旧消息已被摘要替换，界面必须同步，
+        // 否则列表仍是压缩前的旧消息（与后端不一致），还要手动刷新。
+        try {
+          await chat.loadConversation(chat.conversationId)
+        } catch (loadErr) {
+          console.warn('reload after compress failed', loadErr)
+        }
         chat.addSystemMsg(`上下文已压缩：${result.before?.messages} 条 → ${result.after?.messages} 条，节省约 ${result.saved_percent}% token`)
       } else {
         chat.addSystemMsg(result.detail || '上下文压缩完成')

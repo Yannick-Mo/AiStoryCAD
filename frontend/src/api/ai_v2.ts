@@ -36,6 +36,7 @@ export interface SendMessageOptions {
   onToolDone?: (data: string) => void
   onPlan?: (plan: PlanPayload) => void
   onStep?: (step: string) => void
+  onSystemNote?: (text: string) => void
   onConvId?: (id: string) => void
   onProjectUpdated?: () => void
   onDone?: () => void
@@ -99,6 +100,7 @@ export function sendMessage(options: SendMessageOptions): AbortController {
       } catch { /* ignore */ }
     },
     tool_done: (data) => options.onToolDone?.(data),
+    system_note: (data) => options.onSystemNote?.(data),
     project_updated: () => options.onProjectUpdated?.(),
     error: (data: string) => {
       // An error event is a completion signal too: the agent stream has ended

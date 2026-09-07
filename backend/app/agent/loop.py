@@ -974,6 +974,15 @@ async def autonomous_loop(
                 transition="reactive_compressed" if reactive else "context_compressed",
             )
             logger.info("Compressed %d → %d messages", original_count, len(state.messages))
+            # Surface the compression to the UI (and persist the note so a
+            # reload keeps showing it) — otherwise the frontend still lists
+            # every pre-compression message while the model only sees the
+            # summary, which reads as "lost memory" to the user.
+            try:
+                yield {"type": "system_note", "data": boundary.content or ""}
+                await _persist_system_note(db, state.conversation_id, boundary.content or "")
+            except Exception:
+                logger.exception("compression notify failed")
 
         # ── Step 2: Build messages for LLM ─────────────────────────
         # Build final messages — strip orphaned tool messages that would
@@ -1089,6 +1098,11 @@ async def autonomous_loop(
                         retry_count=state.retry_count + 1,
                         transition="reactive_compressed",
                     )
+                    try:
+                        yield {"type": "system_note", "data": boundary.content or ""}
+                        await _persist_system_note(db, state.conversation_id, boundary.content or "")
+                    except Exception:
+                        logger.exception("compression notify failed")
                     await hook_registry.run("post_turn", state=state, llm_client=llm,
                                              turn_start=turn_start)
                     continue
@@ -1445,6 +1459,22 @@ async def autonomous_loop(
 
 
 # ── Recovery helper ─────────────────────────────────────────────────────
+
+
+async def _persist_system_note(db, conversation_id: str | None, text: str) -> None:
+    """Best-effort append of a system note (e.g. a compression boundary) to
+    the conversation history, so the UI keeps showing it after a reload.
+    Never raises."""
+    if not conversation_id or not text:
+        return
+    try:
+        from app.agent.memory.conversation import ConversationMemory
+
+        await ConversationMemory(db).save_message(
+            conversation_id, Message(role="system", content=text)
+        )
+    except Exception:
+        logger.exception("failed to persist system note")
 
 
 async def _persist_plan_execution_marker(db, state: LoopState) -> None:
