@@ -379,11 +379,12 @@ function ToolResultIndicator({ results }: { results: ToolResult[] }) {
 }
 
 function ChatInput({
-  input, setInput, loading, onSend, onStop, onKeyDown
+  input, setInput, loading, compressing, onSend, onStop, onKeyDown
 }: {
   input: string
   setInput: (v: string) => void
   loading: boolean
+  compressing: boolean
   onSend: () => void
   onStop: () => void
   onKeyDown: (e: React.KeyboardEvent) => void
@@ -395,7 +396,7 @@ function ChatInput({
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder={UI_TEXT.placeholder}
-        disabled={loading}
+        disabled={loading || compressing}
         className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed disabled:opacity-50"
       />
       {loading ? (
@@ -408,10 +409,11 @@ function ChatInput({
       ) : (
         <button
           onClick={onSend}
-          disabled={!input.trim()}
+          disabled={!input.trim() || compressing}
+          title={compressing ? '压缩中，暂不可发送' : undefined}
           className="px-3 py-2 rounded-xl bg-amber-600 text-black text-xs font-medium hover:bg-amber-500 transition-colors disabled:opacity-30 disabled:cursor-default shrink-0 self-end"
         >
-          {UI_TEXT.send}
+          {compressing ? '压缩中…' : UI_TEXT.send}
         </button>
       )}
     </div>
@@ -550,7 +552,7 @@ export default function AiChatPanel({
 
   const handleSend = useCallback(() => {
     const text = inputRef.current.trim()
-    if (!text || chat.loading) return
+    if (!text || chat.loading || compressing) return
     setInput('')
     chat.send(text, onProjectUpdated)
   }, [chat, onProjectUpdated])
@@ -575,6 +577,7 @@ export default function AiChatPanel({
   }
 
   const [compressConfirm, setCompressConfirm] = useState(false)
+  const [compressing, setCompressing] = useState(false)
   const [convOpen, setConvOpen] = useState(false)
   const [renameId, setRenameId] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
@@ -584,6 +587,7 @@ export default function AiChatPanel({
   const handleCompress = async () => {
     setCompressConfirm(false)
     if (!chat.conversationId) return
+    setCompressing(true)
     try {
       const result = await compressContext(projectId, chat.conversationId)
       if (result.compressed && result.saved_percent !== undefined) {
@@ -600,6 +604,8 @@ export default function AiChatPanel({
       }
     } catch (e) {
       chat.addSystemMsg('压缩失败：' + (e instanceof Error ? e.message : '未知错误'))
+    } finally {
+      setCompressing(false)
     }
   }
 
@@ -720,9 +726,9 @@ export default function AiChatPanel({
           </button>
           {chat.conversationId && (
             <button onClick={() => setCompressConfirm(true)}
-              disabled={chat.loading}
+              disabled={chat.loading || compressing}
               className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-colors shrink-0 disabled:opacity-30 disabled:cursor-default"
-              title={chat.loading ? 'AI 处理中，暂不可压缩' : '压缩上下文，节省 token'}>压缩</button>
+              title={chat.loading ? 'AI 处理中，暂不可压缩' : compressing ? '压缩进行中' : '压缩上下文，节省 token'}>压缩</button>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -852,6 +858,7 @@ export default function AiChatPanel({
           input={input}
           setInput={setInput}
           loading={chat.loading}
+          compressing={compressing}
           onSend={handleSend}
           onStop={chat.abort}
           onKeyDown={handleKeyDown}
