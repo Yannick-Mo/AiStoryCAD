@@ -212,9 +212,11 @@ async def compress_context(
         _LIGHTER_SUMMARY_PROMPT,
     )
 
-    # Percentage-based head/tail: 20% head + 30% tail retained, middle 50% summarized
+    # Manual compress: summarise everything except the recent tail — the
+    # oldest history is the LEAST relevant to the ongoing conversation, so it
+    # is folded into the LLM summary too (head_count=0, no verbatim head).
     total = len(history)
-    head_count = max(2, int(total * 0.20))
+    head_count = 0
     tail_count = max(3, int(total * 0.30))
 
     # Button always compresses (threshold=0.0), lighter parameters
