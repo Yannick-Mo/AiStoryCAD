@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import type { ReactNode } from 'react'
 import { ArrowUp, Plus, Square } from 'lucide-react'
 
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
@@ -40,6 +41,8 @@ interface AiPanelProps {
 
   /** report float state to the dock so it can compute the fill layout */
   onFloatChange?: (floating: boolean) => void
+  /** grip handle that starts a dock reorder / split drag */
+  grip?: ReactNode
 }
 
 interface DisplayMessage {
@@ -470,7 +473,7 @@ function ChatInput({
 
 export default function AiChatPanel({
   projectId, onClose, onProjectUpdated,
-  contextView = 'chat', contextId, onFloatChange
+  contextView = 'chat', contextId, onFloatChange, grip
 }: AiPanelProps) {
   const chat = useAiChat(projectId, contextView, contextId)
   const [input, setInput] = useState('')
@@ -625,6 +628,7 @@ export default function AiChatPanel({
         className={`flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
       >
         <div className="flex items-center gap-2 min-w-0">
+          {!floating && grip}
           {/* Conversation switcher — always visible when conversations exist */}
           {chat.conversations.length > 0 ? (
             <div className="relative">

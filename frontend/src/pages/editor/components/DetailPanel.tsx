@@ -6,6 +6,8 @@ import WindowControls from './WindowControls'
 interface DetailPanelProps {
   /** shown in the panel header */
   label: string
+  /** grip handle that starts a dock reorder / split drag */
+  grip?: ReactNode
   /** report float state to the dock so it can keep the panel out of the split */
   onFloatChange?: (floating: boolean) => void
   onClose: () => void
@@ -18,7 +20,7 @@ interface DetailPanelProps {
  * content plus the window chrome. Floated it becomes a draggable, resizable
  * window and leaves the split.
  */
-export default function DetailPanel({ label, onFloatChange, onClose, children }: DetailPanelProps) {
+export default function DetailPanel({ label, grip, onFloatChange, onClose, children }: DetailPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_detail_panel_float',
     defaultWidth: 460,
@@ -44,7 +46,10 @@ export default function DetailPanel({ label, onFloatChange, onClose, children }:
         onPointerDown={win.headerPointerDown}
         className={`flex h-9 shrink-0 items-center justify-between border-b border-gray-800 px-3 ${win.floating ? 'cursor-grab select-none active:cursor-grabbing' : ''}`}
       >
-        <span className="text-[11px] text-gray-500">{label}</span>
+        <div className="flex min-w-0 items-center gap-1">
+          {!win.floating && grip}
+          <span className="text-[11px] text-gray-500">{label}</span>
+        </div>
         <div className="flex items-center gap-1">
           <WindowControls floating={win.floating} onToggleFloat={win.toggleFloat} onClose={onClose} />
         </div>

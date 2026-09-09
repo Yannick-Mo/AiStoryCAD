@@ -1,8 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import SideNav from './SideNav'
 import CanvasPanel from './CanvasPanel'
-import PanelDock from './PanelDock'
-import type { DockPanel } from './PanelDock'
+import PanelDock, { DockGrip } from './PanelDock'
+import type { DockPanelMeta } from './PanelDock'
+import { leafIds, makeRow, prune } from './splitTree'
+import type { TreeNode } from './splitTree'
 import LeftDrawer from './LeftDrawer'
 import ActionButtons from './ActionButtons'
 import PlotCanvas from '../views/plot/PlotCanvas'
@@ -29,6 +31,29 @@ import DetailPanel from '../components/DetailPanel'
 import type { Chapter, Scene, EdgeType } from '../types'
 import { getCompletedChain } from '../data/orderUtils'
 
+const DOCK_TREE_KEY = 'aistorycad_dock_tree'
+const DOCK_PANEL_IDS = ['canvas', 'detail', 'ai']
+
+/** default layout: the three panels in one row, canvas widest */
+function defaultDockTree(): TreeNode {
+  return makeRow(DOCK_PANEL_IDS, [0.45, 0.275, 0.275])
+}
+
+/** restore the saved split layout, falling back to the default when it is stale */
+function loadDockTree(): TreeNode {
+  try {
+    const raw = localStorage.getItem(DOCK_TREE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as TreeNode
+      if (parsed && typeof parsed === 'object' && 'kind' in parsed) {
+        const pruned = prune(parsed, id => DOCK_PANEL_IDS.includes(id))
+        if (pruned && leafIds(pruned).length === DOCK_PANEL_IDS.length) return pruned
+      }
+    }
+  } catch { /* ignore */ }
+  return defaultDockTree()
+}
+
 export default function EditorShell({ projectId }: { projectId: string }) {
   const views = useEditorViews()
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -49,6 +74,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [inspirationOpen, setInspirationOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [floatingState, setFloatingState] = useState<Record<string, boolean>>({})
+  const [dockTree, setDockTree] = useState<TreeNode>(loadDockTree)
 
   const { addToast } = useToast()
 
@@ -151,6 +177,14 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (hasSelection) setDetailOpen(true)
   }, [hasSelection])
+
+  // Debounced so a divider drag does not write to localStorage on every frame.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try { localStorage.setItem(DOCK_TREE_KEY, JSON.stringify(dockTree)) } catch { /* ignore */ }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [dockTree])
 
   // Panels report their float state so the dock can tell which ones are still
   // in the docked flow (a floating panel does not count towards the solo rule).
@@ -415,19 +449,19 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   const detailPanel = renderDetail()
 
-  // The panels of the dock, in left-to-right order. Canvas and detail are
-  // leading panels, the AI chat is anchored to the trailing edge.
-  const dockPanels: DockPanel[] = []
+  // Everything the dock may host. Panels that are closed are simply absent; the
+  // split tree keeps their slot, so reopening them restores the same place.
+  const dockPanels: Record<string, DockPanelMeta | undefined> = {}
 
   if (canvasOpen) {
-    dockPanels.push({
-      id: 'canvas',
-      flexible: true,
-      minWidth: 420,
-      floating: floatingState.canvas === true,
+    dockPanels.canvas = {
+      title: `${views.activeView?.label ?? ''}幕布`,
+      minW: 420,
+      minH: 240,
       node: (
         <CanvasPanel
           label={`${views.activeView?.label ?? ''}幕布`}
+          grip={<DockGrip id="canvas" />}
           onFloatChange={(v) => handleFloatChange('canvas', v)}
           onClose={closeCanvas}
           toolbar={views.activeViewId === 'narrative-plot' ? (
@@ -452,36 +486,36 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           {renderCanvas()}
         </CanvasPanel>
       ),
-    })
+    }
   }
 
   if (detailOpen) {
-    dockPanels.push({
-      id: 'detail',
-      defaultWidth: 384,
-      minWidth: 280,
-      floating: floatingState.detail === true,
+    dockPanels.detail = {
+      title: '详情',
+      minW: 280,
+      minH: 240,
       node: (
         <DetailPanel
           label="详情"
+          grip={<DockGrip id="detail" />}
           onFloatChange={(v) => handleFloatChange('detail', v)}
           onClose={closeDetail}
         >
           {detailPanel}
         </DetailPanel>
       ),
-    })
+    }
   }
 
   if (aiChatOpen) {
-    dockPanels.push({
-      id: 'ai',
-      defaultWidth: 380,
-      minWidth: 300,
-      floating: floatingState.ai === true,
+    dockPanels.ai = {
+      title: 'AI 对话',
+      minW: 300,
+      minH: 260,
       node: (
         <AiPanel
           projectId={projectId}
+          grip={<DockGrip id="ai" />}
           onFloatChange={(v) => handleFloatChange('ai', v)}
           onClose={() => setAiChatOpen(false)}
           onProjectUpdated={handleProjectUpdated}
@@ -489,9 +523,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           contextId={aiContextId}
         />
       ),
-    })
+    }
   }
-
   return (
     <div className="h-screen flex bg-gray-950 text-gray-100 overflow-hidden select-none">
       {/* Icon-only left side nav: views, content management, save status, outline, settings */}
@@ -509,7 +542,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
       {/* The dock: every panel is a sibling here, so docked panels squeeze each
           other and a floating panel leaves the flow entirely. */}
-      <PanelDock panels={dockPanels} />
+      <PanelDock tree={dockTree} onTreeChange={setDockTree} panels={dockPanels} floating={floatingState} />
 
       <ActionButtons
         onAIChat={handleAiChatOpen}

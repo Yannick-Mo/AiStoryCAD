@@ -10,6 +10,8 @@ interface CanvasPanelProps {
   children: ReactNode
   /** canvas toolbar, positioned inside the canvas area */
   toolbar?: ReactNode
+  /** grip handle that starts a dock reorder / split drag */
+  grip?: ReactNode
   /** report float state to the dock so it can compute the solo layout */
   onFloatChange?: (floating: boolean) => void
   onClose: () => void
@@ -21,7 +23,7 @@ interface CanvasPanelProps {
  * draggable, resizable window and leaves the docked flow.
  */
 export default function CanvasPanel({
-  label, children, toolbar, onFloatChange, onClose,
+  label, children, toolbar, grip, onFloatChange, onClose,
 }: CanvasPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_canvas_float',
@@ -59,6 +61,7 @@ export default function CanvasPanel({
         {toolbar}
         {!win.floating && (
           <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-lg border border-gray-700/60 bg-gray-900/90 px-1 py-0.5 backdrop-blur">
+            {grip}
             <WindowControls floating={false} onToggleFloat={win.toggleFloat} onClose={onClose} />
           </div>
         )}
