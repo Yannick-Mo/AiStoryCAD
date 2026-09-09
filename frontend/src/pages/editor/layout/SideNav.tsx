@@ -95,7 +95,7 @@ export default function SideNav({
   const [mgmtOpen, setMgmtOpen] = useState(false)
 
   return (
-    <nav className="w-14 shrink-0 bg-gray-900/95 backdrop-blur-xl border-r border-gray-800 flex flex-col items-center gap-1.5 py-3">
+    <nav className="relative z-20 w-14 shrink-0 bg-gray-900/95 backdrop-blur-xl border-r border-gray-800 flex flex-col items-center gap-1.5 py-3">
       {VIEWS.map(v => (
         <IconButton
           key={v.id}
