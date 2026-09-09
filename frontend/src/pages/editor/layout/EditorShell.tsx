@@ -15,10 +15,10 @@ import EdgeDetail from '../views/plot/EdgeDetail'
 import CharCanvas from '../views/character/CharCanvas'
 import CharacterDetail from '../views/character/CharacterDetail'
 import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
-import PreviewModal from '../modals/PreviewModal'
+import PreviewPanel from '../modals/PreviewPanel'
 import SceneEditor from '../modals/SceneEditor'
 import ChapterGoalEditor from '../modals/ChapterGoalEditor'
-import GlobalSettingsModal from '../modals/GlobalSettingsModal'
+import GlobalSettingsPanel from '../modals/GlobalSettingsPanel'
 import AiPanel, { useAiChat } from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
 import { useEditorViews } from '../hooks/useEditorViews'
@@ -83,15 +83,18 @@ function loadDockTree(): TreeNode {
 export default function EditorShell({ projectId }: { projectId: string }) {
   const views = useEditorViews()
   const [outlineOpen, setOutlineOpen] = useState(false)
-  const [previewOpen, setPreviewOpen] = useState(false)
-  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false)
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
   const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
-  // A full-panel editor that takes over the detail panel body instead of
-  // opening a modal. Cleared on save / cancel or when the selection moves on.
-  const [detailEditor, setDetailEditor] = useState<
-    { kind: 'chapter-goal'; chapterId: string } | { kind: 'scene'; sceneId: string } | null
+  // What the detail panel shows instead of the normal selection view: a
+  // full-panel editor, the finished-content preview or the global settings.
+  // Cleared on save / cancel or when the selection moves on.
+  const [detailMode, setDetailMode] = useState<
+    | { kind: 'chapter-goal'; chapterId: string }
+    | { kind: 'scene'; sceneId: string }
+    | { kind: 'preview' }
+    | { kind: 'settings' }
+    | null
   >(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter' | 'scene'; id: string; chapterId?: string } | null>(null)
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
@@ -122,6 +125,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
+    setDetailMode(null)
     setSelectionView('narrative-plot')
     setSelectedActId(actId); setSelectedChapter(null); store.selectNode('act', actId)
   }, [store])
@@ -130,6 +134,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     if (!data) return
     const ch = data.chapters.find(c => c.id === chapterId)
     if (!ch) return
+    setDetailMode(null)
     setSelectionView('narrative-plot')
     setSelectedChapter(ch); setSelectedActId(null); store.selectNode('chapter', chapterId)
   }, [data, store])
@@ -225,7 +230,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     store.selection.id ?? '',
   ].join('|')
   useEffect(() => {
-    setDetailEditor(null)
+    setDetailMode(null)
   }, [detailTargetKey])
 
   // Debounced so a divider drag does not write to localStorage on every frame.
@@ -262,8 +267,21 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     setSelectedRelation(null)
     setSelectedCharacterId(null)
     store.clearSelection()
+    setDetailMode(null)
     setDetailOpen(false)
   }, [store])
+
+  // Side-nav entries that used to open a modal: they now open the detail panel
+  // on that page instead.
+  const openPreview = useCallback(() => {
+    setDetailOpen(true)
+    setDetailMode({ kind: 'preview' })
+  }, [])
+
+  const openGlobalSettings = useCallback(() => {
+    setDetailOpen(true)
+    setDetailMode({ kind: 'settings' })
+  }, [])
 
   if (store.loading) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">加载项目数据...</div>
   if (store.error) return <div className="h-screen bg-gray-950 flex items-center justify-center text-red-400 text-sm">{store.error}</div>
@@ -367,7 +385,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 throw e
               }
             }}
-            onOpenSceneEditor={(scene) => setDetailEditor({ kind: 'scene', sceneId: scene.id })}
+            onOpenSceneEditor={(scene) => setDetailMode({ kind: 'scene', sceneId: scene.id })}
             onUpdateAct={store.updateAct}
             onUpdateScene={store.updateScene}
             onAddChapter={store.addChapter}
@@ -411,8 +429,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
               }
             }}
             onChapterSave={handleChapterGoalSave}
-            onOpenSceneEditor={(scene) => setDetailEditor({ kind: 'scene', sceneId: scene.id })}
-            onEditGoal={(chapter) => setDetailEditor({ kind: 'chapter-goal', chapterId: chapter.id })}
+            onOpenSceneEditor={(scene) => setDetailMode({ kind: 'scene', sceneId: scene.id })}
+            onEditGoal={(chapter) => setDetailMode({ kind: 'chapter-goal', chapterId: chapter.id })}
             onUpdateChapter={store.updateChapter}
             onUpdateScene={store.updateScene}
             onAddScene={store.addScene}
@@ -508,19 +526,21 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   // A pending full-panel editor replaces the normal detail content; save /
   // cancel clears it and the panel falls back to the selection view.
-  const editingScene = detailEditor?.kind === 'scene'
-    ? data.chapters.flatMap(c => c.scenes).find(s => s.id === detailEditor.sceneId) ?? null
+  const editingScene = detailMode?.kind === 'scene'
+    ? data.chapters.flatMap(c => c.scenes).find(s => s.id === detailMode.sceneId) ?? null
     : null
-  const goalChapter = detailEditor?.kind === 'chapter-goal'
-    ? data.chapters.find(c => c.id === detailEditor.chapterId) ?? null
+  const goalChapter = detailMode?.kind === 'chapter-goal'
+    ? data.chapters.find(c => c.id === detailMode.chapterId) ?? null
     : null
+  const previewMode = detailMode?.kind === 'preview'
+  const settingsMode = detailMode?.kind === 'settings'
 
   const detailPanel = editingScene ? (
     <SceneEditor
       projectId={projectId}
       scene={editingScene}
       chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
-      onClose={() => setDetailEditor(null)}
+      onClose={() => setDetailMode(null)}
       onSaved={handleSceneSaved}
       onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
       onSaveGoal={(summary) => handleSceneGoalSave(editingScene.id, summary)}
@@ -529,11 +549,26 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     <ChapterGoalEditor
       chapter={goalChapter}
       onSave={(goal) => handleChapterGoalSave(goalChapter.id, goal)}
-      onClose={() => setDetailEditor(null)}
+      onClose={() => setDetailMode(null)}
+    />
+  ) : previewMode ? (
+    <PreviewPanel
+      chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()}
+      acts={data.acts}
+    />
+  ) : settingsMode ? (
+    <GlobalSettingsPanel
+      initialText={data.globalSettings}
+      onSave={(text) => store.saveGlobalSettings(text)}
+      onClose={() => setDetailMode(null)}
     />
   ) : renderDetail()
 
-  const detailLabel = editingScene ? '场景编辑' : goalChapter ? '本章目标' : '详情'
+  const detailLabel = editingScene ? '场景编辑'
+    : goalChapter ? '本章目标'
+    : previewMode ? '预览'
+    : settingsMode ? '全局设定'
+    : '详情'
 
   // Everything the dock may host. Panels that are closed are simply absent; the
   // split tree keeps their slot, so reopening them restores the same place.
@@ -642,9 +677,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       <SideNav
         activeViewId={views.activeViewId}
         onSwitchView={handleSwitchView}
-        onPreview={() => setPreviewOpen(true)}
+        onPreview={openPreview}
         onExport={handleExport}
-        onGlobalSetting={() => setGlobalSettingsOpen(true)}
+        onGlobalSetting={openGlobalSettings}
         outlineOpen={outlineOpen}
         onOutline={() => setOutlineOpen(v => !v)}
         dirty={store.dirty}
@@ -662,15 +697,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       />
 
       {/* Modals */}
-      <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} acts={data.acts} onClose={() => setPreviewOpen(false)} />
-
-      <GlobalSettingsModal
-        open={globalSettingsOpen}
-        initialText={data.globalSettings}
-        onSave={(text) => store.saveGlobalSettings(text)}
-        onClose={() => setGlobalSettingsOpen(false)}
-      />
-
 
       {inspirationOpen && (
         <InspirationModal
