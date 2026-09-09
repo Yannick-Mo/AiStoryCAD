@@ -492,7 +492,8 @@ export default function AiChatPanel({
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const { size: width, handleMouseDown: panelResizeDown } = useResizePanel({ initial: 380, min: 300, max: 800, direction: 'horizontal' })
+  // No max width: the panel may fill the whole dock when it is the only one.
+  const { size: width, handleMouseDown: panelResizeDown } = useResizePanel({ initial: 380, min: 300, direction: 'horizontal' })
 
   const contextLabel = contextView === 'scene' ? '场景写作'
     : contextView === 'chapter' ? '章节分析'
@@ -614,11 +615,11 @@ export default function AiChatPanel({
       className={`flex flex-col ${
         floating
           ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl bg-gray-900/95 backdrop-blur-xl'
-          : `relative h-full border-gray-800 bg-gray-900/95 backdrop-blur-xl ${solo ? 'mx-auto min-w-0 flex-1' : 'shrink-0 border-l'}`
+          : `relative h-full border-gray-800 bg-gray-900/95 backdrop-blur-xl ${solo ? 'min-w-0 flex-1' : 'shrink-0 border-l'}`
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
-        : solo ? { maxWidth: 800 } : { width }}
+        : solo ? undefined : { width, maxWidth: '100%' }}
     >
       {/* Resize handle (left edge) — docked only */}
       {!floating && !solo && (

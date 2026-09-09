@@ -10,7 +10,7 @@ interface UseResizePanelOptions {
 export function useResizePanel({
   initial = 380,
   min = 300,
-  max = 800,
+  max = Number.POSITIVE_INFINITY,
   direction = 'horizontal',
 }: UseResizePanelOptions = {}) {
   const [size, setSize] = useState(initial)
