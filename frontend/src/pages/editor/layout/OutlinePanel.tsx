@@ -1,30 +1,57 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
+import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
+import { useSessionState } from '../../../hooks/useSessionState'
+import WindowControls from '../components/WindowControls'
 import type { Chapter, Act } from '../types'
 
-interface LeftDrawerProps {
-  open: boolean
+interface OutlinePanelProps {
   acts: Act[]
   chapters: Chapter[]
   selectedActId?: string | null
   selectedChapterId?: string | null
+  /** grip handle that starts a dock reorder / split drag */
+  grip?: ReactNode
+  /** owned by the dock so it survives the remount when the panel floats */
+  floating: boolean
+  onFloatingChange: (floating: boolean) => void
   onClose: () => void
   onSelectAct: (id: string) => void
   onSelectChapter: (id: string) => void
 }
 
-export default function LeftDrawer({
-  open,
+/**
+ * The chapter outline as a dock panel instead of an overlay drawer: it sits at
+ * the left of the split container, squeezes the other panels, and can be
+ * dragged, split, floated or closed like any other panel.
+ */
+export default function OutlinePanel({
   acts,
   chapters,
   selectedActId,
   selectedChapterId,
+  grip,
+  floating,
+  onFloatingChange,
   onClose,
   onSelectAct,
   onSelectChapter,
-}: LeftDrawerProps) {
+}: OutlinePanelProps) {
+  const win = useFloatingWindow({
+    storageKey: 'aistorycad_outline_panel_float',
+    floating,
+    onFloatingChange,
+    defaultWidth: 320,
+    defaultHeight: Math.min(Math.round(window.innerHeight * 0.8), window.innerHeight - 40),
+    defaultX: () => 12,
+    minW: 220,
+    minH: 240,
+  })
+
   const selectedActRef = useRef<HTMLDivElement | null>(null)
   const selectedChapterRef = useRef<HTMLDivElement | null>(null)
-  const [collapsedActs, setCollapsedActs] = useState<Set<string>>(() => new Set<string>())
+  // survives floating / docking, which remounts the panel
+  const [collapsedActs, setCollapsedActs] = useSessionState<Set<string>>('outline.collapsedActs', new Set<string>())
 
   const toggleAct = (id: string) => {
     setCollapsedActs(prev => {
@@ -35,19 +62,9 @@ export default function LeftDrawer({
     })
   }
 
-  // Esc 收起大纲
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
   // 选中的章若在折叠的幕里，自动展开该幕
   useEffect(() => {
-    if (!open || !selectedChapterId) return
+    if (!selectedChapterId) return
     const ch = chapters.find(c => c.id === selectedChapterId)
     if (!ch) return
     setCollapsedActs(prev => {
@@ -56,39 +73,36 @@ export default function LeftDrawer({
       next.delete(ch.actId)
       return next
     })
-  }, [open, selectedChapterId, chapters])
+  }, [selectedChapterId, chapters, setCollapsedActs])
 
-  // 展开时把当前选中的幕 / 章滚动到可视区域
+  // 把当前选中的幕 / 章滚动到可视区域
   useEffect(() => {
-    if (!open) return
     const el = selectedChapterRef.current ?? selectedActRef.current
     if (el) el.scrollIntoView({ block: 'center' })
-  }, [open, selectedActId, selectedChapterId, collapsedActs])
+  }, [selectedActId, selectedChapterId, collapsedActs])
 
   return (
     <div
-      className={`fixed left-0 top-0 h-full w-64 bg-gray-900/95 backdrop-blur-xl border-r border-gray-800 z-30 transition-transform duration-200 shadow-2xl flex flex-col ${
-        open ? 'translate-x-0' : '-translate-x-full pointer-events-none'
-      }`}
+      className={win.floating
+        ? 'fixed z-30 flex flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/95 shadow-2xl'
+        : 'relative flex h-full w-full flex-col bg-gray-900/95'}
+      style={win.floating && win.rect
+        ? { left: win.rect.x, top: win.rect.y, width: win.rect.w, height: win.rect.h }
+        : undefined}
     >
-      <div className="flex items-center justify-between gap-2 pl-4 pr-2 py-3 border-b border-gray-800">
-        <h3 className="text-amber-600/80 text-xs uppercase tracking-wider truncate">📋 全章节大纲</h3>
-        <button
-          onClick={onClose}
-          title="收起大纲（Esc）"
-          aria-label="收起大纲"
-          className="shrink-0 flex items-center gap-1 pl-1 pr-2 py-1 rounded-lg text-[11px] text-gray-400 hover:text-gray-100 bg-gray-800/60 hover:bg-gray-700 border border-gray-700/60 transition-colors"
-        >
-          <svg
-            width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-          >
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-          收起
-        </button>
+      {/* Header — also the drag handle when floating */}
+      <div
+        onPointerDown={win.headerPointerDown}
+        className={`flex h-10 shrink-0 items-center justify-between border-b border-gray-800 px-3 ${win.floating ? 'cursor-grab select-none active:cursor-grabbing' : ''}`}
+      >
+        <div className="flex min-w-0 items-center gap-1">
+          {!win.floating && grip}
+          <span className="text-[11px] text-gray-500">大纲</span>
+        </div>
+        <WindowControls floating={win.floating} onToggleFloat={win.toggleFloat} onClose={onClose} />
       </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+
+      <div className="min-w-0 flex-1 space-y-3 overflow-y-auto p-3">
         {[...acts].sort((a, b) => a.order - b.order).map(act => {
           const actChs = chapters.filter(c => c.actId === act.id)
           const isActSelected = act.id === selectedActId
@@ -181,9 +195,17 @@ export default function LeftDrawer({
           )
         })}
       </div>
-      <div className="p-3 border-t border-gray-800 text-gray-600 text-[10px] text-center">
-        点击幕或章节跳转 · 点「收起」或按 Esc 关闭
-      </div>
+
+      {/* Corner resize handle — floating only */}
+      {win.floating && (
+        <div
+          onPointerDown={win.cornerPointerDown}
+          title="拖拽调整大小"
+          className="absolute bottom-0 right-0 z-10 h-4 w-4 cursor-nwse-resize"
+        >
+          <div className="absolute bottom-0.5 right-0.5 h-2 w-2 border-b-2 border-r-2 border-gray-600 transition-colors hover:border-amber-500" />
+        </div>
+      )}
     </div>
   )
 }

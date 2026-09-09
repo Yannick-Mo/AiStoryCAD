@@ -12,6 +12,7 @@ interface SideNavProps {
   onExport: () => void
   onGlobalSetting: () => void
   onOutline: () => void
+  outlineOpen?: boolean
   dirty: boolean
   saving: boolean
   onSave: () => void
@@ -90,7 +91,7 @@ function SaveButton({
 
 export default function SideNav({
   activeViewId, onSwitchView, onPreview, onExport, onGlobalSetting,
-  onOutline, dirty, saving, onSave,
+  onOutline, outlineOpen, dirty, saving, onSave,
 }: SideNavProps) {
   const [mgmtOpen, setMgmtOpen] = useState(false)
 
@@ -145,7 +146,7 @@ export default function SideNav({
       <div className="mt-auto" />
       <div className="mb-1 h-px w-8 bg-gray-800" />
       <SaveButton dirty={dirty} saving={saving} onSave={onSave} />
-      <IconButton icon={ListTree} label="大纲" onClick={onOutline} />
+      <IconButton icon={ListTree} label="大纲" active={outlineOpen} onClick={onOutline} />
       <IconButton icon={Settings} label="全局设定" onClick={onGlobalSetting} />
     </nav>
   )

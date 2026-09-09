@@ -3,9 +3,9 @@ import SideNav from './SideNav'
 import CanvasPanel from './CanvasPanel'
 import PanelDock, { DockGrip } from './PanelDock'
 import type { DockPanelMeta } from './PanelDock'
-import { leafIds, makeRow, prune } from './splitTree'
+import { containsLeaf, leafIds, makeLeaf, makeRow, prune } from './splitTree'
 import type { TreeNode } from './splitTree'
-import LeftDrawer from './LeftDrawer'
+import OutlinePanel from './OutlinePanel'
 import ActionButtons from './ActionButtons'
 import PlotCanvas from '../views/plot/PlotCanvas'
 import PlotToolbar from '../views/plot/PlotToolbar'
@@ -32,11 +32,34 @@ import type { Chapter, Scene, EdgeType } from '../types'
 import { getCompletedChain } from '../data/orderUtils'
 
 const DOCK_TREE_KEY = 'aistorycad_dock_tree'
-const DOCK_PANEL_IDS = ['canvas', 'detail', 'ai']
+const DOCK_PANEL_IDS = ['outline', 'canvas', 'detail', 'ai']
 
-/** default layout: the three panels in one row, canvas widest */
+/** share of the container the outline takes when it is added to an older layout */
+const OUTLINE_WEIGHT = 0.2
+
+/** default layout: one row, the outline on the left, canvas widest */
 function defaultDockTree(): TreeNode {
-  return makeRow(DOCK_PANEL_IDS, [0.45, 0.275, 0.275])
+  // with the outline closed the rest falls back to 0.45 / 0.275 / 0.275
+  return makeRow(DOCK_PANEL_IDS, [OUTLINE_WEIGHT, 0.36, 0.22, 0.22])
+}
+
+/** put the outline at the left of the root, shrinking the others proportionally */
+function prependOutline(node: TreeNode): TreeNode {
+  if (containsLeaf(node, 'outline')) return node
+  if (node.kind === 'split' && node.dir === 'row') {
+    return {
+      kind: 'split',
+      dir: 'row',
+      children: [makeLeaf('outline'), ...node.children],
+      weights: [OUTLINE_WEIGHT, ...node.weights.map(w => w * (1 - OUTLINE_WEIGHT))],
+    }
+  }
+  return {
+    kind: 'split',
+    dir: 'row',
+    children: [makeLeaf('outline'), node],
+    weights: [OUTLINE_WEIGHT, 1 - OUTLINE_WEIGHT],
+  }
 }
 
 /** restore the saved split layout, falling back to the default when it is stale */
@@ -48,6 +71,10 @@ function loadDockTree(): TreeNode {
       if (parsed && typeof parsed === 'object' && 'kind' in parsed) {
         const pruned = prune(parsed, id => DOCK_PANEL_IDS.includes(id))
         if (pruned && leafIds(pruned).length === DOCK_PANEL_IDS.length) return pruned
+        // layouts saved before the outline became a panel hold one leaf less
+        if (pruned && leafIds(pruned).length === DOCK_PANEL_IDS.length - 1 && !containsLeaf(pruned, 'outline')) {
+          return prependOutline(pruned)
+        }
       }
     }
   } catch { /* ignore */ }
@@ -56,7 +83,7 @@ function loadDockTree(): TreeNode {
 
 export default function EditorShell({ projectId }: { projectId: string }) {
   const views = useEditorViews()
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [outlineOpen, setOutlineOpen] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false)
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
@@ -471,6 +498,28 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   // split tree keeps their slot, so reopening them restores the same place.
   const dockPanels: Record<string, DockPanelMeta | undefined> = {}
 
+  if (outlineOpen) {
+    dockPanels.outline = {
+      title: '大纲',
+      minW: 220,
+      minH: 240,
+      node: (
+        <OutlinePanel
+          acts={data.acts}
+          chapters={data.chapters}
+          selectedActId={selectedActId}
+          selectedChapterId={activeChapter?.id ?? null}
+          grip={<DockGrip id="outline" />}
+          floating={floatingState.outline === true}
+          onFloatingChange={(v) => handleFloatChange('outline', v)}
+          onClose={() => setOutlineOpen(false)}
+          onSelectAct={(id) => handleActClick(id)}
+          onSelectChapter={(id) => handleChapterClick(id)}
+        />
+      ),
+    }
+  }
+
   if (canvasOpen) {
     dockPanels.canvas = {
       title: `${views.activeView?.label ?? ''}幕布`,
@@ -555,7 +604,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onPreview={() => setPreviewOpen(true)}
         onExport={handleExport}
         onGlobalSetting={() => setGlobalSettingsOpen(true)}
-        onOutline={() => setDrawerOpen(true)}
+        outlineOpen={outlineOpen}
+        onOutline={() => setOutlineOpen(v => !v)}
         dirty={store.dirty}
         saving={store.saving}
         onSave={() => store.flushChanges()}
@@ -568,18 +618,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       <ActionButtons
         onAIChat={handleAiChatOpen}
         onInspiration={() => setInspirationOpen(true)}
-      />
-
-      {/* Drawer */}
-      <LeftDrawer
-        open={drawerOpen}
-        acts={data.acts}
-        chapters={data.chapters}
-        selectedActId={selectedActId}
-        selectedChapterId={activeChapter?.id ?? null}
-        onClose={() => setDrawerOpen(false)}
-        onSelectAct={(id) => handleActClick(id)}
-        onSelectChapter={(id) => handleChapterClick(id)}
       />
 
       {/* Modals */}
