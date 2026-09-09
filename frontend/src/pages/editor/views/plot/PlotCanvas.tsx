@@ -10,7 +10,7 @@ import ActGroupNode from './ActGroupNode'
 import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
 import { isHandlePairAvailable, getTimelineReplacementEdgeIds } from '../../data/handleAllocation'
-import { topologicalSort } from '../../data/orderUtils'
+import { orderChapters } from '../../data/orderUtils'
 import ContextMenu from './ContextMenu'
 import { useToast } from '../../components/Toast'
 import { useViewportMemory } from '../../../../hooks/useViewportMemory'
@@ -99,10 +99,11 @@ export default function PlotCanvas({
   const { addToast } = useToast()
   const sortedActs = useMemo(() => [...acts].sort((a, b) => a.order - b.order), [acts])
 
+  // 顺序来自 sort_order（幕序 → 幕内序号）；时序线只表达叙事关系，不参与排序。
   const orderMap = useMemo(() => {
-    const ordered = topologicalSort(chapters, edges)
-    return new Map(ordered.map((id, i) => [id, i + 1]))
-  }, [chapters, edges])
+    const ordered = orderChapters(chapters, acts)
+    return new Map(ordered.map((ch, i) => [ch.id, i + 1]))
+  }, [chapters, acts])
 
   const initialNodes: Node[] = useMemo(() => {
     const result: Node[] = []
@@ -110,7 +111,7 @@ export default function PlotCanvas({
     sortedActs.forEach(act => {
       const chs = chapters
         .filter(c => c.actId === act.id)
-        .sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999))
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
       const count = chs.length
       const cols = Math.min(count, CH_PER_ROW)
       const rows = Math.max(1, Math.ceil(count / CH_PER_ROW))

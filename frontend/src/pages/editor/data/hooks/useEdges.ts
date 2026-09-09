@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import type { Chapter, ChapterEdge, EdgeType, EdgeResult, EditorMockData } from '../../types'
 import type { ChangeEntry } from '../editorStore'
-import { topologicalSort, wouldCreateCycle, hasIncomingTimeline, hasOutgoingTimeline } from '../orderUtils'
+import { wouldCreateCycle, hasIncomingTimeline, hasOutgoingTimeline } from '../orderUtils'
 
 export function useEdges(
   data: { chapters: Chapter[]; edges: ChapterEdge[] } | null,
@@ -9,11 +9,6 @@ export function useEdges(
   projectId: string,
   enqueueChange: (c: ChangeEntry) => void,
 ) {
-  const reSort = useCallback((chapters: Chapter[], edges: ChapterEdge[]) => {
-    const ordered = topologicalSort(chapters, edges)
-    const map = new Map(chapters.map(c => [c.id, c]))
-    return ordered.map(id => map.get(id)!).filter(Boolean)
-  }, [])
 
   const addEdge = useCallback((sourceId: string, targetId: string, type: EdgeType = 'timeline', sourceHandle?: string, targetHandle?: string): EdgeResult => {
     if (!data) return { edge: null }
@@ -25,7 +20,7 @@ export function useEdges(
         const filtered = d.edges.filter(e => !(e.type === 'timeline' && e.sourceId === sourceId && e.targetId === targetId))
         const newEdge: ChapterEdge = { id: crypto.randomUUID(), sourceId, targetId, type, sourceHandle, targetHandle }
         result = { edge: newEdge }
-        return { ...d, edges: [...filtered, newEdge], chapters: reSort(d.chapters, [...filtered, newEdge]) }
+        return { ...d, edges: [...filtered, newEdge] }
       }
       if (wouldCreateCycle(d.edges, sourceId, targetId)) { result = { edge: null, cycle: true }; return d }
       const newEdge: ChapterEdge = { id: crypto.randomUUID(), sourceId, targetId, type, sourceHandle, targetHandle }
@@ -36,7 +31,7 @@ export function useEdges(
       enqueueChange({ entity: 'edges', op: 'create', data: { id: result.edge.id, project_id: projectId, source_id: sourceId, target_id: targetId, edge_type: type, source_handle: sourceHandle || '', target_handle: targetHandle || '' } })
     }
     return result
-  }, [data, projectId, reSort, enqueueChange, setData])
+  }, [data, projectId, enqueueChange, setData])
 
   const deleteEdge = useCallback((edgeId: string) => {
     if (!data) return
@@ -45,11 +40,10 @@ export function useEdges(
       const edge = d.edges.find(e => e.id === edgeId)
       if (!edge) return d
       const newEdges = d.edges.filter(e => e.id !== edgeId)
-      if (edge.type === 'timeline') return { ...d, edges: newEdges, chapters: reSort(d.chapters, newEdges) }
       return { ...d, edges: newEdges }
     })
     enqueueChange({ entity: 'edges', op: 'delete', id: edgeId })
-  }, [data, reSort, enqueueChange, setData])
+  }, [data, enqueueChange, setData])
 
   const changeEdgeType = useCallback((edgeId: string, newType: EdgeType): boolean => {
     if (!data) return false
@@ -81,7 +75,6 @@ export function useEdges(
         return {
           ...d,
           edges: filtered.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target, sourceHandle: sourceHandle ?? e.sourceHandle, targetHandle: targetHandle ?? e.targetHandle } : e),
-          chapters: reSort(d.chapters, filtered.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e)),
         }
       }
       return { ...d, edges: d.edges.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target, sourceHandle: sourceHandle ?? e.sourceHandle, targetHandle: targetHandle ?? e.targetHandle } : e) }
@@ -95,12 +88,12 @@ export function useEdges(
       enqueueChange({ entity: 'edges', op: 'update', data: updates })
     }
     return !blocked
-  }, [data, reSort, enqueueChange, setData])
+  }, [data, enqueueChange, setData])
 
   const updateEdge = useCallback((id: string, updates: Partial<Pick<ChapterEdge, 'label'>>) => {
     setData(d => d ? { ...d, edges: d.edges.map(e => e.id === id ? { ...e, ...updates } : e) } : d)
     enqueueChange({ entity: 'edges', op: 'update', data: { id, ...updates } })
   }, [enqueueChange, setData])
 
-  return { addEdge, deleteEdge, changeEdgeType, reconnectEdge, updateEdge, reSort }
+  return { addEdge, deleteEdge, changeEdgeType, reconnectEdge, updateEdge }
 }

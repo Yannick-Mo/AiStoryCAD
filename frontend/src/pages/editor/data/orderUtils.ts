@@ -1,45 +1,44 @@
 import type { Chapter, ChapterEdge, Act } from '../types'
 
-export function topologicalSort(chapters: { id: string }[], edges: ChapterEdge[]): string[] {
-  const timelineEdges = edges.filter(e => e.type === 'timeline')
-  const adj = new Map<string, string[]>()
-  const inDeg = new Map<string, number>()
-  const allIds = new Set(chapters.map(c => c.id))
+/**
+ * Chapters in reading order: act order first, then the in-act ``sortOrder``.
+ *
+ * ``sort_order`` is the single source of truth for order everywhere (outline,
+ * canvas, preview, export and the agent's own context).  Timeline edges only
+ * describe narrative relations — causal / foreshadow / character arcs — and
+ * deliberately do *not* reorder the manuscript, so there is exactly one
+ * ordering to reason about.  Ties fall back to the incoming array order, which
+ * the API already returns in narrative order.
+ */
+export function orderChapters(chapters: Chapter[], acts: Act[]): Chapter[] {
+  const actIndex = new Map(
+    [...acts].sort((a, b) => a.order - b.order).map((act, i) => [act.id, i]),
+  )
+  return chapters
+    .map((chapter, index) => ({ chapter, index }))
+    .sort((a, b) => {
+      const actA = actIndex.get(a.chapter.actId) ?? Number.MAX_SAFE_INTEGER
+      const actB = actIndex.get(b.chapter.actId) ?? Number.MAX_SAFE_INTEGER
+      if (actA !== actB) return actA - actB
+      const orderA = a.chapter.sortOrder ?? 0
+      const orderB = b.chapter.sortOrder ?? 0
+      if (orderA !== orderB) return orderA - orderB
+      return a.index - b.index
+    })
+    .map(entry => entry.chapter)
+}
 
-  for (const id of allIds) {
-    adj.set(id, [])
-    inDeg.set(id, 0)
-  }
-
-  for (const e of timelineEdges) {
-    if (!allIds.has(e.sourceId) || !allIds.has(e.targetId)) continue
-    adj.get(e.sourceId)!.push(e.targetId)
-    inDeg.set(e.targetId, (inDeg.get(e.targetId) ?? 0) + 1)
-  }
-
-  const queue: string[] = []
-  for (const [id, deg] of inDeg) {
-    if (deg === 0) queue.push(id)
-  }
-
-  const result: string[] = []
-  let idx = 0
-  while (idx < queue.length) {
-    const id = queue[idx]
-    idx++
-    result.push(id)
-    for (const next of adj.get(id) ?? []) {
-      const nd = (inDeg.get(next) ?? 1) - 1
-      inDeg.set(next, nd)
-      if (nd === 0) queue.push(next)
-    }
-  }
-
-  for (const id of allIds) {
-    if (!result.includes(id)) result.push(id)
-  }
-
-  return result
+/** Chapters of a single act in reading order. */
+export function orderActChapters(chapters: Chapter[]): Chapter[] {
+  return chapters
+    .map((chapter, index) => ({ chapter, index }))
+    .sort((a, b) => {
+      const orderA = a.chapter.sortOrder ?? 0
+      const orderB = b.chapter.sortOrder ?? 0
+      if (orderA !== orderB) return orderA - orderB
+      return a.index - b.index
+    })
+    .map(entry => entry.chapter)
 }
 
 export function wouldCreateCycle(edges: ChapterEdge[], sourceId: string, targetId: string): boolean {
@@ -80,30 +79,3 @@ export function hasOutgoingTimeline(edges: ChapterEdge[], nodeId: string): boole
   return edges.some(e => e.type === 'timeline' && e.sourceId === nodeId)
 }
 
-export function getCompletedChain(chapters: Chapter[], edges: ChapterEdge[], acts: Act[]): Chapter[][] {
-  const sortedActs = [...acts].sort((a, b) => a.order - b.order)
-  if (sortedActs.length === 0) return []
-
-  const ordered = topologicalSort(chapters, edges)
-  const chMap = new Map(chapters.map(c => [c.id, c]))
-  const heads = ordered.filter(id => chMap.has(id) && !hasIncomingTimeline(edges, id))
-  if (heads.length === 0) return []
-
-  const outgoingMap = new Map<string, ChapterEdge>()
-  for (const e of edges) {
-    if (e.type === 'timeline') outgoingMap.set(e.sourceId, e)
-  }
-
-  const chains: Chapter[][] = []
-  for (const head of heads) {
-    const chain: Chapter[] = []
-    let currentId: string | undefined = head
-    while (currentId && chMap.has(currentId)) {
-      chain.push(chMap.get(currentId)!)
-      const edge = outgoingMap.get(currentId)
-      currentId = edge?.targetId
-    }
-    chains.push(chain)
-  }
-  return chains
-}

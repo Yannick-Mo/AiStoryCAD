@@ -28,7 +28,7 @@ import { useToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DetailPanel from '../components/DetailPanel'
 import type { Chapter, EdgeType } from '../types'
-import { getCompletedChain } from '../data/orderUtils'
+import { orderChapters, orderActChapters } from '../data/orderUtils'
 
 const DOCK_TREE_KEY = 'aistorycad_dock_tree'
 const DOCK_PANEL_IDS = ['outline', 'canvas', 'detail', 'ai']
@@ -353,7 +353,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         return (
           <ActDetail
             act={selectedAct}
-            chapters={data.chapters.filter(c => c.actId === selectedActId)}
+            chapters={orderActChapters(data.chapters.filter(c => c.actId === selectedActId))}
             onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
             projectId={projectId}
             onSceneSave={async (chapterId, sceneId, content) => {
@@ -490,8 +490,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }
 
   const handleExport = () => {
-    const completed = getCompletedChain(data.chapters, data.edges, data.acts)
-    const allChapters = completed.flat()
+    const allChapters = orderChapters(data.chapters, data.acts)
     let lastActId = ''
     const parts: string[] = []
     for (const ch of allChapters) {
@@ -553,7 +552,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     />
   ) : previewMode ? (
     <PreviewPanel
-      chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()}
+      chapters={orderChapters(data.chapters, data.acts)}
       acts={data.acts}
     />
   ) : settingsMode ? (
@@ -591,6 +590,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           onClose={() => setOutlineOpen(false)}
           onSelectAct={(id) => handleActClick(id)}
           onSelectChapter={(id) => handleChapterClick(id)}
+          onMoveChapter={store.moveChapter}
         />
       ),
     }
