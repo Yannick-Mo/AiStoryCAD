@@ -26,7 +26,7 @@ COWRITER_TOOLS: set[str] = {
     # CRUD — act
     "create_act", "update_act", "delete_act",
     # CRUD — chapter
-    "create_chapter", "update_chapter", "delete_chapter",
+    "create_chapter", "update_chapter", "move_chapter", "delete_chapter",
     "set_chapter_goal",
     # CRUD — scene
     "create_scene", "update_scene", "delete_scene",

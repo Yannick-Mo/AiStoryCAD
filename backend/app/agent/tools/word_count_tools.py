@@ -4,7 +4,8 @@ import uuid
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
-from app.storycad.models import Chapter, Scene, SceneContent
+from app.storycad.models import Act, Chapter, Scene, SceneContent
+from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
 from app.agent.utils import count_words
 
@@ -58,8 +59,9 @@ class RecalcWordCountsTool(BaseTool):
 
             chapters_result = await db.execute(
                 select(Chapter.id, Chapter.title, func.coalesce(Chapter.total_words, 0))
+                .outerjoin(Act, Act.id == Chapter.act_id)
                 .where(Chapter.project_id == pid)
-                .order_by(Chapter.sort_order)
+                .order_by(Act.sort_order.asc(), *order_by_sequence(Chapter))
             )
             chapters = [
                 {"id": str(row[0]), "title": row[1], "word_count": row[2]}

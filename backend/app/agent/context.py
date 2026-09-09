@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.knowledge.rag import RAGEngine
 from app.knowledge.skill_engine import _shared_engine as _shared_skill_engine
 from app.project.models import Project, ProjectConfig
+from app.storycad.order import order_by_sequence, tie_break
 from app.storycad.models import (
     Act,
     Chapter,
@@ -180,7 +181,7 @@ class ContextBuilder:
         limit_scenes: int = 3500,
     ) -> dict:
         acts_result = await self.db.execute(
-            select(Act).where(Act.project_id == project_id).order_by(Act.sort_order)
+            select(Act).where(Act.project_id == project_id).order_by(*order_by_sequence(Act))
         )
         acts = acts_result.scalars().all()
 
@@ -189,8 +190,10 @@ class ContextBuilder:
         )
         chapter_total = chapter_total_result.scalar_one() or 0
         chapters_result = await self.db.execute(
-            select(Chapter).where(Chapter.project_id == project_id)
-            .order_by(Chapter.sort_order).limit(limit_chapters)
+            select(Chapter).outerjoin(Act, Act.id == Chapter.act_id)
+            .where(Chapter.project_id == project_id)
+            .order_by(Act.sort_order.asc(), *order_by_sequence(Chapter))
+            .limit(limit_chapters)
         )
         all_chapters = chapters_result.scalars().all()
         chapter_truncated = chapter_total > len(all_chapters)
@@ -205,7 +208,7 @@ class ContextBuilder:
         scene_total = scene_total_result.scalar_one() or 0
         scenes_result = await self.db.execute(
             select(Scene).where(Scene.chapter_id.in_(chapter_ids))
-            .order_by(Scene.sort_order).limit(limit_scenes)
+            .order_by(*order_by_sequence(Scene)).limit(limit_scenes)
         )
         all_scenes = scenes_result.scalars().all()
         scene_truncated = scene_total > len(all_scenes)
@@ -263,7 +266,7 @@ class ContextBuilder:
             return None
 
         scenes_result = await self.db.execute(
-            select(Scene).where(Scene.chapter_id == chapter_id).order_by(Scene.sort_order)
+            select(Scene).where(Scene.chapter_id == chapter_id).order_by(*order_by_sequence(Scene))
         )
         scenes = scenes_result.scalars().all()
 
@@ -362,22 +365,22 @@ class ContextBuilder:
         if direction < 0:
             act_q = (select(Act).where(Act.project_id == project_id,
                                        Act.sort_order < (act.sort_order or 0))
-                     .order_by(Act.sort_order.desc()).limit(1))
+                     .order_by(Act.sort_order.desc(), *tie_break(Act, True)).limit(1))
         else:
             act_q = (select(Act).where(Act.project_id == project_id,
                                        Act.sort_order > (act.sort_order or 0))
-                     .order_by(Act.sort_order.asc()).limit(1))
+                     .order_by(Act.sort_order.asc(), *tie_break(Act)).limit(1))
         other = (await self.db.execute(act_q)).scalar_one_or_none()
         if not other:
             return None
         if direction < 0:
             ch_q = (select(Chapter).where(Chapter.project_id == project_id,
                                           Chapter.act_id == other.id)
-                    .order_by(Chapter.sort_order.desc()).limit(1))
+                    .order_by(Chapter.sort_order.desc(), *tie_break(Chapter, True)).limit(1))
         else:
             ch_q = (select(Chapter).where(Chapter.project_id == project_id,
                                           Chapter.act_id == other.id)
-                    .order_by(Chapter.sort_order.asc()).limit(1))
+                    .order_by(Chapter.sort_order.asc(), *tie_break(Chapter)).limit(1))
         nbr2 = (await self.db.execute(ch_q)).scalar_one_or_none()
         if not nbr2:
             return None
@@ -420,7 +423,8 @@ class ContextBuilder:
             .join(Act, Act.id == Chapter.act_id)
             .where(Scene.project_id == project_id)
             .where(Scene.pov_character.ilike(f"%{name}%"))
-            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc())
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc(),
+                      *tie_break(Scene))
             .limit(60)
         )
         rows = (await self.db.execute(scenes_q)).all()
@@ -544,7 +548,8 @@ class ContextBuilder:
             .join(Chapter, Chapter.id == Scene.chapter_id)
             .join(Act, Act.id == Chapter.act_id)
             .where(Scene.project_id == project_id)
-            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc())
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc(),
+                      *tie_break(Scene))
         )
         ordered_rows = (await self.db.execute(ordered_q)).all()
         id_to_loc = {r.id: r for r in ordered_rows}
@@ -621,7 +626,8 @@ class ContextBuilder:
             .join(Chapter, Chapter.id == Scene.chapter_id)
             .join(Act, Act.id == Chapter.act_id)
             .where(Scene.project_id == project_id)
-            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc())
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(), Scene.sort_order.asc(),
+                      *tie_break(Scene))
         )
         ordered_rows = (await self.db.execute(ordered_q)).all()
         unwritten_scenes = []
@@ -725,7 +731,7 @@ class ContextBuilder:
             .join(Act, Act.id == Chapter.act_id)
             .where(Scene.project_id == project_id)
             .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(),
-                      Scene.sort_order.asc())
+                      Scene.sort_order.asc(), *tie_break(Scene))
         )).all()
         if not rows:
             return None
@@ -783,7 +789,8 @@ class ContextBuilder:
             select(Chapter.id)
             .join(Act, Act.id == Chapter.act_id)
             .where(Chapter.project_id == project_id)
-            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc())
+            .order_by(Act.sort_order.asc(), Chapter.sort_order.asc(),
+                      *tie_break(Chapter))
         )
         ordered_ids = [rid for (rid,) in ordered_result.all()]
         total = len(ordered_ids)
@@ -1060,7 +1067,7 @@ class ContextBuilder:
             })
 
         chars_result = await self.db.execute(
-            select(Character).where(Character.project_id == project_id).order_by(Character.sort_order)
+            select(Character).where(Character.project_id == project_id).order_by(*order_by_sequence(Character))
         )
         characters_data = []
         for c in chars_result.scalars().all():
@@ -1204,7 +1211,7 @@ class ContextBuilder:
                     Scene.chapter_id == chapter.id,
                     Scene.sort_order < scene.sort_order,
                 )
-                .order_by(Scene.sort_order.desc())
+                .order_by(Scene.sort_order.desc(), *tie_break(Scene, True))
                 .limit(1)
             )
             prev_scene = result.scalar_one_or_none()
@@ -1220,7 +1227,7 @@ class ContextBuilder:
             result = await self.db.execute(
                 select(Scene)
                 .where(Scene.chapter_id == chapter.id)
-                .order_by(Scene.sort_order)
+                .order_by(*order_by_sequence(Scene))
             )
             chapter_scene_list = result.scalars().all()
             if len(chapter_scene_list) > 1:
@@ -1333,7 +1340,7 @@ class ContextBuilder:
         result = await self.db.execute(
             select(Character)
             .where(Character.project_id == scene.project_id)
-            .order_by(Character.sort_order)
+            .order_by(*order_by_sequence(Character))
         )
         all_chars = result.scalars().all()
         other_lines = []
@@ -1373,7 +1380,7 @@ class ContextBuilder:
 
     async def _characters_text(self, project_id: uuid.UUID) -> str:
         r = await self.db.execute(
-            select(Character).where(Character.project_id == project_id).order_by(Character.sort_order)
+            select(Character).where(Character.project_id == project_id).order_by(*order_by_sequence(Character))
         )
         chars = r.scalars().all()
         if not chars:

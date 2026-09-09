@@ -3,7 +3,8 @@ from sqlalchemy import select
 from app.mcp.server import mcp
 from app.database import async_session
 from app.project.repository import ProjectRepository
-from app.storycad.models import Chapter
+from app.storycad.models import Act, Chapter
+from app.storycad.order import order_by_sequence
 from app.utils import row_to_dict
 from app.mcp.auth import get_current_user_mcp, verify_project_ownership
 
@@ -66,7 +67,8 @@ async def list_chapters(token: str, project_id: str) -> list[dict]:
         await verify_project_ownership(project_id, user["id"], db)
         result = await db.execute(
             select(Chapter)
+            .outerjoin(Act, Act.id == Chapter.act_id)
             .where(Chapter.project_id == uuid.UUID(project_id))
-            .order_by(Chapter.sort_order)
+            .order_by(Act.sort_order.asc(), *order_by_sequence(Chapter))
         )
         return [row_to_dict(c) for c in result.scalars().all()]

@@ -96,6 +96,8 @@ class TestChapterAggregateRefresh:
         with patch("app.agent.tools.project_tools.AiStoryCADRepository") as repo_cls:
             repo = repo_cls.return_value
             repo.create_entity = AsyncMock(return_value={"id": str(scene.id)})
+            # 未指定 sort_order 时工具会先问仓库要「该章末尾的序号」
+            repo.next_sort_order = AsyncMock(return_value=1)
             repo.recalc_chapter = AsyncMock()
             res = await CreateSceneTool().run(
                 db, project_id=str(pid), user_id="u", chapter_id=str(ch_id),

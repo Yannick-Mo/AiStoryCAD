@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterRelation, Scene, SceneContent
+from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.project_creator.state import MaterialState
@@ -37,8 +38,9 @@ class CreateActTool(BaseTool):
                 select(func.coalesce(func.max(Act.sort_order), -1))
                 .where(Act.project_id == project_id)
             )
-            max_order = result.scalar() or -1
-            sort_order = max_order + 1
+            max_order = result.scalar()
+            # 1-based：旧的 `or -1` 在已有 sort_order=0 的行上会再算出 0，撞号。
+            sort_order = (max_order if max_order is not None and max_order >= 0 else 0) + 1
 
             repo = AiStoryCADRepository(db)
             created = await repo.create_entity(Act, {
@@ -83,12 +85,13 @@ class CreateChapterTool(BaseTool):
             if not act_result.scalar_one_or_none():
                 return self._not_found("Act in project")
 
+            # 章节序号是「幕内」序号：同一个幕内 1..N，跨幕可以重复。
             result = await db.execute(
                 select(func.coalesce(func.max(Chapter.sort_order), -1))
-                .where(Chapter.project_id == project_id)
+                .where(Chapter.project_id == project_id, Chapter.act_id == act_id)
             )
-            max_order = result.scalar() or -1
-            sort_order = max_order + 1
+            max_order = result.scalar()
+            sort_order = (max_order if max_order is not None and max_order >= 0 else 0) + 1
 
             repo = AiStoryCADRepository(db)
             created = await repo.create_entity(Chapter, {
@@ -101,6 +104,75 @@ class CreateChapterTool(BaseTool):
             })
             await db.commit()
             return ToolResult(success=True, data=created)
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
+
+
+class MoveChapterTool(BaseTool):
+    meta = ToolMeta(
+        name="move_chapter",
+        description="调整章节在所属幕内的顺序（sort_order 是唯一的顺序真相）。"
+                    "after_chapter_id 留空表示移到该幕末尾；该 ID 必须与 chapter_id 同属一幕。"
+                    "用于把新章插到中间，而不是只能追加到末尾",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "要移动的章节ID，来自 read_chapters 或项目框架结构概览"},
+                "after_chapter_id": {"type": "string", "description": "移动到该章节之后；留空表示移到所在幕的末尾"},
+            },
+            "required": ["chapter_id"],
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            project_id = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, project_id, kwargs.get("user_id"))
+            chapter_id = uuid.UUID(kwargs["chapter_id"])
+            chapter = await db.get(Chapter, chapter_id)
+            if not chapter or chapter.project_id != project_id:
+                return self._not_found("Chapter in project")
+            if not chapter.act_id:
+                return ToolResult(success=False, error="该章节没有所属幕，无法调整顺序")
+
+            siblings = (await db.execute(
+                select(Chapter).where(
+                    Chapter.project_id == project_id,
+                    Chapter.act_id == chapter.act_id,
+                ).order_by(*order_by_sequence(Chapter))
+            )).scalars().all()
+            ordered = [c for c in siblings if c.id != chapter_id]
+
+            after_raw = kwargs.get("after_chapter_id") or ""
+            if after_raw:
+                after_id = uuid.UUID(str(after_raw))
+                if after_id == chapter_id:
+                    return ToolResult(success=False, error="不能把章节移动到它自己之后")
+                idx = next((i for i, c in enumerate(ordered) if c.id == after_id), None)
+                if idx is None:
+                    return ToolResult(
+                        success=False,
+                        error="after_chapter_id 必须与 chapter_id 属于同一幕",
+                        correction_hint="请先用 read_chapters 确认两个章节的 act_id 是否相同",
+                    )
+                ordered.insert(idx + 1, chapter)
+            else:
+                ordered.append(chapter)
+
+            # 幕内重新编号 1..N：sort_order 只有一个真相，空洞无需保留。
+            for i, ch in enumerate(ordered, start=1):
+                ch.sort_order = i
+            await db.commit()
+            return ToolResult(success=True, data={
+                "chapter_id": str(chapter_id),
+                "act_id": str(chapter.act_id),
+                "order": [
+                    {"id": str(c.id), "title": c.title, "sort_order": c.sort_order}
+                    for c in ordered
+                ],
+            })
         except Exception as e:
             await db.rollback()
             return self._err(e)

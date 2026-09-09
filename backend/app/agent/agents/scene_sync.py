@@ -21,6 +21,7 @@ from app.agent.utils import GenerationError, parse_json_safe
 from app.llm.client import LLMClient
 from app.llm.types import Message
 from app.storycad.models import Act, Chapter, Scene, SceneContent
+from app.storycad.order import tie_break
 
 _VALID_ALIGNMENTS = ("aligned", "updated", "drifted")
 
@@ -107,7 +108,7 @@ async def build_scene_sync_material(
                 Scene.chapter_id == chapter.id,
                 Scene.sort_order < scene.sort_order,
             )
-            .order_by(Scene.sort_order.desc())
+            .order_by(Scene.sort_order.desc(), *tie_break(Scene, True))
             .limit(1)
         )
         prev_scene = prev_result.scalar_one_or_none()

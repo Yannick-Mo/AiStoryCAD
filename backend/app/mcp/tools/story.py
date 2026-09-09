@@ -2,7 +2,8 @@ import uuid
 from sqlalchemy import select, func
 from app.mcp.server import mcp
 from app.database import async_session
-from app.storycad.models import Chapter, Scene, SceneContent
+from app.storycad.models import Act, Chapter, Scene, SceneContent
+from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
 from app.utils import row_to_dict
 from app.mcp.auth import get_current_user_mcp, verify_project_ownership
@@ -19,7 +20,7 @@ async def read_chapter(token: str, chapter_id: str) -> dict:
             raise ValueError(f"Chapter {chapter_id} not found")
         await verify_project_ownership(str(chapter.project_id), user["id"], db)
         scenes_result = await db.execute(
-            select(Scene).where(Scene.chapter_id == uuid.UUID(chapter_id)).order_by(Scene.sort_order)
+            select(Scene).where(Scene.chapter_id == uuid.UUID(chapter_id)).order_by(*order_by_sequence(Scene))
         )
         scenes = [row_to_dict(s) for s in scenes_result.scalars().all()]
         data = row_to_dict(chapter)
@@ -187,8 +188,9 @@ async def recalc_project_word_counts(token: str, project_id: str) -> dict:
 
         chapters_result = await db.execute(
             select(Chapter.id, Chapter.title, func.coalesce(Chapter.total_words, 0))
+            .outerjoin(Act, Act.id == Chapter.act_id)
             .where(Chapter.project_id == pid)
-            .order_by(Chapter.sort_order)
+            .order_by(Act.sort_order.asc(), *order_by_sequence(Chapter))
         )
         chapters = [
             {"id": str(row[0]), "title": row[1], "word_count": row[2]}

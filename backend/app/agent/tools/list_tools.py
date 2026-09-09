@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Chapter, Scene, ChapterEdge, Character, CharacterRelation
+from app.storycad.order import order_by_sequence
 from app.utils import row_to_dict
 
 
@@ -172,7 +173,7 @@ class ReadChapterScenesTool(BaseTool):
                 return self._not_found("Chapter")
             await verify_project_owner(db, chapter.project_id, kwargs.get("user_id"))
             scenes_result = await db.execute(
-                select(Scene).where(Scene.chapter_id == ch_id).order_by(Scene.sort_order)
+                select(Scene).where(Scene.chapter_id == ch_id).order_by(*order_by_sequence(Scene))
             )
             scenes = [
                 {
@@ -301,7 +302,7 @@ class SearchNodesTool(BaseTool):
                         Scene.summary.ilike(kw_like) |
                         Scene.setting.ilike(kw_like)
                     )
-                    .order_by(Scene.sort_order)
+                    .order_by(*order_by_sequence(Scene))
                     .limit(limit)
                 )
                 scenes = sc_result.scalars().all()
@@ -324,7 +325,7 @@ class SearchNodesTool(BaseTool):
                         Chapter.title.ilike(kw_like) |
                         Chapter.goal.ilike(kw_like)
                     )
-                    .order_by(Chapter.sort_order)
+                    .order_by(*order_by_sequence(Chapter))
                     .limit(limit)
                 )
                 chapters = ch_result.scalars().all()
@@ -348,7 +349,7 @@ class SearchNodesTool(BaseTool):
                         Character.personality.ilike(kw_like) |
                         Character.background.ilike(kw_like)
                     )
-                    .order_by(Character.sort_order)
+                    .order_by(*order_by_sequence(Character))
                     .limit(limit)
                 )
                 chars = char_result.scalars().all()

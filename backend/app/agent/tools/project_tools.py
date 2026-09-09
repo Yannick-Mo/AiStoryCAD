@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, Scene, SceneContent
+from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
 from app.project.repository import ProjectRepository
 from app.utils import row_to_dict
@@ -136,7 +137,7 @@ class ReadChapterTool(BaseTool):
                 return self._not_found("Chapter")
             await verify_project_owner(db, chapter.project_id, kwargs.get("user_id"))
             scenes_result = await db.execute(
-                select(Scene).where(Scene.chapter_id == ch_id).order_by(Scene.sort_order)
+                select(Scene).where(Scene.chapter_id == ch_id).order_by(*order_by_sequence(Scene))
             )
             scenes = [row_to_dict(s) for s in scenes_result.scalars().all()]
             data = row_to_dict(chapter)
@@ -261,7 +262,7 @@ class CreateSceneTool(BaseTool):
             "properties": {
                 "chapter_id": {"type": "string", "description": "所属章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "title": {"type": "string", "description": "场景标题"},
-                "sort_order": {"type": "integer", "description": "排序序号"},
+                "sort_order": {"type": "integer", "description": "章内排序序号（省略时接在该章末尾）"},
                 "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
                 "content": {"type": "string", "description": "场景正文"},
                 "pov_character": {"type": "string", "description": "POV角色"},
@@ -282,11 +283,16 @@ class CreateSceneTool(BaseTool):
             if chapter is None or chapter.project_id != pid:
                 return ToolResult(success=False, error="章节不存在或不属于该项目")
             repo = AiStoryCADRepository(db)
+            # 未指定序号时接在该章末尾：章内顺序由 sort_order 决定，默认 0 会
+            # 让同一章里所有新建场景并列，章内顺序变得不确定。
+            sort_order = kwargs.get("sort_order")
+            if sort_order is None:
+                sort_order = await repo.next_sort_order(Scene, pid, "chapter_id", ch_id)
             scene_data = {
                 "project_id": str(pid),
                 "chapter_id": str(ch_id),
                 "title": kwargs.get("title", "新场景"),
-                "sort_order": kwargs.get("sort_order", 0),
+                "sort_order": sort_order,
                 "summary": kwargs.get("summary", ""),
                 "pov_character": kwargs.get("pov_character", ""),
                 "setting": kwargs.get("setting", ""),
@@ -332,6 +338,7 @@ class UpdateSceneTool(BaseTool):
                 "pov_character": {"type": "string", "description": "POV角色"},
                 "setting": {"type": "string", "description": "场景地点"},
                 "scene_time": {"type": "string", "description": "场景时间"},
+                "sort_order": {"type": "integer", "description": "章内排序序号（越小越靠前）"},
             },
             "required": ["scene_id"],
         },
@@ -345,7 +352,7 @@ class UpdateSceneTool(BaseTool):
                 await verify_project_owner(db, scene_result.project_id, kwargs.get("user_id"))
             repo = AiStoryCADRepository(db)
             update_data = {"id": str(sc_id)}
-            for field in ("title", "summary", "pov_character", "setting", "scene_time"):
+            for field in ("title", "summary", "pov_character", "setting", "scene_time", "sort_order"):
                 if field in kwargs:
                     update_data[field] = kwargs[field]
             updated = await repo.update_entity(Scene, update_data)
@@ -418,7 +425,7 @@ class SetChapterGoalTool(BaseTool):
 class UpdateChapterTool(BaseTool):
     meta = ToolMeta(
         name="update_chapter",
-        description="更新章节信息（标题、状态、目标）。章节ID来自 read_chapters（范围读取）或项目框架结构概览",
+        description="更新章节信息（标题、状态、目标、幕内序号）。章节ID来自 read_chapters（范围读取）或项目框架结构概览",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -427,6 +434,7 @@ class UpdateChapterTool(BaseTool):
                 "title": {"type": "string", "description": "章节标题"},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
                 "goal": {"type": "string", "description": "章节蓝图（章级创作计划）"},
+                "sort_order": {"type": "integer", "description": "幕内排序序号（越小越靠前）"},
             },
             "required": ["chapter_id"],
         },
@@ -456,8 +464,15 @@ class UpdateChapterTool(BaseTool):
                 ch.status = kwargs["status"]
             if "goal" in kwargs:
                 ch.goal = kwargs["goal"]
+            if "sort_order" in kwargs:
+                ch.sort_order = int(kwargs["sort_order"])
             await db.commit()
-            return ToolResult(success=True, data={"chapter_id": str(ch_id), "title": ch.title, "status": ch.status})
+            return ToolResult(success=True, data={
+                "chapter_id": str(ch_id),
+                "title": ch.title,
+                "status": ch.status,
+                "sort_order": ch.sort_order,
+            })
         except Exception as e:
             await db.rollback()
             return self._err(e)

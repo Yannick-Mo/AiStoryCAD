@@ -43,6 +43,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "delete_scene": "删除场景",
     "create_chapter": "创建章节",
     "update_chapter": "修改章节",
+    "move_chapter": "调整章节顺序",
     "delete_chapter": "删除章节",
     "create_act": "创建幕",
     "update_act": "修改幕",

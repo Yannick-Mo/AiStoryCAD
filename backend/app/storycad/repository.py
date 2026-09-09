@@ -12,6 +12,7 @@ from app.storycad.models import (
     Character, CharacterRelation,
 )
 from app.storycad.entity_map import ENTITY_MAP
+from app.storycad.order import order_by_sequence
 from app.utils import row_to_dict
 
 logger = logging.getLogger(__name__)
@@ -62,21 +63,31 @@ class AiStoryCADRepository:
     async def get_editor_data(self, project_id: uuid.UUID) -> dict:
         result = {"project_id": str(project_id)}
 
-        async def _fetch(model, order_field: str | None = None):
+        async def _fetch(model):
+            # 顺序只有一个真相：sort_order。该列没有唯一约束，历史数据可能有
+            # 重复值，所以每次排序都必须追加确定性 tie-break，否则并列行的顺序
+            # 由 PG 自由决定，同一项目两次加载可能不一致。
             q = select(model).where(model.project_id == project_id)
-            if order_field and hasattr(model, order_field):
-                q = q.order_by(getattr(model, order_field))
+            q = q.order_by(*order_by_sequence(model))
             r = await self.db.execute(q)
             return [self._row(o) for o in r.scalars().all()]
 
         # Queries run sequentially on purpose: AsyncSession is not safe for
         # concurrent use (asyncpg allows only one operation per connection),
         # so asyncio.gather here raised InterfaceError under load.
-        result["acts"] = await _fetch(Act, "sort_order")
-        result["chapters"] = await _fetch(Chapter, "sort_order")
-        result["scenes"] = await _fetch(Scene, "sort_order")
+        result["acts"] = await _fetch(Act)
+        # 章节按叙事顺序返回（幕序 → 幕内序号），各视图直接沿用该顺序。
+        chapters_q = (
+            select(Chapter)
+            .outerjoin(Act, Act.id == Chapter.act_id)
+            .where(Chapter.project_id == project_id)
+            .order_by(*order_by_sequence(Act), *order_by_sequence(Chapter))
+        )
+        chapters_r = await self.db.execute(chapters_q)
+        result["chapters"] = [self._row(o) for o in chapters_r.scalars().all()]
+        result["scenes"] = await _fetch(Scene)
         result["edges"] = await _fetch(ChapterEdge)
-        result["characters"] = await _fetch(Character, "sort_order")
+        result["characters"] = await _fetch(Character)
         result["character_relations"] = await _fetch(CharacterRelation)
 
         proj_result = await self.db.execute(
@@ -222,11 +233,37 @@ class AiStoryCADRepository:
     # Per-entity CRUD
     # ============================================================
 
-    async def list_entities(self, model_class: type, project_id: uuid.UUID, order_field: str = "sort_order") -> list[dict]:
+    async def list_entities(self, model_class: type, project_id: uuid.UUID) -> list[dict]:
         result = await self.db.execute(
-            select(model_class).where(model_class.project_id == project_id).order_by(getattr(model_class, order_field))
+            select(model_class).where(model_class.project_id == project_id)
+            .order_by(*order_by_sequence(model_class))
         )
         return [self._row(r) for r in result.scalars().all()]
+
+    async def next_sort_order(
+        self,
+        model_class: type,
+        project_id: uuid.UUID,
+        parent_column: str | None = None,
+        parent_id: uuid.UUID | None = None,
+    ) -> int:
+        """New row's ``sort_order`` = max within its container + 1.
+
+        Chapters are numbered project-wide (the value stays unique across acts)
+        and scenes are numbered per chapter.  Centralising the rule here keeps
+        the agent tools, the editor sync path and the migration script in
+        agreement.
+        """
+        q = select(func.coalesce(func.max(model_class.sort_order), -1)).where(
+            model_class.project_id == project_id
+        )
+        if parent_column and parent_id is not None:
+            q = q.where(getattr(model_class, parent_column) == parent_id)
+        result = await self.db.execute(q)
+        max_order = result.scalar()
+        # 1-based: an empty container starts at 1, which is also what the
+        # editor's optimistic insert assumes.
+        return (max_order if max_order is not None and max_order >= 0 else 0) + 1
 
     async def get_entity(self, model_class: type, entity_id: uuid.UUID) -> dict | None:
         result = await self.db.execute(select(model_class).where(model_class.id == entity_id))
@@ -309,12 +346,27 @@ class AiStoryCADRepository:
         model_class = ENTITY_MAP.get(entity_type)
         if not model_class:
             return
-        if not await self._validate_fk_targets(model_class, data, uuid.UUID(str(data.get("project_id")))):
+        project_uuid = uuid.UUID(str(data.get("project_id")))
+        if not await self._validate_fk_targets(model_class, data, project_uuid):
             logger.warning(
                 "Skipping create of %s: foreign key target not in project %s",
                 entity_type, data.get("project_id"),
             )
             return
+        # 顺序只有一个真相：新行的位置由服务端决定（章节接在幕末尾、场景接在
+        # 章末尾），否则每个客户端各自算 max+1 会撞出重复的 sort_order。
+        if entity_type == "chapters":
+            act_id = data.get("act_id")
+            if act_id:
+                data["sort_order"] = await self.next_sort_order(
+                    Chapter, project_uuid, "act_id", uuid.UUID(str(act_id))
+                )
+        elif entity_type == "scenes":
+            chapter_id = data.get("chapter_id")
+            if chapter_id:
+                data["sort_order"] = await self.next_sort_order(
+                    Scene, project_uuid, "chapter_id", uuid.UUID(str(chapter_id))
+                )
         extra = {}
         if entity_type == "scenes" and "content" in data:
             content = data.pop("content")
