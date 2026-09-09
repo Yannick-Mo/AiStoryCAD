@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import type { Chapter, Scene, EditorMockData } from '../../types'
 import type { ChangeEntry } from '../editorStore'
+import { orderActChapters } from '../orderUtils'
 
 export function useChapters(
   data: { chapters: Chapter[] } | null,
@@ -97,5 +98,28 @@ export function useChapters(
     enqueueChange({ entity: 'scenes', op: 'update', data: backendData })
   }, [enqueueChange, setData])
 
-  return { addChapter, deleteChapter, updateChapter, addScene, deleteScene, updateScene }
+  const moveChapter = useCallback((chapterId: string, direction: -1 | 1) => {
+    if (!data) return
+    const chapter = data.chapters.find(c => c.id === chapterId)
+    if (!chapter) return
+    const siblings = orderActChapters(data.chapters.filter(c => c.actId === chapter.actId))
+    const index = siblings.findIndex(c => c.id === chapterId)
+    const swapIndex = index + direction
+    if (index < 0 || swapIndex < 0 || swapIndex >= siblings.length) return
+
+    const reordered = [...siblings]
+    ;[reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]]
+    // sort_order 是顺序的唯一真相：幕内重新编号 1..N 并落库，这样刷新、
+    // 导出和 AI 上下文看到的是同一个顺序（以前只改内存，刷新就回去了）。
+    const orders = new Map(reordered.map((c, i) => [c.id, i + 1] as const))
+    setData(d => d ? {
+      ...d,
+      chapters: d.chapters.map(c => orders.has(c.id) ? { ...c, sortOrder: orders.get(c.id)! } : c),
+    } : d)
+    for (const [id, sortOrder] of orders) {
+      enqueueChange({ entity: 'chapters', op: 'update', data: { id, sort_order: sortOrder } })
+    }
+  }, [data, enqueueChange, setData])
+
+  return { addChapter, deleteChapter, updateChapter, addScene, deleteScene, updateScene, moveChapter }
 }

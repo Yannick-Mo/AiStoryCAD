@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import { useSessionState } from '../../../hooks/useSessionState'
 import WindowControls from '../components/WindowControls'
+import { orderActChapters } from '../data/orderUtils'
 import type { Chapter, Act } from '../types'
 
 interface OutlinePanelProps {
@@ -18,6 +20,8 @@ interface OutlinePanelProps {
   onClose: () => void
   onSelectAct: (id: string) => void
   onSelectChapter: (id: string) => void
+  /** move a chapter up/down inside its act; order is persisted as sort_order */
+  onMoveChapter: (id: string, direction: -1 | 1) => void
 }
 
 /**
@@ -36,6 +40,7 @@ export default function OutlinePanel({
   onClose,
   onSelectAct,
   onSelectChapter,
+  onMoveChapter,
 }: OutlinePanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_outline_panel_float',
@@ -106,7 +111,7 @@ export default function OutlinePanel({
 
       <div className="min-w-0 flex-1 space-y-3 overflow-y-auto p-3">
         {[...acts].sort((a, b) => a.order - b.order).map(act => {
-          const actChs = chapters.filter(c => c.actId === act.id)
+          const actChs = orderActChapters(chapters.filter(c => c.actId === act.id))
           const isActSelected = act.id === selectedActId
           const collapsed = collapsedActs.has(act.id)
           const canCollapse = actChs.length > 0
@@ -156,14 +161,14 @@ export default function OutlinePanel({
               </div>
               {!collapsed && (
                 <div className="ml-4 mt-0.5 space-y-0.5">
-                  {actChs.map(ch => {
+                  {actChs.map((ch, index) => {
                     const isChapterSelected = ch.id === selectedChapterId
                     return (
                       <div
                         key={ch.id}
                         ref={isChapterSelected ? selectedChapterRef : null}
                         onClick={() => onSelectChapter(ch.id)}
-                        className={`px-3 py-2 rounded-lg border-l-2 cursor-pointer transition-colors ${
+                        className={`group flex items-start gap-1 px-3 py-2 rounded-lg border-l-2 cursor-pointer transition-colors ${
                           isChapterSelected
                             ? 'bg-amber-500/15 ring-1 ring-amber-500/40'
                             : isActSelected
@@ -172,21 +177,43 @@ export default function OutlinePanel({
                         }`}
                         style={{ borderLeftColor: isActSelected ? '#22c55e' : act.color }}
                       >
-                        <div className={`text-sm truncate ${
-                          isChapterSelected ? 'text-amber-100 font-medium' : isActSelected ? 'text-green-100' : 'text-gray-200'
-                        }`}>
-                          {ch.title}
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5">
-                          <span>{ch.scenes.length} 场</span>
-                          <span>{ch.wordCount > 0 ? `${ch.wordCount} 字` : '空'}</span>
-                          <span className={`px-1 rounded ${
-                            ch.status === 'final' ? 'bg-green-900/30 text-green-500' :
-                            ch.status === 'revising' ? 'bg-amber-900/30 text-amber-500' :
-                            'bg-gray-800 text-gray-500'
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-sm truncate ${
+                            isChapterSelected ? 'text-amber-100 font-medium' : isActSelected ? 'text-green-100' : 'text-gray-200'
                           }`}>
-                            {ch.status === 'draft' ? '草稿' : ch.status === 'revising' ? '修改' : '定稿'}
-                          </span>
+                            {ch.title}
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5">
+                            <span>{ch.scenes.length} 场</span>
+                            <span>{ch.wordCount > 0 ? `${ch.wordCount} 字` : '空'}</span>
+                            <span className={`px-1 rounded ${
+                              ch.status === 'final' ? 'bg-green-900/30 text-green-500' :
+                              ch.status === 'revising' ? 'bg-amber-900/30 text-amber-500' :
+                              'bg-gray-800 text-gray-500'
+                            }`}>
+                              {ch.status === 'draft' ? '草稿' : ch.status === 'revising' ? '修改' : '定稿'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onMoveChapter(ch.id, -1) }}
+                            disabled={index === 0}
+                            title="上移"
+                            aria-label={`把「${ch.title}」上移`}
+                            className="rounded p-0.5 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-200 disabled:cursor-default disabled:opacity-25"
+                          >
+                            <ChevronUp size={12} />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onMoveChapter(ch.id, 1) }}
+                            disabled={index === actChs.length - 1}
+                            title="下移"
+                            aria-label={`把「${ch.title}」下移`}
+                            className="rounded p-0.5 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-200 disabled:cursor-default disabled:opacity-25"
+                          >
+                            <ChevronDown size={12} />
+                          </button>
                         </div>
                       </div>
                     )

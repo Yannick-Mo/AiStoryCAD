@@ -182,7 +182,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   } = useActs(data, setData, projectId, enqueueChange, clearSelection)
 
   const {
-    addChapter, updateChapter,
+    addChapter, updateChapter, moveChapter,
     addScene, deleteScene, updateScene,
   } = useChapters(data, setData, projectId, enqueueChange)
 
@@ -242,7 +242,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     setData: setDataDirect,
     selection, selectNode, selectEdge, clearSelection,
     addAct, addChapter, deleteAct: deleteActAction, deleteChapter: deleteChapterAction,
-    addScene, deleteScene, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
+    addScene, deleteScene, moveChapter, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
     resizeAct,
     addCharacter, deleteCharacter, addRelation, deleteRelation,
     saveGlobalSettings,
