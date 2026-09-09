@@ -639,12 +639,14 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       minW: 280,
       minH: 240,
       node: (
+        // the editors bring their own 取消, so no header ✕ to duplicate it
         <DetailPanel
           label={detailLabel}
           grip={<DockGrip id="detail" />}
           floating={floatingState.detail === true}
           onFloatingChange={(v) => handleFloatChange('detail', v)}
           onClose={closeDetail}
+          closable={!(detailMode?.kind === 'chapter-goal' || detailMode?.kind === 'scene')}
         >
           {detailPanel}
         </DetailPanel>

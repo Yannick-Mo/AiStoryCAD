@@ -11,6 +11,8 @@ interface DetailPanelProps {
   floating: boolean
   onFloatingChange: (floating: boolean) => void
   onClose: () => void
+  /** hide the header close button when the content brings its own cancel */
+  closable?: boolean
   children: ReactNode
 }
 
@@ -20,7 +22,7 @@ interface DetailPanelProps {
  * content plus the window chrome. Floated it becomes a draggable, resizable
  * window and leaves the split.
  */
-export default function DetailPanel({ label, grip, floating, onFloatingChange, onClose, children }: DetailPanelProps) {
+export default function DetailPanel({ label, grip, floating, onFloatingChange, onClose, closable = true, children }: DetailPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_detail_panel_float',
     floating,
@@ -51,7 +53,7 @@ export default function DetailPanel({ label, grip, floating, onFloatingChange, o
           <span className="text-[11px] text-gray-500">{label}</span>
         </div>
         <div className="flex items-center gap-1">
-          <WindowControls floating={win.floating} onToggleFloat={win.toggleFloat} onClose={onClose} />
+          <WindowControls floating={win.floating} onToggleFloat={win.toggleFloat} onClose={onClose} showClose={closable} />
         </div>
       </div>
 
