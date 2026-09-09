@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Network, Users, FolderOpen, Eye, Download, Settings } from 'lucide-react'
+import {
+  Network, Users, FolderOpen, Eye, Download, Settings, ListTree, Save, Check, LoaderCircle,
+} from 'lucide-react'
 import type { ComponentType } from 'react'
 import { VIEWS } from '../types'
 
@@ -9,9 +11,17 @@ interface SideNavProps {
   onPreview: () => void
   onExport: () => void
   onGlobalSetting: () => void
+  onOutline: () => void
+  dirty: boolean
+  saving: boolean
+  onSave: () => void
 }
 
-type IconComponent = ComponentType<{ size?: number | string; strokeWidth?: number | string }>
+type IconComponent = ComponentType<{
+  size?: number | string
+  strokeWidth?: number | string
+  className?: string
+}>
 
 const VIEW_ICONS: Record<string, IconComponent> = {
   'narrative-plot': Network,
@@ -50,8 +60,37 @@ function IconButton({
   )
 }
 
+function SaveButton({
+  dirty, saving, onSave,
+}: {
+  dirty: boolean
+  saving: boolean
+  onSave: () => void
+}) {
+  const label = saving ? '保存中…' : dirty ? '保存修改' : '已保存'
+  const Icon = saving ? LoaderCircle : dirty ? Save : Check
+  return (
+    <button
+      onClick={onSave}
+      disabled={!dirty || saving}
+      aria-label={label}
+      className={`group relative flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${
+        saving
+          ? 'text-gray-500'
+          : dirty
+            ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
+            : 'text-gray-600 cursor-default'
+      }`}
+    >
+      <Icon size={18} strokeWidth={1.8} className={saving ? 'animate-spin' : undefined} />
+      <Tooltip label={label} />
+    </button>
+  )
+}
+
 export default function SideNav({
   activeViewId, onSwitchView, onPreview, onExport, onGlobalSetting,
+  onOutline, dirty, saving, onSave,
 }: SideNavProps) {
   const [mgmtOpen, setMgmtOpen] = useState(false)
 
@@ -102,7 +141,11 @@ export default function SideNav({
         )}
       </div>
 
+      {/* Bottom cluster: save status, outline, global settings */}
       <div className="mt-auto" />
+      <div className="mb-1 h-px w-8 bg-gray-800" />
+      <SaveButton dirty={dirty} saving={saving} onSave={onSave} />
+      <IconButton icon={ListTree} label="大纲" onClick={onOutline} />
       <IconButton icon={Settings} label="全局设定" onClick={onGlobalSetting} />
     </nav>
   )
