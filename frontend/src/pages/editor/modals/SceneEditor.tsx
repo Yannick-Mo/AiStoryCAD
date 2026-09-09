@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { loadSceneContent, saveSceneContent, aiInline, aiContinue } from '../../../api/editor'
+import SceneGoalEditor from './SceneGoalEditor'
 import { useToast } from '../components/Toast'
 import type { Scene } from '../types'
 
@@ -10,10 +11,11 @@ interface SceneEditorProps {
   onClose: () => void
   onSaved: (sceneId: string, content: string, wordCount: number) => void
   onOpenAiPanel?: (contextView: string, contextId: string) => void
-  onOpenGoalFullscreen?: () => void
+  /** the goal editor takes over this panel in place; the parent persists it */
+  onSaveGoal: (summary: string) => Promise<void> | void
 }
 
-export default function SceneEditor({ projectId, scene, chapterTitle, onClose, onSaved, onOpenAiPanel, onOpenGoalFullscreen }: SceneEditorProps) {
+export default function SceneEditor({ projectId, scene, chapterTitle, onClose, onSaved, onOpenAiPanel, onSaveGoal }: SceneEditorProps) {
   const { addToast } = useToast()
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
@@ -26,6 +28,8 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
   const [continueSuggestions, setContinueSuggestions] = useState<{ id: string; text: string }[]>([])
   const [aiLoading, setAiLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // the goal editor replaces this whole panel, then hands it back here
+  const [goalOpen, setGoalOpen] = useState(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const continueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -49,7 +53,9 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
     loadSceneContent(projectId, scene.id)
       .then(text => { setContent(text); setLoading(false); savedContentRef.current = text; lastContinueSnapshotRef.current = text })
       .catch(() => { setLoadError('加载场景内容失败'); setLoading(false) })
-  }, [scene, projectId])
+    // keyed by id, not by the object: the parent derives the scene from live
+    // project data, and a data refresh must not overwrite in-progress text
+  }, [scene?.id, projectId])
 
   useEffect(() => {
     if (content.length < MIN_CONTINUE_LENGTH || loading || aiLoading || !scene) return
@@ -218,9 +224,14 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
 
   if (!scene) return null
 
+  if (goalOpen) {
+    return <SceneGoalEditor scene={scene} onSave={onSaveGoal} onClose={() => setGoalOpen(false)} />
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleClose}>
-      <div className="bg-gray-900 border border-amber-700/50 rounded-2xl shadow-2xl w-[800px] max-w-[90vw] h-[85vh] flex flex-col p-6 overflow-hidden backdrop-blur-xl" onClick={e => e.stopPropagation()}>
+    // no modal chrome: this editor fills the detail panel body it is rendered into
+    <div className="flex h-full w-full min-h-0 flex-col p-4">
+      <div className="flex h-full w-full min-h-0 flex-col">
         <div className="flex justify-between items-start mb-3">
           <div>
             <div className="text-xs text-gray-500 mb-0.5">{chapterTitle}</div>
@@ -228,9 +239,9 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           </div>
           <div className="flex gap-2 items-center">
             <button
-              onClick={onOpenGoalFullscreen}
+              onClick={() => setGoalOpen(true)}
               className="px-2 py-1 rounded-lg text-xs bg-gray-800/80 text-amber-400/90 hover:bg-amber-700/40 hover:text-amber-300 transition-colors"
-              title="全屏编辑场景目标 / 创作蓝图"
+              title="编辑场景目标 / 创作蓝图"
             >
               🎯 场景目标
             </button>
@@ -249,12 +260,12 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           <span>📍 {scene.setting}</span>
           <span>⏰ {scene.time}</span>
           <button
-            onClick={onOpenGoalFullscreen}
+            onClick={() => setGoalOpen(true)}
             className="flex items-center gap-1.5 italic text-gray-600 hover:text-amber-300 transition-colors group cursor-pointer"
-            title="全屏编辑场景目标 / 创作蓝图"
+            title="编辑场景目标 / 创作蓝图"
           >
             <span>📝 {scene.summary ? (scene.summary.length > 48 ? scene.summary.slice(0, 48) + '…' : scene.summary) : '写场景目标：开场状态 → 冲突 → 目标达成'}</span>
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px] shrink-0">⛶ 全屏</span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px] shrink-0">⛶ 编辑</span>
           </button>
         </div>
 
@@ -291,7 +302,7 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
               onMouseUp={handleSelect}
               onKeyUp={handleSelect}
               disabled={!!diffState}
-              className="w-full h-full bg-gray-950 border border-gray-700 rounded-xl p-6 text-base text-gray-200 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-full bg-gray-950 border border-gray-700 rounded-xl p-4 text-base text-gray-200 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="在这里写小说正文..."
             />
           </div>

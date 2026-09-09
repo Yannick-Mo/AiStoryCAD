@@ -9,7 +9,7 @@ interface ChapterDetailProps {
   onSceneSave: (chapterId: string, sceneId: string, content: string) => void
   onChapterSave: (chapterId: string, goal: string) => void
   onOpenSceneEditor?: (scene: Scene) => void
-  onOpenGoalFullscreen?: (chapter: Chapter) => void
+  onEditGoal?: (chapter: Chapter) => void
   onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'status'>>) => void
   onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
   onAddScene: (chapterId: string) => Scene
@@ -24,7 +24,7 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ChapterDetail({ chapter, onSceneSave, onChapterSave, onOpenSceneEditor, onOpenGoalFullscreen, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
+export default function ChapterDetail({ chapter, onSceneSave, onChapterSave, onOpenSceneEditor, onEditGoal, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
   // session state: the panel remounts when it floats / docks / moves in the dock
   const [editSceneId, setEditSceneId] = useSessionState<string | null>('chapter.editSceneId', null)
   const [editContent, setEditContent] = useSessionState('chapter.editContent', '')
@@ -128,18 +128,18 @@ export default function ChapterDetail({ chapter, onSceneSave, onChapterSave, onO
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
           <div className="flex items-center justify-between mb-1.5">
             <button
-              onClick={() => onOpenGoalFullscreen?.(chapter)}
+              onClick={() => onEditGoal?.(chapter)}
               className="text-[10px] text-gray-400 hover:text-amber-300 transition-colors flex items-center gap-1 group cursor-pointer"
-              title="全屏查看 / 编辑本章目标"
+              title="在本面板中编辑本章目标"
             >
               <span>📝 本章目标</span>
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px]">⛶ 全屏</span>
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px]">⛶ 编辑</span>
             </button>
             {editGoal && (
               <button
-                onClick={() => onOpenGoalFullscreen?.(chapter)}
+                onClick={() => onEditGoal?.(chapter)}
                 className="text-[9px] text-gray-600 hover:text-amber-400 transition-colors shrink-0"
-                title="全屏查看 / 编辑本章目标"
+                title="在本面板中编辑本章目标"
               >
                 {editGoal.length} 字 ↗
               </button>

@@ -17,8 +17,7 @@ import CharacterDetail from '../views/character/CharacterDetail'
 import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
-import ChapterGoalModal from '../modals/ChapterGoalModal'
-import SceneGoalModal from '../modals/SceneGoalModal'
+import ChapterGoalEditor from '../modals/ChapterGoalEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
 import AiPanel, { useAiChat } from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
@@ -28,7 +27,7 @@ import { loadEditorData, saveSceneContent } from '../../../api/editor'
 import { useToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DetailPanel from '../components/DetailPanel'
-import type { Chapter, Scene, EdgeType } from '../types'
+import type { Chapter, EdgeType } from '../types'
 import { getCompletedChain } from '../data/orderUtils'
 
 const DOCK_TREE_KEY = 'aistorycad_dock_tree'
@@ -89,9 +88,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
   const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
-  const [editingScene, setEditingScene] = useState<Scene | null>(null)
-  const [goalFullscreen, setGoalFullscreen] = useState(false)
-  const [sceneGoalOpen, setSceneGoalOpen] = useState(false)
+  // A full-panel editor that takes over the detail panel body instead of
+  // opening a modal. Cleared on save / cancel or when the selection moves on.
+  const [detailEditor, setDetailEditor] = useState<
+    { kind: 'chapter-goal'; chapterId: string } | { kind: 'scene'; sceneId: string } | null
+  >(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter' | 'scene'; id: string; chapterId?: string } | null>(null)
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
@@ -149,7 +150,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       return { ...d, chapters: newChapters }
     })
     if (updatedChapter) setSelectedChapter(updatedChapter)
-    setEditingScene(null)
   }, [setData])
 
   const handleChapterGoalSave = useCallback((chapterId: string, goal: string) => {
@@ -161,7 +161,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     const chapter = store.data?.chapters.find(c => c.scenes.some(s => s.id === sceneId))
     if (chapter) {
       store.updateScene(chapter.id, sceneId, { summary })
-      setEditingScene(prev => (prev && prev.id === sceneId ? { ...prev, summary } : prev))
     }
   }, [store])
 
@@ -213,6 +212,21 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (hasSelection) setDetailOpen(true)
   }, [hasSelection])
+
+  // Moving to another act / chapter / node (or switching canvas) closes the
+  // full-panel editor and hands the detail panel back to the selection view.
+  const detailTargetKey = [
+    selectionView,
+    selectedChapter?.id ?? '',
+    selectedActId ?? '',
+    selectedCharacterId ?? '',
+    selectedRelation ? `${selectedRelation.sourceId}|${selectedRelation.relationId}` : '',
+    store.selection.type,
+    store.selection.id ?? '',
+  ].join('|')
+  useEffect(() => {
+    setDetailEditor(null)
+  }, [detailTargetKey])
 
   // Debounced so a divider drag does not write to localStorage on every frame.
   useEffect(() => {
@@ -353,7 +367,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 throw e
               }
             }}
-            onOpenSceneEditor={(scene) => setEditingScene(scene)}
+            onOpenSceneEditor={(scene) => setDetailEditor({ kind: 'scene', sceneId: scene.id })}
             onUpdateAct={store.updateAct}
             onUpdateScene={store.updateScene}
             onAddChapter={store.addChapter}
@@ -397,8 +411,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
               }
             }}
             onChapterSave={handleChapterGoalSave}
-            onOpenSceneEditor={(scene) => setEditingScene(scene)}
-            onOpenGoalFullscreen={() => setGoalFullscreen(true)}
+            onOpenSceneEditor={(scene) => setDetailEditor({ kind: 'scene', sceneId: scene.id })}
+            onEditGoal={(chapter) => setDetailEditor({ kind: 'chapter-goal', chapterId: chapter.id })}
             onUpdateChapter={store.updateChapter}
             onUpdateScene={store.updateScene}
             onAddScene={store.addScene}
@@ -492,7 +506,34 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   const canvasOpen = views.activeViewId !== null
 
-  const detailPanel = renderDetail()
+  // A pending full-panel editor replaces the normal detail content; save /
+  // cancel clears it and the panel falls back to the selection view.
+  const editingScene = detailEditor?.kind === 'scene'
+    ? data.chapters.flatMap(c => c.scenes).find(s => s.id === detailEditor.sceneId) ?? null
+    : null
+  const goalChapter = detailEditor?.kind === 'chapter-goal'
+    ? data.chapters.find(c => c.id === detailEditor.chapterId) ?? null
+    : null
+
+  const detailPanel = editingScene ? (
+    <SceneEditor
+      projectId={projectId}
+      scene={editingScene}
+      chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
+      onClose={() => setDetailEditor(null)}
+      onSaved={handleSceneSaved}
+      onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
+      onSaveGoal={(summary) => handleSceneGoalSave(editingScene.id, summary)}
+    />
+  ) : goalChapter ? (
+    <ChapterGoalEditor
+      chapter={goalChapter}
+      onSave={(goal) => handleChapterGoalSave(goalChapter.id, goal)}
+      onClose={() => setDetailEditor(null)}
+    />
+  ) : renderDetail()
+
+  const detailLabel = editingScene ? '场景编辑' : goalChapter ? '本章目标' : '详情'
 
   // Everything the dock may host. Panels that are closed are simply absent; the
   // split tree keeps their slot, so reopening them restores the same place.
@@ -564,7 +605,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       minH: 240,
       node: (
         <DetailPanel
-          label="详情"
+          label={detailLabel}
           grip={<DockGrip id="detail" />}
           floating={floatingState.detail === true}
           onFloatingChange={(v) => handleFloatChange('detail', v)}
@@ -630,37 +671,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onClose={() => setGlobalSettingsOpen(false)}
       />
 
-      {editingScene && (
-        <SceneEditor
-          projectId={projectId}
-          scene={editingScene}
-          chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
-          onClose={() => setEditingScene(null)}
-          onSaved={handleSceneSaved}
-          onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
-          onOpenGoalFullscreen={() => setSceneGoalOpen(true)}
-        />
-      )}
-
-      {sceneGoalOpen && editingScene && (
-        <SceneGoalModal
-          scene={editingScene}
-          onSave={async (summary: string) => {
-            handleSceneGoalSave(editingScene.id, summary)
-          }}
-          onClose={() => setSceneGoalOpen(false)}
-        />
-      )}
-
-      {goalFullscreen && activeChapter && (
-        <ChapterGoalModal
-          chapter={activeChapter}
-          onSave={async (goal: string) => {
-            handleChapterGoalSave(activeChapter.id, goal)
-          }}
-          onClose={() => setGoalFullscreen(false)}
-        />
-      )}
 
       {inspirationOpen && (
         <InspirationModal
