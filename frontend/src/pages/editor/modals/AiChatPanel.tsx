@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { ArrowUp, Plus, Square } from 'lucide-react'
 import { useResizePanel } from '../../../hooks/useResizePanel'
 import { sendMessage, getConversations, getConversation, compressContext, renameConversation, deleteConversation } from '../../../api/ai_v2'
 import type { Conversation } from '../../../api/ai_v2'
@@ -379,43 +380,86 @@ function ToolResultIndicator({ results }: { results: ToolResult[] }) {
 }
 
 function ChatInput({
-  input, setInput, loading, compressing, onSend, onStop, onKeyDown
+  input, setInput, loading, compressing, mode, onModeChange, onSend, onStop, onKeyDown,
 }: {
   input: string
   setInput: (v: string) => void
   loading: boolean
   compressing: boolean
+  mode: 'chat' | 'cowriter'
+  onModeChange: (m: 'chat' | 'cowriter') => void
   onSend: () => void
   onStop: () => void
   onKeyDown: (e: React.KeyboardEvent) => void
 }) {
+  const taRef = useRef<HTMLTextAreaElement>(null)
+  const MAX_H = 200
+
+  // Grow the textarea with its content, capped at MAX_H, then scroll.
+  useEffect(() => {
+    const ta = taRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, MAX_H) + 'px'
+  }, [input])
+
+  const modeBtn = (m: 'chat' | 'cowriter', label: string) => (
+    <button
+      type="button"
+      onClick={() => onModeChange(m)}
+      className={`flex items-center rounded-full border px-2.5 py-1 text-[10px] transition-colors ${
+        mode === m
+          ? 'border-blue-500/50 bg-blue-600/15 text-blue-300'
+          : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
+      }`}
+    >
+      {label}
+    </button>
+  )
+
   return (
-    <div className="flex flex-col h-full gap-2">
+    <div className="flex flex-col gap-2.5">
       <textarea
+        ref={taRef}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder={UI_TEXT.placeholder}
         disabled={loading || compressing}
-        className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed disabled:opacity-50"
+        className="w-full bg-transparent resize-none text-xs text-gray-300 leading-relaxed placeholder:text-gray-500 focus:outline-none disabled:opacity-50"
       />
-      {loading ? (
-        <button
-          onClick={onStop}
-          className="px-3 py-2 rounded-xl bg-red-600 text-white text-xs font-medium hover:bg-red-500 transition-colors shrink-0 self-end"
-        >
-          {UI_TEXT.stop}
-        </button>
-      ) : (
-        <button
-          onClick={onSend}
-          disabled={!input.trim() || compressing}
-          title={compressing ? '压缩中，暂不可发送' : undefined}
-          className="px-3 py-2 rounded-xl bg-amber-600 text-black text-xs font-medium hover:bg-amber-500 transition-colors disabled:opacity-30 disabled:cursor-default shrink-0 self-end"
-        >
-          {compressing ? '压缩中…' : UI_TEXT.send}
-        </button>
-      )}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          {modeBtn('chat', UI_TEXT.chat)}
+          {modeBtn('cowriter', UI_TEXT.cowriter)}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            title="添加附件（暂未开放）"
+            aria-label="添加附件"
+            onClick={undefined}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition-colors"
+          >
+            <Plus size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={loading ? onStop : onSend}
+            disabled={!loading && (!input.trim() || compressing)}
+            title={compressing ? '压缩中，暂不可发送' : loading ? '停止生成' : '发送'}
+            className={`flex shrink-0 items-center justify-center rounded-full transition-colors ${
+              compressing
+                ? 'h-8 min-w-8 px-2.5 bg-gray-700 text-gray-400 text-[10px] cursor-default'
+                : 'h-8 w-8 ' + (loading
+                  ? 'bg-red-600 text-white hover:bg-red-500'
+                  : 'bg-blue-600 text-white hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-default')
+            }`}
+          >
+            {compressing ? '压缩中' : loading ? <Square size={13} fill="currentColor" /> : <ArrowUp size={16} strokeWidth={2.5} />}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -529,7 +573,6 @@ export default function AiChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const { size: width, handleMouseDown: panelResizeDown } = useResizePanel({ initial: 380, min: 300, max: 800, direction: 'horizontal' })
-  const { size: inputHeight, handleMouseDown: inputResizeDown } = useResizePanel({ initial: 130, min: 120, max: 400, direction: 'vertical' })
 
   const contextLabel = contextView === 'scene' ? '场景写作'
     : contextView === 'chapter' ? '章节分析'
@@ -556,6 +599,11 @@ export default function AiChatPanel({
     setInput('')
     chat.send(text, onProjectUpdated)
   }, [chat, onProjectUpdated])
+
+  const handleModeChange = useCallback((m: 'chat' | 'cowriter') => {
+    chat.setMode(m)
+    chat.setPendingPlan(null)
+  }, [chat])
 
   const handlePlanConfirm = useCallback(() => {
     chat.setPendingPlan(null)
@@ -708,22 +756,7 @@ export default function AiChatPanel({
           ) : (
             <span className="text-sm font-medium text-amber-100">{contextLabel}</span>
           )}
-          <button
-            onClick={() => {
-              const newMode = chat.mode === 'chat' ? 'cowriter' : 'chat'
-              chat.setMode(newMode)
-              chat.setPendingPlan(null)
-            }}
-            className={`text-[10px] px-2 py-0.5 rounded transition-colors flex items-center gap-1 shrink-0 ${
-              chat.mode === 'cowriter'
-                ? 'bg-amber-700 text-amber-100 hover:bg-amber-600'
-                : 'bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700'
-            }`}
-            title={chat.mode === 'cowriter' ? '当前：协作模式' : '切换为协作写作模式'}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${chat.mode === 'cowriter' ? 'bg-green-400' : 'bg-gray-500'}`} />
-            {chat.mode === 'cowriter' ? UI_TEXT.cowriter : UI_TEXT.chat}
-          </button>
+
           {chat.conversationId && (
             <button onClick={() => setCompressConfirm(true)}
               disabled={chat.loading || compressing}
@@ -837,11 +870,6 @@ export default function AiChatPanel({
         </div>
       )}
 
-      {/* Resize handle (input top edge) */}
-      <div
-        onMouseDown={inputResizeDown}
-        className="cursor-ns-resize h-1 hover:h-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all shrink-0"
-      />
       {/* Corner resize handle — floating only */}
       {floating && (
         <div
@@ -853,12 +881,14 @@ export default function AiChatPanel({
         </div>
       )}
       {/* Input */}
-      <div className="p-3 border-t border-gray-800 shrink-0 bg-gray-950/80" style={{ height: inputHeight }}>
+      <div className="p-3 border-t border-gray-800 shrink-0">
         <ChatInput
           input={input}
           setInput={setInput}
           loading={chat.loading}
           compressing={compressing}
+          mode={chat.mode}
+          onModeChange={handleModeChange}
           onSend={handleSend}
           onStop={chat.abort}
           onKeyDown={handleKeyDown}
