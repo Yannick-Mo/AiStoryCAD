@@ -342,7 +342,7 @@ function MessageBubble({ msg }: { msg: DisplayMessage }) {
         className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
           isUser
             ? 'bg-amber-600 text-black whitespace-pre-wrap rounded-br-sm'
-            : 'bg-gray-800 text-gray-200 rounded-bl-sm'
+            : 'bg-white/5 text-gray-200 rounded-bl-sm'
         }`}
       >
         {isUser ? msg.content : (
@@ -370,7 +370,7 @@ function ToolResultIndicator({ results }: { results: ToolResult[] }) {
   return (
     <div className="space-y-1">
       {results.map((tr, i) => (
-        <div key={i} className="text-xs text-gray-500 bg-gray-800/40 rounded px-2 py-1">
+        <div key={i} className="text-xs text-gray-500 bg-white/[0.03] rounded px-2 py-1">
           {tr.success ? '✅' : '❌'} {tr.tool}
           {tr.error && <span className="text-red-400 ml-1">({tr.error})</span>}
         </div>
@@ -691,10 +691,10 @@ export default function AiChatPanel({
 
   return (
     <div
-      className={`flex flex-col bg-gray-900 ${
+      className={`flex flex-col ${
         floating
-          ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl'
-          : 'relative h-full shrink-0 border-l border-gray-800'
+          ? 'fixed z-50 rounded-lg border border-violet-400/20 overflow-hidden shadow-2xl bg-[#171426]/95 backdrop-blur-xl'
+          : 'relative h-full shrink-0 border-l border-violet-400/15 bg-gradient-to-b from-[#1b1828] via-[#171426] to-[#141220]'
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
@@ -710,7 +710,7 @@ export default function AiChatPanel({
       {/* Header — also the drag handle when floating */}
       <div
         onPointerDown={onHeaderPointerDown}
-        className={`flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
+        className={`flex items-center justify-between px-4 h-12 border-b border-violet-400/10 shrink-0 bg-[#0f0d1a]/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
       >
         <div className="flex items-center gap-2 min-w-0">
           {/* Conversation switcher — always visible when conversations exist */}
@@ -727,7 +727,7 @@ export default function AiChatPanel({
               {convOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setConvOpen(false)} />
-                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-[#1b1828] border border-violet-400/20 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
                     {chat.conversations.map(c => (
                       <div key={c.id} className={`flex items-center gap-1 px-3 py-2 text-xs transition-colors ${c.id === chat.conversationId ? 'bg-amber-600/20 text-amber-400' : 'text-gray-300 hover:bg-gray-800'}`}>
                         {renameId === c.id ? (
@@ -821,7 +821,7 @@ export default function AiChatPanel({
         {/* Step indicator */}
         {chat.step && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs text-amber-500/70 bg-gray-800/60 rounded-bl-sm">
+            <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs text-amber-500/70 bg-white/[0.03] rounded-bl-sm">
               {chat.step}
             </div>
           </div>
@@ -829,7 +829,7 @@ export default function AiChatPanel({
 
         {chat.loading && !chat.step && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs text-gray-500 bg-gray-800/60 rounded-bl-sm">
+            <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs text-gray-500 bg-white/[0.03] rounded-bl-sm">
               <span className="inline-block animate-pulse">{UI_TEXT.loading}</span>
             </div>
           </div>
@@ -857,7 +857,7 @@ export default function AiChatPanel({
       {/* Compress confirmation */}
       {compressConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60" onClick={() => setCompressConfirm(false)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 w-80 shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-[#1b1828] border border-violet-400/20 rounded-xl p-5 w-80 shadow-2xl" onClick={e => e.stopPropagation()}>
             <h4 className="text-sm font-medium text-gray-200 mb-2">压缩上下文？</h4>
             <p className="text-xs text-gray-400 leading-relaxed mb-4">
               将把之前的对话内容压缩为摘要以节省 token。之后的 AI 回复将根据摘要理解上下文，部分细节可能丢失。
@@ -881,7 +881,7 @@ export default function AiChatPanel({
         </div>
       )}
       {/* Input */}
-      <div className="p-4 border-t border-gray-800 shrink-0">
+      <div className="p-4 border-t border-violet-400/10 shrink-0">
         <ChatInput
           input={input}
           setInput={setInput}
