@@ -643,10 +643,10 @@ export default function AiChatPanel({
 
   return (
     <div
-      className={`fixed z-50 flex flex-col bg-gray-900 shadow-2xl ${
+      className={`flex flex-col bg-gray-900 ${
         floating
-          ? 'rounded-lg border border-gray-700 overflow-hidden'
-          : 'right-0 top-0 h-full border-l border-gray-800'
+          ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl'
+          : 'relative h-full shrink-0 border-l border-gray-800'
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }

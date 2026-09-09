@@ -5,7 +5,7 @@ export default function ResizablePanel({ children }: { children: ReactNode }) {
   const { size, handleMouseDown } = useResizePanel({ initial: 384, min: 280, max: 800 })
 
   return (
-    <div className="absolute right-0 top-0 h-full z-20" style={{ width: size }}>
+    <div className="absolute right-0 top-0 h-full z-20" style={{ width: size, maxWidth: '100%' }}>
       <div className="flex h-full">
         <div
           className="w-1.5 cursor-col-resize shrink-0 relative group -ml-1.5"
