@@ -8,13 +8,10 @@ import WindowControls from './WindowControls'
 // another node does not reset the layout.
 let rememberedWidth = 384
 
-/** cap used when this is the only docked panel */
-const SOLO_MAX_WIDTH = 800
-
 interface DetailPanelProps {
   /** shown in the panel header */
   label: string
-  /** the only docked panel: fill the container and stay centred at max width */
+  /** the only docked panel: fill the whole container */
   solo?: boolean
   /** report float state to the dock so it can compute the solo layout */
   onFloatChange?: (floating: boolean) => void
@@ -33,7 +30,8 @@ interface DetailPanelProps {
 export default function DetailPanel({
   label, solo, onFloatChange, onClose, children,
 }: DetailPanelProps) {
-  const { size, handleMouseDown } = useResizePanel({ initial: rememberedWidth, min: 280, max: SOLO_MAX_WIDTH })
+  // No max width: the panel may fill the whole dock when it is the only one.
+  const { size, handleMouseDown } = useResizePanel({ initial: rememberedWidth, min: 280 })
 
   useEffect(() => { rememberedWidth = size }, [size])
 
@@ -49,10 +47,10 @@ export default function DetailPanel({
   useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
 
   const dockedClass = solo
-    ? 'relative mx-auto flex min-w-0 flex-1 flex-col bg-gray-900/95'
+    ? 'relative flex min-w-0 flex-1 flex-col bg-gray-900/95'
     : 'relative flex shrink-0 flex-col border-l border-gray-800 bg-gray-900/95'
 
-  const dockedStyle = solo ? { maxWidth: SOLO_MAX_WIDTH } : { width: size, maxWidth: '100%' }
+  const dockedStyle = solo ? undefined : { width: size, maxWidth: '100%' }
 
   return (
     <div
