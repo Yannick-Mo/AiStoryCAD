@@ -99,7 +99,9 @@ export default function OutlinePanel({
           {!win.floating && grip}
           <span className="text-[11px] text-gray-500">大纲</span>
         </div>
-        <WindowControls floating={win.floating} onToggleFloat={win.toggleFloat} onClose={onClose} />
+        <div className="flex shrink-0 items-center gap-1">
+          <WindowControls floating={win.floating} onToggleFloat={win.toggleFloat} onClose={onClose} />
+        </div>
       </div>
 
       <div className="min-w-0 flex-1 space-y-3 overflow-y-auto p-3">
