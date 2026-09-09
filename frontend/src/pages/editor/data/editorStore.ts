@@ -99,6 +99,17 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     try {
       const result = await syncEditorData(projectId, payload)
       setVersion(result.version)
+      // 主时序线由服务端按章节顺序维护：用返回结果替换本地副本，这样
+      // 「调顺序 → 连线跟着变」不需要前端再实现一遍同样的算法。
+      if (result.timeline_edges) {
+        const timeline = result.timeline_edges.map(e => ({
+          id: e.id, sourceId: e.source_id, targetId: e.target_id, type: 'timeline' as const,
+        }))
+        setData(d => d ? {
+          ...d,
+          edges: [...d.edges.filter(e => e.type !== 'timeline'), ...timeline],
+        } : d)
+      }
       flushAttemptRef.current = 0
       return true
     } catch (err) {
@@ -186,6 +197,21 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     addScene, deleteScene, updateScene,
   } = useChapters(data, setData, projectId, enqueueChange)
 
+  // 顺序一变服务端就会重建主时序线；这几个动作立刻 flush 一次，
+  // 画布上的连线不用等 3 秒防抖才跟上。
+  const flushSoon = useCallback(() => { void flushChangesRef.current?.() }, [])
+
+  const addChapterAction = useCallback((actId: string) => {
+    const created = addChapter(actId)
+    flushSoon()
+    return created
+  }, [addChapter, flushSoon])
+
+  const moveChapterAction = useCallback((chapterId: string, direction: -1 | 1) => {
+    moveChapter(chapterId, direction)
+    flushSoon()
+  }, [moveChapter, flushSoon])
+
   const deleteChapterAction = useCallback((chapterId: string) => {
     if (!data) return
     const ch = data.chapters.find(c => c.id === chapterId)
@@ -203,7 +229,8 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     if (selection.type === 'chapter' && selection.id === chapterId) {
       setSelection({ type: null, id: null })
     }
-  }, [data, selection, enqueueChange, setData])
+    flushSoon()
+  }, [data, selection, enqueueChange, setData, flushSoon])
 
   const {
     addEdge, deleteEdge, changeEdgeType, reconnectEdge,
@@ -218,7 +245,8 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   // Wrapped deleteAct to also clear selection
   const deleteActAction = useCallback((actId: string) => {
     actsDeleteAct(actId)
-  }, [actsDeleteAct])
+    flushSoon()
+  }, [actsDeleteAct, flushSoon])
 
   // Global Settings
   const saveGlobalSettings = useCallback((text: string) => {
@@ -241,8 +269,8 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     data, loading, error, saving, version, dirty,
     setData: setDataDirect,
     selection, selectNode, selectEdge, clearSelection,
-    addAct, addChapter, deleteAct: deleteActAction, deleteChapter: deleteChapterAction,
-    addScene, deleteScene, moveChapter, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
+    addAct, addChapter: addChapterAction, deleteAct: deleteActAction, deleteChapter: deleteChapterAction,
+    addScene, deleteScene, moveChapter: moveChapterAction, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
     resizeAct,
     addCharacter, deleteCharacter, addRelation, deleteRelation,
     saveGlobalSettings,

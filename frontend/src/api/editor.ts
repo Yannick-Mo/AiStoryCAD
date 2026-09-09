@@ -9,9 +9,17 @@ export interface SyncPayload {
   }
 }
 
+/** 服务端按章节顺序维护的主时序线（客户端用它替换本地副本）。 */
+export interface TimelineEdgePayload {
+  id: string
+  source_id: string
+  target_id: string
+}
+
 export interface SyncResult {
   ok: boolean
   version: number
+  timeline_edges?: TimelineEdgePayload[]
 }
 
 // ============================================================
