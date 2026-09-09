@@ -13,6 +13,7 @@ import { isHandlePairAvailable, getTimelineReplacementEdgeIds } from '../../data
 import { topologicalSort } from '../../data/orderUtils'
 import ContextMenu from './ContextMenu'
 import { useToast } from '../../components/Toast'
+import { useViewportMemory } from '../../../../hooks/useViewportMemory'
 
 const nodeTypes: NodeTypes = { chapter: ChapterNode, actGroup: ActGroupNode }
 const NODE_W = 176
@@ -196,6 +197,7 @@ export default function PlotCanvas({
   const [paneCursor, setPaneCursor] = useState<'default' | 'se-resize'>('default')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
   const rfRef = useRef<ReactFlowInstance | null>(null)
+  const viewport = useViewportMemory('plot')
 
   // Sync nodes from data without resetting drag positions or manual group size
   // When resetKey > 0, skip position preservation to force auto-layout
@@ -533,7 +535,8 @@ export default function PlotCanvas({
         defaultEdgeOptions={{ type: 'default' }}
         onInit={(instance) => { rfRef.current = instance }}
         deleteKeyCode="Delete"
-        fitView
+        {...(viewport.initial ? { defaultViewport: viewport.initial } : { fitView: true })}
+        onMoveEnd={viewport.onMoveEnd}
         minZoom={0.05}
         maxZoom={5}
         connectionRadius={48}

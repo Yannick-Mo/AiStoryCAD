@@ -20,7 +20,7 @@ import SceneEditor from '../modals/SceneEditor'
 import ChapterGoalModal from '../modals/ChapterGoalModal'
 import SceneGoalModal from '../modals/SceneGoalModal'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
-import AiPanel from '../modals/AiChatPanel'
+import AiPanel, { useAiChat } from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
@@ -75,6 +75,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [detailOpen, setDetailOpen] = useState(false)
   const [floatingState, setFloatingState] = useState<Record<string, boolean>>({})
   const [dockTree, setDockTree] = useState<TreeNode>(loadDockTree)
+  // Lives here, not in the panel: floating the panel remounts it, and the
+  // conversation, draft and streaming reply must survive that.
+  const aiChat = useAiChat(projectId, aiContextView, aiContextId)
 
   const { addToast } = useToast()
 
@@ -517,6 +520,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       minH: 260,
       node: (
         <AiPanel
+          chat={aiChat}
           projectId={projectId}
           grip={<DockGrip id="ai" />}
           floating={floatingState.ai === true}
@@ -524,7 +528,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           onClose={() => setAiChatOpen(false)}
           onProjectUpdated={handleProjectUpdated}
           contextView={aiContextView}
-          contextId={aiContextId}
         />
       ),
     }

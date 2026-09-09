@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { Act, Chapter, Scene } from '../../types'
 import { loadSceneContent } from '../../../../api/editor'
 import { useToast } from '../../components/Toast'
+import { useSessionState } from '../../../../hooks/useSessionState'
 
 interface ActDetailProps {
   act: Act
@@ -23,11 +24,12 @@ const STATUS_OPTIONS = [
 ]
 
 export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene, projectId }: ActDetailProps) {
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [editSceneId, setEditSceneId] = useState<string | null>(null)
-  const [editContent, setEditContent] = useState('')
+  // session state: the panel remounts when it floats / docks / moves in the dock
+  const [expandedId, setExpandedId] = useSessionState<string | null>('act.expandedId', null)
+  const [editSceneId, setEditSceneId] = useSessionState<string | null>('act.editSceneId', null)
+  const [editContent, setEditContent] = useSessionState('act.editContent', '')
   const [saving, setSaving] = useState(false)
-  const [contentCache, setContentCache] = useState<Record<string, string>>({})
+  const [contentCache, setContentCache] = useSessionState<Record<string, string>>('act.contentCache', {})
   const { addToast } = useToast()
 
   const totalWords = chapters.reduce((s, c) => s + c.wordCount, 0)

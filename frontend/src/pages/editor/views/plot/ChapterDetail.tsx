@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { Chapter, Scene } from '../../types'
 import { loadSceneContent } from '../../../../api/editor'
 import { useToast } from '../../components/Toast'
+import { useSessionState } from '../../../../hooks/useSessionState'
 
 interface ChapterDetailProps {
   chapter: Chapter | null
@@ -24,11 +25,12 @@ const STATUS_OPTIONS = [
 ]
 
 export default function ChapterDetail({ chapter, onSceneSave, onChapterSave, onOpenSceneEditor, onOpenGoalFullscreen, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
-  const [editSceneId, setEditSceneId] = useState<string | null>(null)
-  const [editContent, setEditContent] = useState('')
-  const [editGoal, setEditGoal] = useState('')
+  // session state: the panel remounts when it floats / docks / moves in the dock
+  const [editSceneId, setEditSceneId] = useSessionState<string | null>('chapter.editSceneId', null)
+  const [editContent, setEditContent] = useSessionState('chapter.editContent', '')
+  const [editGoal, setEditGoal] = useSessionState('chapter.editGoal', '')
   const [saving, setSaving] = useState(false)
-  const [contentCache, setContentCache] = useState<Record<string, string>>({})
+  const [contentCache, setContentCache] = useSessionState<Record<string, string>>('chapter.contentCache', {})
   const goalInputRef = useRef<HTMLTextAreaElement>(null)
   const { addToast } = useToast()
 

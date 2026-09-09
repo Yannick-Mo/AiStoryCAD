@@ -33,12 +33,15 @@ const UI_TEXT = {
   newConversation: '新对话',
 }
 
+export type AiChatApi = ReturnType<typeof useAiChat>
+
 interface AiPanelProps {
+  /** owned by EditorShell so a float/dock remount keeps the conversation */
+  chat: AiChatApi
   projectId: string
   onClose: () => void
   onProjectUpdated?: () => void
   contextView?: string
-  contextId?: string
 
   /** owned by the dock so it survives the remount when the panel floats */
   floating: boolean
@@ -65,7 +68,7 @@ interface ToolResult {
   error?: string
 }
 
-function useAiChat(projectId: string, contextView: string, contextId?: string) {
+export function useAiChat(projectId: string, contextView: string, contextId?: string) {
   const [messages, setMessages] = useState<DisplayMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<string | null>(null)
@@ -475,9 +478,8 @@ function ChatInput({
 
 export default function AiChatPanel({
   projectId, onClose, onProjectUpdated,
-  contextView = 'chat', contextId, floating, onFloatingChange, grip
+  chat, contextView = 'chat', floating, onFloatingChange, grip
 }: AiPanelProps) {
-  const chat = useAiChat(projectId, contextView, contextId)
   const [input, setInput] = useState('')
   const inputRef = useRef(input)
   inputRef.current = input

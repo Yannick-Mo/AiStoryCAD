@@ -9,6 +9,7 @@ import CharacterNode from './CharacterNode'
 import ContextMenu from '../plot/ContextMenu'
 import type { Character } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
+import { useViewportMemory } from '../../../../hooks/useViewportMemory'
 
 const nodeTypes: NodeTypes = { character: CharacterNode }
 
@@ -38,6 +39,7 @@ export default function CharCanvas({
   onAddRelation, onDeleteRelation,
 }: CharCanvasProps) {
   const rfRef = useRef<ReactFlowInstance | null>(null)
+  const viewport = useViewportMemory('char')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
 
   const selectedCharId = selection.type === 'character' ? selection.id : null
@@ -213,7 +215,8 @@ export default function CharCanvas({
         defaultEdgeOptions={{ type: 'default' }}
         onInit={(instance) => { rfRef.current = instance }}
         deleteKeyCode="Delete"
-        fitView
+        {...(viewport.initial ? { defaultViewport: viewport.initial } : { fitView: true })}
+        onMoveEnd={viewport.onMoveEnd}
         minZoom={0.3}
         maxZoom={2}
         connectionRadius={48}
