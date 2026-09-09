@@ -460,10 +460,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       id: 'detail',
       align: 'start',
       floating: floatingState.detail === true,
-      render: (solo) => (
+      render: (fill) => (
         <DetailPanel
           label="详情"
-          solo={solo}
+          fill={fill}
           onFloatChange={(v) => handleFloatChange('detail', v)}
           onClose={closeDetail}
         >
@@ -478,10 +478,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       id: 'ai',
       align: 'end',
       floating: floatingState.ai === true,
-      render: (solo) => (
+      render: (fill) => (
         <AiPanel
           projectId={projectId}
-          solo={solo}
+          fill={fill}
           onFloatChange={(v) => handleFloatChange('ai', v)}
           onClose={() => setAiChatOpen(false)}
           onProjectUpdated={handleProjectUpdated}

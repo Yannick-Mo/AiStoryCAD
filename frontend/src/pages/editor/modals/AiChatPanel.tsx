@@ -37,9 +37,9 @@ interface AiPanelProps {
   onProjectUpdated?: () => void
   contextView?: string
   contextId?: string
-  /** the only docked panel: fill the container and stay centred at max width */
-  solo?: boolean
-  /** report float state to the dock so it can compute the solo layout */
+  /** absorbs the leftover width, so its edge is the draggable boundary with the previous panel */
+  fill?: boolean
+  /** report float state to the dock so it can compute the fill layout */
   onFloatChange?: (floating: boolean) => void
 }
 
@@ -471,7 +471,7 @@ function ChatInput({
 
 export default function AiChatPanel({
   projectId, onClose, onProjectUpdated,
-  contextView = 'chat', contextId, solo, onFloatChange
+  contextView = 'chat', contextId, fill, onFloatChange
 }: AiPanelProps) {
   const chat = useAiChat(projectId, contextView, contextId)
   const [input, setInput] = useState('')
@@ -492,7 +492,7 @@ export default function AiChatPanel({
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // No max width: the panel may fill the whole dock when it is the only one.
+  // No max width: the panel may fill the whole dock when it absorbs the space.
   const { size: width, handleMouseDown: panelResizeDown } = useResizePanel({ initial: 380, min: 300, direction: 'horizontal' })
 
   const contextLabel = contextView === 'scene' ? '场景写作'
@@ -615,14 +615,14 @@ export default function AiChatPanel({
       className={`flex flex-col ${
         floating
           ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl bg-gray-900/95 backdrop-blur-xl'
-          : `relative h-full border-gray-800 bg-gray-900/95 backdrop-blur-xl ${solo ? 'min-w-0 flex-1' : 'shrink-0 border-l'}`
+          : `relative h-full border-gray-800 bg-gray-900/95 backdrop-blur-xl ${fill ? 'min-w-0 flex-1' : 'shrink-0 border-l'}`
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
-        : solo ? undefined : { width, maxWidth: '100%' }}
+        : fill ? undefined : { width, maxWidth: '100%' }}
     >
       {/* Resize handle (left edge) — docked only */}
-      {!floating && !solo && (
+      {!floating && !fill && (
         <div
           onMouseDown={panelResizeDown}
           className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:w-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all z-10"

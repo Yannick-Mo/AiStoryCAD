@@ -11,9 +11,9 @@ let rememberedWidth = 384
 interface DetailPanelProps {
   /** shown in the panel header */
   label: string
-  /** the only docked panel: fill the whole container */
-  solo?: boolean
-  /** report float state to the dock so it can compute the solo layout */
+  /** absorbs the leftover width, so its edge is the draggable boundary with the next panel */
+  fill?: boolean
+  /** report float state to the dock so it can compute the fill layout */
   onFloatChange?: (floating: boolean) => void
   onClose: () => void
   children: ReactNode
@@ -28,9 +28,9 @@ interface DetailPanelProps {
  * component can be hosted here as children.
  */
 export default function DetailPanel({
-  label, solo, onFloatChange, onClose, children,
+  label, fill, onFloatChange, onClose, children,
 }: DetailPanelProps) {
-  // No max width: the panel may fill the whole dock when it is the only one.
+  // No max width: the panel may fill the whole dock when it absorbs the space.
   const { size, handleMouseDown } = useResizePanel({ initial: rememberedWidth, min: 280 })
 
   useEffect(() => { rememberedWidth = size }, [size])
@@ -46,11 +46,11 @@ export default function DetailPanel({
 
   useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
 
-  const dockedClass = solo
+  const dockedClass = fill
     ? 'relative flex min-w-0 flex-1 flex-col bg-gray-900/95'
     : 'relative flex shrink-0 flex-col border-l border-gray-800 bg-gray-900/95'
 
-  const dockedStyle = solo ? undefined : { width: size, maxWidth: '100%' }
+  const dockedStyle = fill ? undefined : { width: size, maxWidth: '100%' }
 
   return (
     <div
@@ -62,7 +62,7 @@ export default function DetailPanel({
         : dockedStyle}
     >
       {/* Left-edge resize handle — only when docked next to another panel */}
-      {!win.floating && !solo && (
+      {!win.floating && !fill && (
         <div
           role="separator"
           aria-orientation="vertical"
