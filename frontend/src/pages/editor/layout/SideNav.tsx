@@ -13,6 +13,8 @@ interface SideNavProps {
   onGlobalSetting: () => void
   onOutline: () => void
   outlineOpen?: boolean
+  /** 导出是否只含已定稿章节（与预览面板的过滤一致） */
+  finalOnly?: boolean
   dirty: boolean
   saving: boolean
   onSave: () => void
@@ -91,7 +93,7 @@ function SaveButton({
 
 export default function SideNav({
   activeViewId, onSwitchView, onPreview, onExport, onGlobalSetting,
-  onOutline, outlineOpen, dirty, saving, onSave,
+  onOutline, outlineOpen, finalOnly, dirty, saving, onSave,
 }: SideNavProps) {
   const [mgmtOpen, setMgmtOpen] = useState(false)
 
@@ -135,7 +137,7 @@ export default function SideNav({
                 onClick={() => { setMgmtOpen(false); onExport() }}
                 className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-200 transition-colors hover:bg-amber-600/20 hover:text-amber-400"
               >
-                <Download size={15} strokeWidth={1.8} /> 导出完整内容
+                <Download size={15} strokeWidth={1.8} /> {finalOnly ? '导出定稿内容' : '导出完整内容'}
               </button>
             </div>
           </>

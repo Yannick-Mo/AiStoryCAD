@@ -22,6 +22,7 @@ import GlobalSettingsPanel from '../modals/GlobalSettingsPanel'
 import AiPanel, { useAiChat } from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
 import { useEditorViews } from '../hooks/useEditorViews'
+import { useSessionState } from '../../../hooks/useSessionState'
 import { useEditorStore } from '../data/editorStore'
 import { loadEditorData, saveSceneContent } from '../../../api/editor'
 import { useToast } from '../components/Toast'
@@ -83,6 +84,8 @@ function loadDockTree(): TreeNode {
 export default function EditorShell({ projectId }: { projectId: string }) {
   const views = useEditorViews()
   const [outlineOpen, setOutlineOpen] = useState(false)
+  // 预览 / 导出共用的定稿过滤（会话内保留，切换面板不丢）
+  const [finalOnly, setFinalOnly] = useSessionState<boolean>('editor.finalOnly', false)
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
   const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
@@ -490,7 +493,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }
 
   const handleExport = () => {
-    const allChapters = orderChapters(data.chapters, data.acts)
+    const ordered = orderChapters(data.chapters, data.acts)
+    const allChapters = finalOnly ? ordered.filter(ch => ch.status === 'final') : ordered
     let lastActId = ''
     const parts: string[] = []
     for (const ch of allChapters) {
@@ -533,6 +537,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     : null
   const previewMode = detailMode?.kind === 'preview'
   const settingsMode = detailMode?.kind === 'settings'
+  // 预览与导出共用同一个过滤：定稿模式只保留 status === 'final' 的章节。
+  const orderedChapters = orderChapters(data.chapters, data.acts)
+  const previewChapters = finalOnly
+    ? orderedChapters.filter(ch => ch.status === 'final')
+    : orderedChapters
 
   const detailPanel = editingScene ? (
     <SceneEditor
@@ -552,8 +561,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     />
   ) : previewMode ? (
     <PreviewPanel
-      chapters={orderChapters(data.chapters, data.acts)}
+      chapters={previewChapters}
       acts={data.acts}
+      finalOnly={finalOnly}
+      onFinalOnlyChange={setFinalOnly}
     />
   ) : settingsMode ? (
     <GlobalSettingsPanel
@@ -679,6 +690,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onSwitchView={handleSwitchView}
         onPreview={openPreview}
         onExport={handleExport}
+        finalOnly={finalOnly}
         onGlobalSetting={openGlobalSettings}
         outlineOpen={outlineOpen}
         onOutline={() => setOutlineOpen(v => !v)}

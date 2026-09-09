@@ -4,6 +4,34 @@ import type { Chapter, Act } from '../types'
 interface PreviewPanelProps {
   chapters: Chapter[]
   acts: Act[]
+  /** 只显示已定稿章节（与导出的过滤保持一致） */
+  finalOnly: boolean
+  onFinalOnlyChange: (finalOnly: boolean) => void
+}
+
+/** 全部 / 仅定稿 切换：预览和导出共用同一个过滤。 */
+function FilterToggle({ finalOnly, onChange }: { finalOnly: boolean; onChange: (v: boolean) => void }) {
+  const base = 'rounded-full px-2.5 py-0.5 text-[11px] transition-colors'
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-gray-800/70 p-0.5">
+      <button
+        onClick={() => onChange(false)}
+        aria-pressed={!finalOnly}
+        title="显示全部章节"
+        className={base + (finalOnly ? ' text-gray-500 hover:text-gray-300' : ' bg-gray-700 text-amber-300')}
+      >
+        全部
+      </button>
+      <button
+        onClick={() => onChange(true)}
+        aria-pressed={finalOnly}
+        title="只显示已定稿章节"
+        className={base + (finalOnly ? ' bg-gray-700 text-amber-300' : ' text-gray-500 hover:text-gray-300')}
+      >
+        仅定稿
+      </button>
+    </div>
+  )
 }
 
 /**
@@ -11,7 +39,7 @@ interface PreviewPanelProps {
  * instead of opening a modal, and borrows the scene editor's paper-like
  * typography so reading feels like reading the book.
  */
-export default function PreviewPanel({ chapters, acts }: PreviewPanelProps) {
+export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyChange }: PreviewPanelProps) {
   const [index, setIndex] = useState(0)
   const [goalExpanded, setGoalExpanded] = useState(false)
   const chapter = chapters[index]
@@ -29,13 +57,23 @@ export default function PreviewPanel({ chapters, acts }: PreviewPanelProps) {
     setGoalExpanded(false)
   }, [index])
 
+  // 切换过滤后列表长度会变，回到第一章，避免停在错位的位置
+  useEffect(() => {
+    setIndex(0)
+  }, [finalOnly])
+
   const prev = () => setIndex(i => Math.max(0, i - 1))
   const next = () => setIndex(i => Math.min(chapters.length - 1, i + 1))
 
   if (!chapter) {
     return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-xs leading-relaxed text-gray-600">
-        还没有已完成的内容<br />完成章节的创作与定稿后，正文会出现在这里
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-xs leading-relaxed text-gray-600">
+        <div>
+          {finalOnly ? '没有已定稿的章节' : '还没有已完成的内容'}
+          <br />
+          {finalOnly ? '把章节状态改为「定稿」后就会出现在这里' : '完成章节的创作与定稿后，正文会出现在这里'}
+        </div>
+        <FilterToggle finalOnly={finalOnly} onChange={onFinalOnlyChange} />
       </div>
     )
   }
@@ -52,7 +90,10 @@ export default function PreviewPanel({ chapters, acts }: PreviewPanelProps) {
           <h4 className="truncate text-sm font-medium text-gray-100">{chapter.title}</h4>
           <div className="mt-0.5 truncate text-[11px] text-gray-500">{chapter.scenes.length} 场 · {chapter.wordCount} 字</div>
         </div>
-        <span className="shrink-0 rounded-full bg-gray-800/70 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">{index + 1} / {chapters.length}</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <FilterToggle finalOnly={finalOnly} onChange={onFinalOnlyChange} />
+          <span className="rounded-full bg-gray-800/70 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">{index + 1} / {chapters.length}</span>
+        </div>
       </div>
 
       {chapter.goal && (
