@@ -1195,6 +1195,9 @@ async def autonomous_loop(
 
         # ── Step 6: Interceptor Layer (BEFORE EXCL exec) ────────────
         if tool_blocks:
+            # Every tool_call on the assistant message needs exactly one
+            # role=tool response, so track which ids are already answered.
+            answered_ids: set[str] = set()
             intercept: InterceptResult = apply_interceptors(
                 tool_blocks,
                 mode=state.mode,
@@ -1229,6 +1232,7 @@ async def autonomous_loop(
                             tool_results=new_tool_results,
                             transition="tool_blocked_continue",
                         )
+                        answered_ids.add(tool_use_id)
                 # Fall through to execute allowed tools if any
 
             # 6b: Confirmation needed
@@ -1257,6 +1261,28 @@ async def autonomous_loop(
                             content=f"[操作等待确认]\n工具 {tool_name} 已生成计划，等待用户确认后执行。",
                             tool_call_id=tool_use_id,
                         )]
+                    )
+                    answered_ids.add(tool_use_id)
+                # 同一批里可能还有「已放行但本轮不执行」的工具（排队中的写工具），
+                # 或者已经跑完的 SAFE 读工具。它们同样出现在 assistant 的
+                # tool_calls 里，少一条 role=tool 响应，下一轮请求就会因为
+                # orphan tool_call 被 API 拒绝（400）。这里补齐：能拿到结果的
+                # 直接写回结果，拿不到的写一条诚实的「本轮未执行」。
+                for tool_name, _args, tool_use_id in tool_blocks:
+                    if tool_use_id in answered_ids:
+                        continue
+                    answered_ids.add(tool_use_id)
+                    existing = safe_result_map.get(tool_use_id)
+                    if existing is not None:
+                        content = await _tool_message_content(existing, llm)
+                    else:
+                        content = (
+                            f"[本轮未执行]\n本轮正在等待用户确认其它操作，"
+                            f"工具 {tool_name} 未执行。确认后请重新调用。"
+                        )
+                    state = state.replace(
+                        messages=state.messages
+                        + [Message(role="tool", content=content, tool_call_id=tool_use_id)]
                     )
                 state = state.replace(
                     pending_plan=plan,
