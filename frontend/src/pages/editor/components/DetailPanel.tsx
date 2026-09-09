@@ -55,7 +55,9 @@ export default function DetailPanel({ label, grip, floating, onFloatingChange, o
         </div>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+      {/* min-h-0: without it the flex item keeps its content height, so the
+          child (h-full) is never bounded and its own overflow-y-auto cannot scroll */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
 
       {/* Corner resize handle — floating only */}
       {win.floating && (
