@@ -879,6 +879,10 @@ async def autonomous_loop(
                     # Build a synthetic assistant message with tool_calls from
                     # the pending_plan so the tool-result messages that follow
                     # have a valid preceding tool_calls message (OpenAI API req).
+                    # The message must also carry the plan-generation turn's
+                    # reasoning_content: DeepSeek thinking mode 400s any tools
+                    # request whose payload mixes reasoning turns with an
+                    # assistant tool_call message missing its reasoning.
                     from app.llm.types import ToolCall
                     plan_tool_calls = []
                     for step in state.pending_plan.get("steps", []):
@@ -888,9 +892,24 @@ async def autonomous_loop(
                         )
                         plan_tool_calls.append(tc)
 
+                    plan_reasoning = state.pending_plan.get("reasoning_content") or None
+                    if not plan_reasoning:
+                        # Legacy pending plans (persisted before reasoning was
+                        # stored) — fall back to the last reasoning in history
+                        # so the payload stays consistent and the API accepts it.
+                        for _prev in reversed(state.messages):
+                            if _prev.role == "assistant" and getattr(_prev, "reasoning_content", None):
+                                plan_reasoning = _prev.reasoning_content
+                                break
+
                     state = state.replace(
                         messages=state.messages + [
-                            Message(role="assistant", content=None, tool_calls=plan_tool_calls)
+                            Message(
+                                role="assistant",
+                                content=None,
+                                tool_calls=plan_tool_calls,
+                                reasoning_content=plan_reasoning,
+                            )
                         ],
                     )
 
@@ -1216,6 +1235,16 @@ async def autonomous_loop(
             if intercept.needs_confirmation:
                 streaming_executor.clear_queued()
                 plan = build_confirmation_plan(intercept.pending_tools, filtered_tools)
+                # Carry this turn's reasoning_content inside the internal plan so
+                # the confirm-resume branch can rebuild the assistant tool_call
+                # message WITH its reasoning.  DeepSeek thinking mode rejects
+                # (400 "reasoning_content must be passed back") any request whose
+                # payload mixes reasoning-bearing turns with a reasoning-less
+                # assistant tool_call message.  The UI-facing plan event must NOT
+                # leak the CoT, so emit the clean copy below.
+                ui_plan = plan
+                if reasoning_text:
+                    plan = dict(plan, reasoning_content=reasoning_text)
                 # Every tool_call on the assistant message needs a role=tool
                 # response or the next API call is rejected (orphan tool_call).
                 # The confirmed tools are NOT executed yet, so insert honest
@@ -1234,7 +1263,7 @@ async def autonomous_loop(
                     plan_confirmed=False,
                     transition="plan_generated_for_confirmation",
                 )
-                yield _event_plan(plan)
+                yield _event_plan(ui_plan)
                 yield _event_step("等待确认...")
                 break
 

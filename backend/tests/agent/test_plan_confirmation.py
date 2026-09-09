@@ -278,3 +278,166 @@ class TestEmptyAssistantStripped:
         assert len(tool_events) == 1
         assert tool_events[0]["_tool_done"]["tool"] == "delete_character"
 
+
+class TestConfirmReasoningPassthrough:
+    """DeepSeek thinking mode rejects (400 "The reasoning_content in the
+    thinking mode must be passed back to the API") any request whose payload
+    mixes reasoning-bearing assistant turns with an assistant tool_call
+    message missing its reasoning_content.
+
+    The confirm path rebuilds the deleted plan-generation turn as a synthetic
+    assistant tool_call message — it must carry that turn's reasoning."""
+
+    def _mk_llm(self, seen_calls: list[list[Message]]) -> MagicMock:
+        llm = MagicMock()
+
+        async def fake_stream_with_tools(**kwargs):
+            seen_calls.append(kwargs["messages"])
+            yield {"content": "", "tool_call": None}
+
+        llm.chat_stream_with_tools = fake_stream_with_tools
+
+        async def fake_stream_tokens(**kwargs):
+            yield "完成"
+
+        llm.chat_stream_tokens = fake_stream_tokens
+        return llm
+
+    async def _run(self, llm: MagicMock, initial: dict, db: AsyncMock) -> list:
+        events = []
+        with patch(
+            "app.agent.response_builder.build_system_prompt",
+            new=AsyncMock(return_value="SYS"),
+        ):
+            async for ev in autonomous_loop(initial, {}, llm, db, ""):
+                events.append(ev)
+        assert any(e.get("_loop_done") for e in events)
+        return events
+
+    def _synthetic_toolcall_assistants(self, msgs: list[Message]) -> list[Message]:
+        """Assistant messages that carry tool_calls (the LLM-triggered ones and
+        the synthetic confirm one are indistinguishable by role/shape — the
+        synthetic one is the last assistant before the confirmed tool result)."""
+        return [
+            m for m in msgs
+            if m.role == "assistant" and m.tool_calls
+        ]
+
+    async def test_synthetic_assistant_carries_plan_reasoning(self):
+        """The reasoning stored on the plan at generation time must be
+        re-attached to the synthetic assistant built on confirm — otherwise
+        DeepSeek returns the reasoning_content 400 on the resumed call."""
+        seen_calls: list[list[Message]] = []
+        llm = self._mk_llm(seen_calls)
+        db = AsyncMock()
+
+        initial = {
+            "project_id": "",
+            "user_id": "u1",
+            "mode": "chat",
+            "messages": [
+                Message(role="user", content="把那个角色删掉"),
+                Message(role="user", content="确认"),
+            ],
+            "pending_plan": {
+                "reasoning_content": "删除前先确认该角色没有关联关系",
+                "steps": [
+                    {
+                        "tool": "delete_character",
+                        "params": {"character_id": "00000000-0000-0000-0000-000000000001"},
+                        "tool_use_id": "tc_reason",
+                    }
+                ],
+            },
+        }
+
+        await self._run(llm, initial, db)
+
+        assert seen_calls, "resumed LLM call expected after plan confirm"
+        for msgs in seen_calls:
+            for assistant in self._synthetic_toolcall_assistants(msgs):
+                assert assistant.reasoning_content, (
+                    "assistant tool_call message without reasoning_content "
+                    "reached the LLM — DeepSeek thinking mode 400s this"
+                )
+        # The tool result for the confirmed plan is followed by the synthetic
+        # assistant whose reasoning matches the plan-generation turn.
+        resumed = seen_calls[-1]
+        synth = [m for m in resumed if m.tool_calls]
+        assert synth
+        assert synth[-1].reasoning_content == "删除前先确认该角色没有关联关系"
+
+    async def test_legacy_plan_falls_back_to_history_reasoning(self):
+        """Plans persisted before reasoning was stored must not 400 either:
+        the confirm path falls back to the last reasoning in history."""
+        seen_calls: list[list[Message]] = []
+        llm = self._mk_llm(seen_calls)
+        db = AsyncMock()
+
+        initial = {
+            "project_id": "",
+            "user_id": "u1",
+            "mode": "chat",
+            "messages": [
+                Message(
+                    role="assistant",
+                    content="好的，我先帮你删除该角色。",
+                    reasoning_content="这是先前正常回复轮次的思考内容",
+                ),
+                Message(role="user", content="确认"),
+            ],
+            "pending_plan": {
+                "steps": [
+                    {
+                        "tool": "delete_character",
+                        "params": {"character_id": "00000000-0000-0000-0000-000000000001"},
+                        "tool_use_id": "tc_legacy",
+                    }
+                ]
+            },
+        }
+
+        await self._run(llm, initial, db)
+
+        assert seen_calls
+        resumed = seen_calls[-1]
+        synth = [m for m in resumed if m.tool_calls]
+        assert synth
+        assert synth[-1].reasoning_content == "这是先前正常回复轮次的思考内容"
+
+    async def test_no_reasoning_anywhere_keeps_clean_payload(self):
+        """A brand-new conversation (no reasoning ever stored) must stay
+        reasoning-free — no empty reasoning fields are invented."""
+        seen_calls: list[list[Message]] = []
+        llm = self._mk_llm(seen_calls)
+        db = AsyncMock()
+
+        initial = {
+            "project_id": "",
+            "user_id": "u1",
+            "mode": "chat",
+            "messages": [Message(role="user", content="确认")],
+            "pending_plan": {
+                "steps": [
+                    {
+                        "tool": "delete_character",
+                        "params": {"character_id": "00000000-0000-0000-0000-000000000001"},
+                        "tool_use_id": "tc_none",
+                    }
+                ]
+            },
+        }
+
+        await self._run(llm, initial, db)
+
+        assert seen_calls
+        for msgs in seen_calls:
+            for assistant in self._synthetic_toolcall_assistants(msgs):
+                # content=None + tool_calls is the valid shape; reasoning may
+                # be absent only if NO message in the payload carries it.
+                if not assistant.reasoning_content:
+                    any_reasoning = any(
+                        getattr(m, "reasoning_content", None) for m in msgs
+                    )
+                    assert not any_reasoning
+

@@ -158,6 +158,10 @@ class SuperAgent:
         if raw_pending_plan and not plan_confirmed:
             steps = raw_pending_plan.get("steps", [])
             extra = {k: v for k, v in raw_pending_plan.items() if k != "steps"}
+            # Internal keys (loop reasoning passthrough / replay guard) must
+            # never reach the UI.
+            extra.pop("reasoning_content", None)
+            extra.pop("_executing", None)
             yield {
                 "type": "plan",
                 "data": json.dumps(
