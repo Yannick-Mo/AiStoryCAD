@@ -100,13 +100,9 @@ export default function LeftDrawer({
               <div
                 ref={isActSelected ? selectedActRef : null}
                 className={`flex items-center gap-1 pl-1 pr-2 py-1.5 rounded-lg transition-colors ${
-                  isActSelected ? '' : 'hover:bg-gray-800/60'
+                  isActSelected ? 'bg-green-500/15' : 'hover:bg-gray-800/60'
                 }`}
-                style={
-                  isActSelected
-                    ? { backgroundColor: `${act.color}26`, boxShadow: `inset 2px 0 0 0 ${act.color}` }
-                    : undefined
-                }
+                style={isActSelected ? { boxShadow: 'inset 2px 0 0 0 #22c55e' } : undefined}
               >
                 <button
                   onClick={() => toggleAct(act.id)}
@@ -134,7 +130,7 @@ export default function LeftDrawer({
                   className="flex-1 min-w-0 flex items-center gap-2 text-left"
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: act.color }} />
-                  <span className={`flex-1 min-w-0 truncate text-xs font-medium ${isActSelected ? 'text-gray-100' : 'text-gray-400'}`}>
+                  <span className={`flex-1 min-w-0 truncate text-xs font-medium ${isActSelected ? 'text-green-100 font-semibold' : 'text-gray-400'}`}>
                     {act.name}
                   </span>
                 </button>
@@ -154,11 +150,15 @@ export default function LeftDrawer({
                         className={`px-3 py-2 rounded-lg border-l-2 cursor-pointer transition-colors ${
                           isChapterSelected
                             ? 'bg-amber-500/15 ring-1 ring-amber-500/40'
+                            : isActSelected
+                            ? 'bg-green-500/10 hover:bg-green-500/20'
                             : 'bg-gray-800/30 hover:bg-gray-700/50'
                         }`}
-                        style={{ borderLeftColor: act.color }}
+                        style={{ borderLeftColor: isActSelected ? '#22c55e' : act.color }}
                       >
-                        <div className={`text-sm truncate ${isChapterSelected ? 'text-amber-100 font-medium' : 'text-gray-200'}`}>
+                        <div className={`text-sm truncate ${
+                          isChapterSelected ? 'text-amber-100 font-medium' : isActSelected ? 'text-green-100' : 'text-gray-200'
+                        }`}>
                           {ch.title}
                         </div>
                         <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5">
