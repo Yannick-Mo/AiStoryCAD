@@ -231,38 +231,39 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }
 
   return (
-      <div className="h-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden select-none">
-        {/* Top bar with save indicator */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            title="展开大纲"
-            aria-label="展开大纲"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-gray-400 hover:text-gray-200 bg-gray-800/50 hover:bg-gray-700 transition-colors"
-          >
-            ☰ 大纲
-          </button>
-          <div className="flex items-center gap-3">
+      <div className="h-screen flex bg-gray-950 text-gray-100 overflow-hidden select-none">
+        {/* Workbench column — the docked AI panel squeezes it from the right */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Top bar with save indicator */}
+          <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
             <button
-              onClick={() => store.flushChanges()}
-              disabled={!store.dirty || store.saving}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                store.dirty
-                  ? 'bg-amber-600 text-black hover:bg-amber-500'
-                  : 'bg-gray-800 text-gray-600 cursor-default'
-              }`}
+              onClick={() => setDrawerOpen(true)}
+              title="展开大纲"
+              aria-label="展开大纲"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-gray-400 hover:text-gray-200 bg-gray-800/50 hover:bg-gray-700 transition-colors"
             >
-              {store.saving ? '保存中…' : store.dirty ? '保存' : '已保存'}
+              ☰ 大纲
             </button>
-            <div className="text-xs text-gray-500 bg-gray-800/50 px-3 py-1 rounded-full">
-              {views.activeView.label}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => store.flushChanges()}
+                disabled={!store.dirty || store.saving}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  store.dirty
+                    ? 'bg-amber-600 text-black hover:bg-amber-500'
+                    : 'bg-gray-800 text-gray-600 cursor-default'
+                }`}
+              >
+                {store.saving ? '保存中…' : store.dirty ? '保存' : '已保存'}
+              </button>
+              <div className="text-xs text-gray-500 bg-gray-800/50 px-3 py-1 rounded-full">
+                {views.activeView.label}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Canvas area + docked AI panel */}
-        <div className="flex-1 flex min-h-0 relative">
-          <div className="flex-1 relative min-w-0">
+          {/* Canvas area */}
+          <div className="flex-1 relative">
             {renderCanvas()}
 
             {views.activeViewId === 'narrative-plot' && (
@@ -431,112 +432,113 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             />
           </div>
 
-          {/* Docked AI chat: an in-flow flex item on the right, with no z-index,
-              so it squeezes the canvas instead of floating above it. */}
-          {aiChatOpen && (
-            <AiPanel
+          {/* Drawer */}
+          <LeftDrawer
+            open={drawerOpen}
+            acts={data.acts}
+            chapters={data.chapters}
+            selectedActId={selectedActId}
+            selectedChapterId={activeChapter?.id ?? null}
+            onClose={() => setDrawerOpen(false)}
+            onSelectAct={(id) => { views.switchView('narrative-plot'); handleActClick(id) }}
+            onSelectChapter={(id) => { views.switchView('narrative-plot'); handleChapterClick(id) }}
+          />
+
+          {/* Modals */}
+          <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} acts={data.acts} onClose={() => setPreviewOpen(false)} />
+
+          <GlobalSettingsModal
+            open={globalSettingsOpen}
+            initialText={data.globalSettings}
+            onSave={(text) => store.saveGlobalSettings(text)}
+            onClose={() => setGlobalSettingsOpen(false)}
+          />
+
+          {editingScene && (
+            <SceneEditor
               projectId={projectId}
-              onClose={() => setAiChatOpen(false)}
-              onProjectUpdated={handleProjectUpdated}
-              contextView={aiContextView}
-              contextId={aiContextId}
+              scene={editingScene}
+              chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
+              onClose={() => setEditingScene(null)}
+              onSaved={handleSceneSaved}
+              onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
+              onOpenGoalFullscreen={() => setSceneGoalOpen(true)}
             />
           )}
+
+          {sceneGoalOpen && editingScene && (
+            <SceneGoalModal
+              scene={editingScene}
+              onSave={async (summary: string) => {
+                handleSceneGoalSave(editingScene.id, summary)
+              }}
+              onClose={() => setSceneGoalOpen(false)}
+            />
+          )}
+
+          {goalFullscreen && activeChapter && (
+            <ChapterGoalModal
+              chapter={activeChapter}
+              onSave={async (goal: string) => {
+                handleChapterGoalSave(activeChapter.id, goal)
+              }}
+              onClose={() => setGoalFullscreen(false)}
+            />
+          )}
+
+          {inspirationOpen && (
+            <InspirationModal
+              onClose={() => setInspirationOpen(false)}
+              onApplyStarter={(title: string) => {
+                if (store.data) store.setData({ ...store.data, projectTitle: title })
+                setInspirationOpen(false)
+              }}
+            />
+          )}
+
+          {/* Bottom nav */}
+          <BottomNav
+            activeViewId={views.activeViewId}
+            onSwitchView={views.switchView}
+            onPreview={() => setPreviewOpen(true)}
+            onExport={handleExport}
+            onGlobalSetting={() => setGlobalSettingsOpen(true)}
+          />
+        <ConfirmDialog
+          open={confirmDelete !== null}
+          title={confirmDelete?.type === 'act' ? '删除幕' : confirmDelete?.type === 'scene' ? '删除场景' : '删除章'}
+          message={
+            confirmDelete?.type === 'act'
+              ? "确定要删除「" + (data.acts.find(a => a.id === confirmDelete.id)?.name ?? '') + "」吗？该幕下的所有章节和连线将一并删除。"
+              : confirmDelete?.type === 'scene'
+              ? "确定要删除该场景吗？"
+              : "确定要删除「" + (data.chapters.find(c => c.id === confirmDelete?.id)?.title ?? '') + "」吗？"
+          }
+          onConfirm={() => {
+            if (!confirmDelete) return
+            if (confirmDelete.type === 'act') { store.deleteAct(confirmDelete.id); setSelectedActId(null); setSelectedChapter(null) }
+            else if (confirmDelete.type === 'scene') {
+              store.deleteScene(confirmDelete.chapterId!, confirmDelete.id)
+            }
+            else { store.deleteChapter(confirmDelete.id); setSelectedChapter(null) }
+            setConfirmDelete(null)
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
         </div>
 
-        {/* Drawer */}
-        <LeftDrawer
-          open={drawerOpen}
-          acts={data.acts}
-          chapters={data.chapters}
-          selectedActId={selectedActId}
-          selectedChapterId={activeChapter?.id ?? null}
-          onClose={() => setDrawerOpen(false)}
-          onSelectAct={(id) => { views.switchView('narrative-plot'); handleActClick(id) }}
-          onSelectChapter={(id) => { views.switchView('narrative-plot'); handleChapterClick(id) }}
-        />
-
-        {/* Modals */}
-        <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} acts={data.acts} onClose={() => setPreviewOpen(false)} />
-
-        <GlobalSettingsModal
-          open={globalSettingsOpen}
-          initialText={data.globalSettings}
-          onSave={(text) => store.saveGlobalSettings(text)}
-          onClose={() => setGlobalSettingsOpen(false)}
-        />
-
-        {editingScene && (
-          <SceneEditor
+        {/* Docked AI chat: a full-height flex item beside the whole workbench,
+            with no z-index, so it squeezes the top bar, the canvas and the
+            bottom nav instead of floating above them. */}
+        {aiChatOpen && (
+          <AiPanel
             projectId={projectId}
-            scene={editingScene}
-            chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
-            onClose={() => setEditingScene(null)}
-            onSaved={handleSceneSaved}
-            onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
-            onOpenGoalFullscreen={() => setSceneGoalOpen(true)}
+            onClose={() => setAiChatOpen(false)}
+            onProjectUpdated={handleProjectUpdated}
+            contextView={aiContextView}
+            contextId={aiContextId}
           />
         )}
-
-        {sceneGoalOpen && editingScene && (
-          <SceneGoalModal
-            scene={editingScene}
-            onSave={async (summary: string) => {
-              handleSceneGoalSave(editingScene.id, summary)
-            }}
-            onClose={() => setSceneGoalOpen(false)}
-          />
-        )}
-
-        {goalFullscreen && activeChapter && (
-          <ChapterGoalModal
-            chapter={activeChapter}
-            onSave={async (goal: string) => {
-              handleChapterGoalSave(activeChapter.id, goal)
-            }}
-            onClose={() => setGoalFullscreen(false)}
-          />
-        )}
-
-        {inspirationOpen && (
-          <InspirationModal
-            onClose={() => setInspirationOpen(false)}
-            onApplyStarter={(title: string) => {
-              if (store.data) store.setData({ ...store.data, projectTitle: title })
-              setInspirationOpen(false)
-            }}
-          />
-        )}
-
-        {/* Bottom nav */}
-        <BottomNav
-          activeViewId={views.activeViewId}
-          onSwitchView={views.switchView}
-          onPreview={() => setPreviewOpen(true)}
-          onExport={handleExport}
-          onGlobalSetting={() => setGlobalSettingsOpen(true)}
-        />
-      <ConfirmDialog
-        open={confirmDelete !== null}
-        title={confirmDelete?.type === 'act' ? '删除幕' : confirmDelete?.type === 'scene' ? '删除场景' : '删除章'}
-        message={
-          confirmDelete?.type === 'act'
-            ? "确定要删除「" + (data.acts.find(a => a.id === confirmDelete.id)?.name ?? '') + "」吗？该幕下的所有章节和连线将一并删除。"
-            : confirmDelete?.type === 'scene'
-            ? "确定要删除该场景吗？"
-            : "确定要删除「" + (data.chapters.find(c => c.id === confirmDelete?.id)?.title ?? '') + "」吗？"
-        }
-        onConfirm={() => {
-          if (!confirmDelete) return
-          if (confirmDelete.type === 'act') { store.deleteAct(confirmDelete.id); setSelectedActId(null); setSelectedChapter(null) }
-          else if (confirmDelete.type === 'scene') {
-            store.deleteScene(confirmDelete.chapterId!, confirmDelete.id)
-          }
-          else { store.deleteChapter(confirmDelete.id); setSelectedChapter(null) }
-          setConfirmDelete(null)
-        }}
-        onCancel={() => setConfirmDelete(null)}
-      />
       </div>
   )
 }
