@@ -435,8 +435,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           open={drawerOpen}
           acts={data.acts}
           chapters={data.chapters}
+          selectedActId={selectedActId}
           selectedChapterId={activeChapter?.id ?? null}
           onClose={() => setDrawerOpen(false)}
+          onSelectAct={(id) => { views.switchView('narrative-plot'); handleActClick(id) }}
           onSelectChapter={(id) => { views.switchView('narrative-plot'); handleChapterClick(id) }}
         />
 
