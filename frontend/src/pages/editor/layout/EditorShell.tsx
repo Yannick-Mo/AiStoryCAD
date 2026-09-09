@@ -186,8 +186,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     return () => clearTimeout(timer)
   }, [dockTree])
 
-  // Panels report their float state so the dock can tell which ones are still
-  // in the docked flow (a floating panel does not count towards the solo rule).
+  // The dock owns the float state of every panel: while floating a panel is
+  // moved out of the split tree, which remounts it, so the flag cannot live in
+  // the panel itself.
   const handleFloatChange = useCallback((id: string, floating: boolean) => {
     setFloatingState(prev => (prev[id] === floating ? prev : { ...prev, [id]: floating }))
   }, [])
@@ -462,7 +463,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         <CanvasPanel
           label={`${views.activeView?.label ?? ''}幕布`}
           grip={<DockGrip id="canvas" />}
-          onFloatChange={(v) => handleFloatChange('canvas', v)}
+          floating={floatingState.canvas === true}
+          onFloatingChange={(v) => handleFloatChange('canvas', v)}
           onClose={closeCanvas}
           toolbar={views.activeViewId === 'narrative-plot' ? (
             <PlotToolbar
@@ -498,7 +500,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         <DetailPanel
           label="详情"
           grip={<DockGrip id="detail" />}
-          onFloatChange={(v) => handleFloatChange('detail', v)}
+          floating={floatingState.detail === true}
+          onFloatingChange={(v) => handleFloatChange('detail', v)}
           onClose={closeDetail}
         >
           {detailPanel}
@@ -516,7 +519,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         <AiPanel
           projectId={projectId}
           grip={<DockGrip id="ai" />}
-          onFloatChange={(v) => handleFloatChange('ai', v)}
+          floating={floatingState.ai === true}
+          onFloatingChange={(v) => handleFloatChange('ai', v)}
           onClose={() => setAiChatOpen(false)}
           onProjectUpdated={handleProjectUpdated}
           contextView={aiContextView}

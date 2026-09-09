@@ -1,7 +1,7 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { GripVertical } from 'lucide-react'
-import { hasVisible, minAlong, movePanel, setWeights } from './splitTree'
+import { hasVisible, leafIds, minAlong, movePanel, setWeights } from './splitTree'
 import type { DropSide, PanelId, SplitDir, TreeNode } from './splitTree'
 
 export interface DockPanelMeta {
@@ -220,7 +220,9 @@ export default function PanelDock({ tree, onTreeChange, panels, floating }: Pane
     return (
       <div className={`flex h-full w-full min-w-0 min-h-0 ${node.dir === 'row' ? 'flex-row' : 'flex-col'}`}>
         {visible.map(({ child, i }, k) => (
-          <Fragment key={i}>
+          // key by the subtree's panel ids so reordering moves the DOM node
+          // instead of remounting the panels (which would reset their state)
+          <Fragment key={leafIds(child).join('|')}>
             {k > 0 && (() => {
               const prev = visible[k - 1]
               return (

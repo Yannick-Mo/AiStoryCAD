@@ -39,8 +39,9 @@ interface AiPanelProps {
   contextView?: string
   contextId?: string
 
-  /** report float state to the dock so it can compute the fill layout */
-  onFloatChange?: (floating: boolean) => void
+  /** owned by the dock so it survives the remount when the panel floats */
+  floating: boolean
+  onFloatingChange: (floating: boolean) => void
   /** grip handle that starts a dock reorder / split drag */
   grip?: ReactNode
 }
@@ -473,7 +474,7 @@ function ChatInput({
 
 export default function AiChatPanel({
   projectId, onClose, onProjectUpdated,
-  contextView = 'chat', contextId, onFloatChange, grip
+  contextView = 'chat', contextId, floating, onFloatingChange, grip
 }: AiPanelProps) {
   const chat = useAiChat(projectId, contextView, contextId)
   const [input, setInput] = useState('')
@@ -483,14 +484,14 @@ export default function AiChatPanel({
   // ── Floating-window mode (undock from the right edge) ──────────────
   const win = useFloatingWindow({
     storageKey: 'aistorycad_ai_panel_float',
+    floating,
+    onFloatingChange,
     defaultWidth: Math.min(460, Math.max(340, window.innerWidth - 200)),
     defaultHeight: Math.min(Math.round(window.innerHeight * 0.78), window.innerHeight - 40),
     minW: 320,
     minH: 400,
   })
-  const { floating, rect: floatRect } = win
-
-  useEffect(() => { onFloatChange?.(floating) }, [floating, onFloatChange])
+  const { rect: floatRect } = win
 
   const scrollRef = useRef<HTMLDivElement>(null)
 

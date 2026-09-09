@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import WindowControls from '../components/WindowControls'
@@ -12,8 +11,9 @@ interface CanvasPanelProps {
   toolbar?: ReactNode
   /** grip handle that starts a dock reorder / split drag */
   grip?: ReactNode
-  /** report float state to the dock so it can compute the solo layout */
-  onFloatChange?: (floating: boolean) => void
+  /** owned by the dock so it survives the remount when the panel floats */
+  floating: boolean
+  onFloatingChange: (floating: boolean) => void
   onClose: () => void
 }
 
@@ -23,17 +23,17 @@ interface CanvasPanelProps {
  * draggable, resizable window and leaves the docked flow.
  */
 export default function CanvasPanel({
-  label, children, toolbar, grip, onFloatChange, onClose,
+  label, children, toolbar, grip, floating, onFloatingChange, onClose,
 }: CanvasPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_canvas_float',
+    floating,
+    onFloatingChange,
     defaultWidth: Math.min(1100, Math.max(520, window.innerWidth - 200)),
     defaultHeight: Math.min(Math.round(window.innerHeight * 0.82), window.innerHeight - 40),
     minW: 420,
     minH: 320,
   })
-
-  useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
 
   return (
     <div

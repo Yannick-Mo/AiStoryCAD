@@ -10,6 +10,13 @@ export interface FloatRect {
 interface UseFloatingWindowOptions {
   /** localStorage key that remembers the window geometry */
   storageKey: string
+  /**
+   * Docked or floating. Controlled by the owner, because the panel element is
+   * moved to a different place in the React tree while floating — an internal
+   * state would be lost on that remount.
+   */
+  floating: boolean
+  onFloatingChange: (floating: boolean) => void
   /** default size when the window is first floated (px) */
   defaultWidth?: number
   defaultHeight?: number
@@ -21,36 +28,53 @@ interface UseFloatingWindowOptions {
   minH?: number
 }
 
+/** geometry used the first time a window floats */
+function defaultRect(o: UseFloatingWindowOptions): FloatRect {
+  const w = Math.min(o.defaultWidth ?? 460, window.innerWidth)
+  const h = Math.min(o.defaultHeight ?? Math.round(window.innerHeight * 0.78), window.innerHeight)
+  return {
+    x: o.defaultX ? o.defaultX(w) : Math.max(12, window.innerWidth - w - 16),
+    y: o.defaultY ?? 72,
+    w,
+    h,
+  }
+}
+
+/** read the saved geometry synchronously so a remount keeps its position */
+function readRect(storageKey: string): FloatRect | null {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    if (!raw) return null
+    const saved = JSON.parse(raw)
+    return typeof saved?.x === 'number' ? saved : null
+  } catch {
+    return null
+  }
+}
+
 /**
- * "Dock / float" behaviour shared by the AI chat panel, the canvas host and the
- * detail panel: a docked element is an in-flow flex item that squeezes its
- * siblings, a floating one is a fixed, draggable and resizable window whose
- * geometry is remembered in localStorage.
+ * "Dock / float" behaviour shared by the AI chat panel, the canvas panel and the
+ * detail panel: a docked element is part of the split layout, a floating one is
+ * a fixed, draggable and resizable window whose geometry is remembered.
  */
 export function useFloatingWindow(options: UseFloatingWindowOptions) {
-  const { storageKey, minW = 320, minH = 260 } = options
+  const { storageKey, floating, onFloatingChange, minW = 320, minH = 260 } = options
   const optsRef = useRef(options)
   optsRef.current = options
 
-  const [floating, setFloating] = useState(false)
-  const [rect, setRect] = useState<FloatRect | null>(null)
-
-  // Restore the saved geometry once.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(storageKey)
-      if (raw) {
-        const saved = JSON.parse(raw)
-        if (typeof saved?.x === 'number') setRect(saved)
-      }
-    } catch { /* ignore */ }
-  }, [storageKey])
+  const [rect, setRect] = useState<FloatRect | null>(() => readRect(storageKey))
 
   // Persist while floating.
   useEffect(() => {
     if (!floating || !rect) return
     try { localStorage.setItem(storageKey, JSON.stringify(rect)) } catch { /* ignore */ }
   }, [floating, rect, storageKey])
+
+  // Give the window a sensible geometry the first time it floats.
+  useEffect(() => {
+    if (!floating) return
+    setRect(r => r ?? defaultRect(optsRef.current))
+  }, [floating])
 
   // Keep the floating window at least partially visible on viewport changes.
   useEffect(() => {
@@ -70,28 +94,8 @@ export function useFloatingWindow(options: UseFloatingWindowOptions) {
     return () => window.removeEventListener('resize', onResize)
   }, [floating])
 
-  const enterFloat = useCallback(() => {
-    setRect(r => {
-      if (r) return r
-      const o = optsRef.current
-      const w = Math.min(o.defaultWidth ?? 460, window.innerWidth)
-      const h = Math.min(o.defaultHeight ?? Math.round(window.innerHeight * 0.78), window.innerHeight)
-      return {
-        x: o.defaultX ? o.defaultX(w) : Math.max(12, window.innerWidth - w - 16),
-        y: o.defaultY ?? 72,
-        w,
-        h,
-      }
-    })
-    setFloating(true)
-  }, [])
-
-  const toggleFloat = useCallback(() => {
-    if (floating) setFloating(false)
-    else enterFloat()
-  }, [floating, enterFloat])
-
-  const dock = useCallback(() => setFloating(false), [])
+  const toggleFloat = useCallback(() => onFloatingChange(!floating), [floating, onFloatingChange])
+  const dock = useCallback(() => onFloatingChange(false), [onFloatingChange])
 
   // Drag the window by its header (skip interactive children).
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
@@ -149,5 +153,9 @@ export function useFloatingWindow(options: UseFloatingWindowOptions) {
     }
   }, [floating, minW, minH])
 
-  return { floating, rect, toggleFloat, dock, headerPointerDown, cornerPointerDown }
+  // fall back to the default geometry on the very first floating render, so the
+  // window never flashes at 0,0 before the state effect catches up
+  const activeRect = rect ?? (floating ? defaultRect(optsRef.current) : null)
+
+  return { floating, rect: activeRect, toggleFloat, dock, headerPointerDown, cornerPointerDown }
 }

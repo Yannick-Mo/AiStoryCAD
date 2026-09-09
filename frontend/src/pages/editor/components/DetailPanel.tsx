@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import WindowControls from './WindowControls'
@@ -8,8 +7,9 @@ interface DetailPanelProps {
   label: string
   /** grip handle that starts a dock reorder / split drag */
   grip?: ReactNode
-  /** report float state to the dock so it can keep the panel out of the split */
-  onFloatChange?: (floating: boolean) => void
+  /** owned by the dock so it survives the remount when the panel floats */
+  floating: boolean
+  onFloatingChange: (floating: boolean) => void
   onClose: () => void
   children: ReactNode
 }
@@ -20,17 +20,17 @@ interface DetailPanelProps {
  * content plus the window chrome. Floated it becomes a draggable, resizable
  * window and leaves the split.
  */
-export default function DetailPanel({ label, grip, onFloatChange, onClose, children }: DetailPanelProps) {
+export default function DetailPanel({ label, grip, floating, onFloatingChange, onClose, children }: DetailPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_detail_panel_float',
+    floating,
+    onFloatingChange,
     defaultWidth: 460,
     defaultHeight: Math.min(Math.round(window.innerHeight * 0.8), window.innerHeight - 40),
     defaultX: w => Math.max(12, window.innerWidth - w - 16),
     minW: 280,
     minH: 240,
   })
-
-  useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
 
   return (
     <div
