@@ -1,40 +1,24 @@
 import { useEffect } from 'react'
 import type { ReactNode } from 'react'
-import { useResizePanel } from '../../../hooks/useResizePanel'
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import WindowControls from './WindowControls'
-
-// Remember the width across mount cycles, so closing a panel and selecting
-// another node does not reset the layout.
-let rememberedWidth = 384
 
 interface DetailPanelProps {
   /** shown in the panel header */
   label: string
-  /** absorbs the leftover width, so its edge is the draggable boundary with the next panel */
-  fill?: boolean
-  /** report float state to the dock so it can compute the fill layout */
+  /** report float state to the dock so it can keep the panel out of the split */
   onFloatChange?: (floating: boolean) => void
   onClose: () => void
   children: ReactNode
 }
 
 /**
- * Shared right-hand display container.
- *
- * Docked it is an in-flow flex item that squeezes the other docked panels.
- * Floated it becomes a draggable, resizable window and no longer takes part in
- * the squeeze, so closing another panel never changes its size. Any panel
- * component can be hosted here as children.
+ * Shared display container for the active detail panel. Its docked width is
+ * owned by PanelDock (the split container), so this component only renders the
+ * content plus the window chrome. Floated it becomes a draggable, resizable
+ * window and leaves the split.
  */
-export default function DetailPanel({
-  label, fill, onFloatChange, onClose, children,
-}: DetailPanelProps) {
-  // No max width: the panel may fill the whole dock when it absorbs the space.
-  const { size, handleMouseDown } = useResizePanel({ initial: rememberedWidth, min: 280 })
-
-  useEffect(() => { rememberedWidth = size }, [size])
-
+export default function DetailPanel({ label, onFloatChange, onClose, children }: DetailPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_detail_panel_float',
     defaultWidth: 460,
@@ -46,34 +30,15 @@ export default function DetailPanel({
 
   useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
 
-  const dockedClass = fill
-    ? 'relative flex min-w-0 flex-1 flex-col bg-gray-900/95'
-    : 'relative flex shrink-0 flex-col border-l border-gray-800 bg-gray-900/95'
-
-  const dockedStyle = fill ? undefined : { width: size, maxWidth: '100%' }
-
   return (
     <div
       className={win.floating
         ? 'fixed z-30 flex flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/95 shadow-2xl'
-        : dockedClass}
+        : 'relative flex h-full w-full flex-col bg-gray-900/95'}
       style={win.floating && win.rect
         ? { left: win.rect.x, top: win.rect.y, width: win.rect.w, height: win.rect.h }
-        : dockedStyle}
+        : undefined}
     >
-      {/* Left-edge resize handle — only when docked next to another panel */}
-      {!win.floating && !fill && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="拖动调整面板宽度"
-          onMouseDown={handleMouseDown}
-          className="group absolute inset-y-0 left-0 z-10 w-1.5 -translate-x-1/2 cursor-col-resize"
-        >
-          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-gray-700 transition-colors group-hover:bg-amber-400/70 group-active:bg-amber-500" />
-        </div>
-      )}
-
       {/* Header — also the drag handle when floating */}
       <div
         onPointerDown={win.headerPointerDown}

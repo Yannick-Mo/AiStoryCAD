@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { ArrowUp, Plus, Square } from 'lucide-react'
-import { useResizePanel } from '../../../hooks/useResizePanel'
+
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import { sendMessage, getConversations, getConversation, compressContext, renameConversation, deleteConversation } from '../../../api/ai_v2'
 import type { Conversation } from '../../../api/ai_v2'
@@ -37,8 +37,7 @@ interface AiPanelProps {
   onProjectUpdated?: () => void
   contextView?: string
   contextId?: string
-  /** absorbs the leftover width, so its edge is the draggable boundary with the previous panel */
-  fill?: boolean
+
   /** report float state to the dock so it can compute the fill layout */
   onFloatChange?: (floating: boolean) => void
 }
@@ -471,7 +470,7 @@ function ChatInput({
 
 export default function AiChatPanel({
   projectId, onClose, onProjectUpdated,
-  contextView = 'chat', contextId, fill, onFloatChange
+  contextView = 'chat', contextId, onFloatChange
 }: AiPanelProps) {
   const chat = useAiChat(projectId, contextView, contextId)
   const [input, setInput] = useState('')
@@ -492,8 +491,6 @@ export default function AiChatPanel({
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // No max width: the panel may fill the whole dock when it absorbs the space.
-  const { size: width, handleMouseDown: panelResizeDown } = useResizePanel({ initial: 380, min: 300, direction: 'horizontal' })
 
   const contextLabel = contextView === 'scene' ? '场景写作'
     : contextView === 'chapter' ? '章节分析'
@@ -615,19 +612,13 @@ export default function AiChatPanel({
       className={`flex flex-col ${
         floating
           ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl bg-gray-900/95 backdrop-blur-xl'
-          : `relative h-full border-gray-800 bg-gray-900/95 backdrop-blur-xl ${fill ? 'min-w-0 flex-1' : 'shrink-0 border-l'}`
+          : 'relative h-full w-full bg-gray-900/95 backdrop-blur-xl'
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
-        : fill ? undefined : { width, maxWidth: '100%' }}
+        : undefined}
     >
-      {/* Resize handle (left edge) — docked only */}
-      {!floating && !fill && (
-        <div
-          onMouseDown={panelResizeDown}
-          className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:w-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all z-10"
-        />
-      )}
+
       {/* Header — also the drag handle when floating */}
       <div
         onPointerDown={win.headerPointerDown}

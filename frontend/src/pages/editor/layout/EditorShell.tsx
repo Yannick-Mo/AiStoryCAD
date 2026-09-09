@@ -422,10 +422,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   if (canvasOpen) {
     dockPanels.push({
       id: 'canvas',
-      align: 'start',
       flexible: true,
+      minWidth: 420,
       floating: floatingState.canvas === true,
-      render: () => (
+      node: (
         <CanvasPanel
           label={`${views.activeView?.label ?? ''}幕布`}
           onFloatChange={(v) => handleFloatChange('canvas', v)}
@@ -458,12 +458,12 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   if (detailOpen) {
     dockPanels.push({
       id: 'detail',
-      align: 'start',
+      defaultWidth: 384,
+      minWidth: 280,
       floating: floatingState.detail === true,
-      render: (fill) => (
+      node: (
         <DetailPanel
           label="详情"
-          fill={fill}
           onFloatChange={(v) => handleFloatChange('detail', v)}
           onClose={closeDetail}
         >
@@ -476,12 +476,12 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   if (aiChatOpen) {
     dockPanels.push({
       id: 'ai',
-      align: 'end',
+      defaultWidth: 380,
+      minWidth: 300,
       floating: floatingState.ai === true,
-      render: (fill) => (
+      node: (
         <AiPanel
           projectId={projectId}
-          fill={fill}
           onFloatChange={(v) => handleFloatChange('ai', v)}
           onClose={() => setAiChatOpen(false)}
           onProjectUpdated={handleProjectUpdated}

@@ -37,7 +37,7 @@ export default function CanvasPanel({
     <div
       className={win.floating
         ? 'fixed z-30 flex flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-950 shadow-2xl'
-        : 'relative flex min-w-0 flex-1 flex-col'}
+        : 'relative flex h-full w-full min-w-0 flex-col'}
       style={win.floating && win.rect
         ? { left: win.rect.x, top: win.rect.y, width: win.rect.w, height: win.rect.h }
         : undefined}
