@@ -39,6 +39,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
     from .web_fetch import WebFetchTool
     from .project_admin_tools import (
         CreateActTool, CreateChapterTool, MoveChapterTool, UpdateProjectTool,
+        RelinkTimelineTool,
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
         CreateProjectFromMaterialTool,
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
@@ -62,6 +63,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         SearchKnowledgeTool,
         WebSearchTool, WebFetchTool,
         CreateActTool, CreateChapterTool, MoveChapterTool, UpdateProjectTool,
+        RelinkTimelineTool,
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
         CreateProjectFromMaterialTool,
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,

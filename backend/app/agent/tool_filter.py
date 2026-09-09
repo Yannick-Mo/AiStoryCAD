@@ -35,6 +35,7 @@ COWRITER_TOOLS: set[str] = {
     "create_relation", "update_relation", "delete_relation",
     # CRUD — edge
     "create_edge", "update_edge", "delete_edge",
+    "relink_timeline",
     # Writing
     "write_scene_content", "continue_scene", "rewrite_scene",
     "expand_selection", "compress_selection",

@@ -229,6 +229,8 @@ class TestListThenWriteScenario:
         "create_character", "create_act", "create_project_from_material",
         "set_chapter_goal",
         "update_project",
+        # 按章节顺序重建主时序线：项目身份由会话注入，不需要实体 ID
+        "relink_timeline",
     }
 
     def test_required_id_params_exist(self):

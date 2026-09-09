@@ -13,6 +13,7 @@ from app.storycad.models import (
 )
 from app.storycad.entity_map import ENTITY_MAP
 from app.storycad.order import order_by_sequence
+from app.storycad.timeline import reconcile_timeline_chain
 from app.utils import row_to_dict
 
 logger = logging.getLogger(__name__)
@@ -100,12 +101,23 @@ class AiStoryCADRepository:
 
         return result
 
+    async def list_timeline_edges(self, project_id: uuid.UUID) -> list[dict]:
+        """The main timeline after a sync — the client replaces its own copy."""
+        result = await self.db.execute(
+            select(ChapterEdge).where(
+                ChapterEdge.project_id == project_id,
+                ChapterEdge.edge_type == "timeline",
+            )
+        )
+        return [self._row(e) for e in result.scalars().all()]
+
     # ============================================================
     # Editor data: incremental sync
     # ============================================================
 
     async def sync_editor_data(self, project_id: uuid.UUID, changes: dict) -> int:
         has_changes = False
+        touched: set[str] = set()
         for entity_type in ["acts", "chapters", "scenes", "edges", "characters",
                             "character_relations"]:
             ops = changes.get(entity_type, {})
@@ -113,6 +125,7 @@ class AiStoryCADRepository:
                 continue
             if any(ops.get(k) for k in ("created", "updated", "deleted")):
                 has_changes = True
+                touched.add(entity_type)
             for delete_id in ops.get("deleted", []):
                 await self._delete_entity(entity_type, delete_id, project_id)
             for item in ops.get("created", []):
@@ -133,6 +146,11 @@ class AiStoryCADRepository:
 
         if not has_changes:
             return 0
+
+        # 章节顺序变了就把主时序线重新投影成一条直链（只动 timeline 边）。
+        # 只有边的改动不触发——用户手画的时序边要留到他下次调顺序为止。
+        if touched & {"acts", "chapters"}:
+            await reconcile_timeline_chain(self.db, project_id)
 
         # 编辑器变更 + 版本行在一个事务里提交:flush → recalc → version row →
         # 统一 commit,失败统一回滚。

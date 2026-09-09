@@ -8,6 +8,7 @@ from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, Scene, SceneContent
 from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
+from app.storycad.timeline import reconcile_timeline_chain
 from app.project.repository import ProjectRepository
 from app.utils import row_to_dict
 
@@ -466,6 +467,8 @@ class UpdateChapterTool(BaseTool):
                 ch.goal = kwargs["goal"]
             if "sort_order" in kwargs:
                 ch.sort_order = int(kwargs["sort_order"])
+                await db.flush()
+                await reconcile_timeline_chain(db, ch.project_id)
             await db.commit()
             return ToolResult(success=True, data={
                 "chapter_id": str(ch_id),

@@ -10,6 +10,7 @@ from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterRelation, Scene, SceneContent
 from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
+from app.storycad.timeline import reconcile_timeline_chain
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.project_creator.state import MaterialState
 from app.utils import row_to_dict
@@ -102,6 +103,8 @@ class CreateChapterTool(BaseTool):
                 "status": kwargs.get("status", "draft"),
                 "sort_order": sort_order,
             })
+            # 新章进了顺序就把它接进主时序线
+            await reconcile_timeline_chain(db, project_id)
             await db.commit()
             return ToolResult(success=True, data=created)
         except Exception as e:
@@ -164,6 +167,8 @@ class MoveChapterTool(BaseTool):
             # 幕内重新编号 1..N：sort_order 只有一个真相，空洞无需保留。
             for i, ch in enumerate(ordered, start=1):
                 ch.sort_order = i
+            await db.flush()
+            await reconcile_timeline_chain(db, project_id)
             await db.commit()
             return ToolResult(success=True, data={
                 "chapter_id": str(chapter_id),
@@ -172,6 +177,34 @@ class MoveChapterTool(BaseTool):
                     {"id": str(c.id), "title": c.title, "sort_order": c.sort_order}
                     for c in ordered
                 ],
+            })
+        except Exception as e:
+            await db.rollback()
+            return self._err(e)
+
+
+class RelinkTimelineTool(BaseTool):
+    meta = ToolMeta(
+        name="relink_timeline",
+        description="按当前章节顺序重建项目的主时序线：把章节从第一章到最后一章串成一条直链，"
+                    "删除不匹配的 timeline 连线并补上缺失的。因果 / 伏笔 / 人物关联连线不受影响。"
+                    "顺序的唯一真相是 sort_order（幕序 → 幕内序号），本工具只是把它投影成连线；"
+                    "章节顺序没变时本工具不会改动任何东西",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        parameters={"type": "object", "properties": {}},
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            project_id = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, project_id, kwargs.get("user_id"))
+            result = await reconcile_timeline_chain(db, project_id)
+            await db.commit()
+            return ToolResult(success=True, data={
+                "created": result["created"],
+                "deleted": result["deleted"],
+                "kept": result["kept"],
+                "chain_length": len(result["chain"]),
             })
         except Exception as e:
             await db.rollback()
@@ -258,6 +291,7 @@ class DeleteChapterTool(BaseTool):
             await db.execute(Scene.__table__.delete().where(Scene.chapter_id == chapter_id))
             await db.delete(chapter)
             await db.flush()
+            await reconcile_timeline_chain(db, project_id)
             await _recalc_chapter_counts(db, project_id)
             await db.commit()
             return ToolResult(success=True, data={
@@ -316,6 +350,7 @@ class DeleteActTool(BaseTool):
             await db.execute(Chapter.__table__.delete().where(Chapter.act_id == act_id))
             await db.delete(act)
             await db.flush()
+            await reconcile_timeline_chain(db, project_id)
             await _recalc_chapter_counts(db, project_id)
             await db.commit()
             return ToolResult(success=True, data={

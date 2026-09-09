@@ -62,6 +62,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "create_edge": "创建关联",
     "update_edge": "修改关联",
     "delete_edge": "删除关联",
+    "relink_timeline": "重建时序主线",
     # Agents
     "call_writer_agent": "调用写作智能体",
     # Analysis

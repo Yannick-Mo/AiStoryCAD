@@ -83,7 +83,10 @@ async def sync_editor_data(
     await _check_project_owner(project_id, current_user, db)
     repo = await _get_repo(db)
     version = await repo.sync_editor_data(project_id, payload)
-    return {"ok": True, "version": version}
+    # 主时序线由服务端按章节顺序维护；客户端用返回结果替换本地副本，
+    # 这样「顺序变了 → 连线跟着变」不需要前端再实现一遍同样的算法。
+    timeline_edges = await repo.list_timeline_edges(project_id)
+    return {"ok": True, "version": version, "timeline_edges": timeline_edges}
 
 
 # ============================================================
