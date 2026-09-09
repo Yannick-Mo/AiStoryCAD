@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import SideNav from './SideNav'
+import CanvasHost from './CanvasHost'
 import LeftDrawer from './LeftDrawer'
 import ActionButtons from './ActionButtons'
 import PlotCanvas from '../views/plot/PlotCanvas'
@@ -44,6 +45,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [aiContextView, setAiContextView] = useState<string>('chat')
   const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const { addToast } = useToast()
 
@@ -137,6 +139,16 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
 
+  // The detail container stays open even when its content is cleared (e.g. the
+  // canvas was closed), so its visibility is explicit state instead of being
+  // derived from "is something selected".
+  const hasSelection = store.selection.id !== null
+    || selectedCharacterId !== null
+    || selectedRelation !== null
+  useEffect(() => {
+    if (hasSelection) setDetailOpen(true)
+  }, [hasSelection])
+
   if (store.loading) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">加载项目数据...</div>
   if (store.error) return <div className="h-screen bg-gray-950 flex items-center justify-center text-red-400 text-sm">{store.error}</div>
   if (!data) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">暂无数据</div>
@@ -207,7 +219,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <ActDetail
             act={selectedAct}
             chapters={data.chapters.filter(c => c.actId === selectedActId)}
-            onClose={() => setSelectedActId(null)}
             onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
             projectId={projectId}
             onSceneSave={async (chapterId, sceneId, content) => {
@@ -253,7 +264,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <ChapterDetail
             chapter={activeChapter}
             projectId={projectId}
-            onClose={() => setSelectedChapter(null)}
             onSceneSave={async (chapterId, sceneId, content) => {
               let updatedChapter: Chapter | undefined
               setData(d => {
@@ -301,7 +311,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             edge={selectedEdge}
             chapters={data.chapters}
             acts={data.acts}
-            onClose={store.clearSelection}
             onChangeType={(edgeId, newType) => {
               const changed = store.changeEdgeType(edgeId, newType)
               if (changed && newType === 'timeline') store.clearSelection()
@@ -320,7 +329,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         return (
           <CharacterDetail
             character={selectedChar}
-            onClose={() => setSelectedCharacterId(null)}
             onUpdateCharacter={store.updateCharacter}
           />
         )
@@ -336,7 +344,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             source={srcChar}
             target={tgtChar}
             relation={rel}
-            onClose={() => setSelectedRelation(null)}
             onDelete={() => { store.deleteRelation(selectedRelation.sourceId, selectedRelation.relationId); setSelectedRelation(null) }}
             onUpdateRelation={store.updateRelation}
           />
@@ -380,6 +387,23 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     URL.revokeObjectURL(url)
   }
 
+  const canvasOpen = views.activeViewId !== null
+
+  // Closing the canvas deselects the side nav entry but keeps the detail panel
+  // open with cleared content.
+  const closeCanvas = useCallback(() => views.switchView(null), [views])
+
+  // Closing the panel clears the content and hides the container; whatever was
+  // selected on the canvas is deselected too.
+  const closeDetail = useCallback(() => {
+    setSelectedActId(null)
+    setSelectedChapter(null)
+    setSelectedRelation(null)
+    setSelectedCharacterId(null)
+    store.clearSelection()
+    setDetailOpen(false)
+  }, [store])
+
   const detailPanel = renderDetail()
 
   return (
@@ -397,41 +421,49 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onSave={() => store.flushChanges()}
       />
 
-      {/* Workbench: the canvas host on the left, the shared detail panel on the right.
-          Both are in-flow flex items, so the panel squeezes the canvas instead of
-          covering it, and the docked AI panel squeezes the pair. */}
+      {/* Workbench: the canvas host on the left, the shared detail panel on the
+          right. Docked they are in-flow flex items that squeeze each other;
+          floated they leave the flow, so closing one never resizes the other.
+          The docked AI panel squeezes the pair. */}
       <div className="flex-1 flex min-w-0">
-        {/* Canvas host — hosts the active canvas (plot / character) */}
-        <div className="flex-1 relative min-w-0">
-          {renderCanvas()}
-
-          {views.activeViewId === 'narrative-plot' && (
-            <PlotToolbar
-              selection={store.selection}
-              selectedActId={selectedActId}
-              connectionMode={connectionMode}
-              onConnectionModeChange={setConnectionMode}
-              onAddAct={() => store.addAct()}
-              onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
-              onDeleteSelected={() => {
-                const sel = store.selection
-                if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
-                if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
-                if (sel.type === 'edge') store.deleteEdge(sel.id!)
-                store.clearSelection()
-              }}
-              onLayout={handleAutoLayout}
-            />
-          )}
-
-          <ActionButtons
-            onAIChat={handleAiChatOpen}
-            onInspiration={() => setInspirationOpen(true)}
-          />
-        </div>
+        {canvasOpen && (
+          <CanvasHost
+            label={`${views.activeView?.label ?? ''}幕布`}
+            toolbar={views.activeViewId === 'narrative-plot' ? (
+              <PlotToolbar
+                selection={store.selection}
+                selectedActId={selectedActId}
+                connectionMode={connectionMode}
+                onConnectionModeChange={setConnectionMode}
+                onAddAct={() => store.addAct()}
+                onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
+                onDeleteSelected={() => {
+                  const sel = store.selection
+                  if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
+                  if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
+                  if (sel.type === 'edge') store.deleteEdge(sel.id!)
+                  store.clearSelection()
+                }}
+                onLayout={handleAutoLayout}
+              />
+            ) : null}
+            onClose={closeCanvas}
+          >
+            {renderCanvas()}
+          </CanvasHost>
+        )}
 
         {/* Shared right-hand container: hosts the active detail panel */}
-        {detailPanel && <DetailPanel>{detailPanel}</DetailPanel>}
+        {detailOpen && (
+          <DetailPanel label="详情" fill={!canvasOpen} onClose={closeDetail}>
+            {detailPanel}
+          </DetailPanel>
+        )}
+
+        <ActionButtons
+          onAIChat={handleAiChatOpen}
+          onInspiration={() => setInspirationOpen(true)}
+        />
       </div>
 
       {/* Drawer */}

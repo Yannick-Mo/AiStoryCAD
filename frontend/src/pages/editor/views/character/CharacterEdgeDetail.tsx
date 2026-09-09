@@ -4,7 +4,6 @@ interface CharacterEdgeDetailProps {
   source: Character
   target: Character
   relation: CharacterRelation
-  onClose: () => void
   onDelete: () => void
   onUpdateRelation: (id: string, updates: Partial<Pick<CharacterRelation, 'type' | 'label' | 'description'>>) => void
 }
@@ -28,7 +27,7 @@ const ROLE_LABELS: Record<string, string> = {
   antagonist: '对手',
 }
 
-export default function CharacterEdgeDetail({ source, target, relation, onClose, onDelete, onUpdateRelation }: CharacterEdgeDetailProps) {
+export default function CharacterEdgeDetail({ source, target, relation, onDelete, onUpdateRelation }: CharacterEdgeDetailProps) {
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b border-gray-800">
@@ -45,7 +44,6 @@ export default function CharacterEdgeDetail({ source, target, relation, onClose,
               ))}
             </select>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none shrink-0">✕</button>
         </div>
         <div className="text-xs text-gray-500">
           {source.name} → {target.name}

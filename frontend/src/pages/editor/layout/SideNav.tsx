@@ -6,7 +6,7 @@ import type { ComponentType } from 'react'
 import { VIEWS } from '../types'
 
 interface SideNavProps {
-  activeViewId: string
+  activeViewId: string | null
   onSwitchView: (viewId: string) => void
   onPreview: () => void
   onExport: () => void

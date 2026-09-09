@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { VIEWS } from '../types'
 
 export function useEditorViews() {
-  const [activeViewId, setActiveViewId] = useState('narrative-plot')
+  // null means the canvas is closed: nothing is highlighted in the side nav.
+  const [activeViewId, setActiveViewId] = useState<string | null>('narrative-plot')
 
-  const activeView = VIEWS.find(v => v.id === activeViewId) ?? VIEWS[0]
+  const activeView = VIEWS.find(v => v.id === activeViewId) ?? null
 
   return {
     activeView,

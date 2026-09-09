@@ -2,7 +2,6 @@ import type { Character } from '../../types'
 
 interface CharacterDetailProps {
   character: Character
-  onClose: () => void
   onUpdateCharacter: (id: string, updates: Partial<Pick<Character, 'name' | 'role' | 'personality' | 'appearance' | 'background' | 'motivation'>>) => void
 }
 
@@ -17,7 +16,7 @@ const ROLE_OPTIONS = [
   { value: 'other', label: '其他' },
 ]
 
-export default function CharacterDetail({ character, onClose, onUpdateCharacter }: CharacterDetailProps) {
+export default function CharacterDetail({ character, onUpdateCharacter }: CharacterDetailProps) {
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b border-gray-800">
@@ -38,7 +37,6 @@ export default function CharacterDetail({ character, onClose, onUpdateCharacter 
               ))}
             </select>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none shrink-0">✕</button>
         </div>
       </div>
 

@@ -6,7 +6,6 @@ import { useToast } from '../../components/Toast'
 interface ActDetailProps {
   act: Act
   chapters: Chapter[]
-  onClose: () => void
   onSelectChapter: (chapterId: string) => void
   onSceneSave: (chapterId: string, sceneId: string, content: string) => void
   onOpenSceneEditor?: (scene: Scene) => void
@@ -23,7 +22,7 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ActDetail({ act, chapters, onClose, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene, projectId }: ActDetailProps) {
+export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene, projectId }: ActDetailProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
@@ -91,7 +90,6 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
               className="w-16 bg-transparent text-[10px] text-gray-400 border-b border-transparent focus:border-amber-600/50 outline-none font-mono text-center"
             />
             <span className="w-4 h-4 rounded-full border border-gray-700 shrink-0" style={{ backgroundColor: act.color }} />
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none shrink-0">✕</button>
           </div>
         </div>
         <div className="flex items-center justify-between">

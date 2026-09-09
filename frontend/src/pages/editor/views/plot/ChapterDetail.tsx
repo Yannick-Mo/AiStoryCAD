@@ -5,7 +5,6 @@ import { useToast } from '../../components/Toast'
 
 interface ChapterDetailProps {
   chapter: Chapter | null
-  onClose: () => void
   onSceneSave: (chapterId: string, sceneId: string, content: string) => void
   onChapterSave: (chapterId: string, goal: string) => void
   onOpenSceneEditor?: (scene: Scene) => void
@@ -24,7 +23,7 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor, onOpenGoalFullscreen, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
+export default function ChapterDetail({ chapter, onSceneSave, onChapterSave, onOpenSceneEditor, onOpenGoalFullscreen, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editGoal, setEditGoal] = useState('')
@@ -119,7 +118,6 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
               <span>{totalWords > 0 ? `${totalWords} 字` : '未开始'}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none shrink-0">✕</button>
         </div>
       </div>
 

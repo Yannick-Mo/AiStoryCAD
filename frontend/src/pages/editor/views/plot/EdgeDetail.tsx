@@ -4,7 +4,6 @@ interface EdgeDetailProps {
   edge: ChapterEdge
   chapters: Chapter[]
   acts: Act[]
-  onClose: () => void
   onChangeType: (edgeId: string, newType: EdgeType) => void
   onDelete: (edgeId: string) => void
   onUpdateEdge: (id: string, updates: Partial<Pick<ChapterEdge, 'label'>>) => void
@@ -152,7 +151,7 @@ function TypeSpecificContent({ edge, source, target, onUpdateEdge }: {
   )
 }
 
-export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType, onDelete, onUpdateEdge }: EdgeDetailProps) {
+export default function EdgeDetail({ edge, chapters, acts, onChangeType, onDelete, onUpdateEdge }: EdgeDetailProps) {
   const source = chapters.find(chapter => chapter.id === edge.sourceId)
   const target = chapters.find(chapter => chapter.id === edge.targetId)
   const sourceAct = getAct(acts, source)
@@ -170,7 +169,6 @@ export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType
             <div className="text-[10px] text-gray-500 mb-1">选中连线</div>
             <h3 className="font-medium text-amber-100">{EDGE_TITLES[edge.type]}</h3>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
         </div>
         <div className="text-xs text-gray-500 line-clamp-2">
           {source?.title ?? edge.sourceId} → {target?.title ?? edge.targetId}
