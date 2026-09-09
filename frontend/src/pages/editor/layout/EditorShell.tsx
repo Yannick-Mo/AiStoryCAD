@@ -204,6 +204,13 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   // Closing the canvas deselects the side nav entry but keeps the detail panel
   // open with cleared content.
+  // Switching the canvas also retargets the detail panel at that view's own
+  // selection; closing the canvas deliberately does not.
+  const handleSwitchView = useCallback((viewId: string) => {
+    views.switchView(viewId)
+    setSelectionView(viewId)
+  }, [views])
+
   const closeCanvas = useCallback(() => views.switchView(null), [views])
 
   // Closing the panel clears the content and hides the container; whatever was
@@ -544,7 +551,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       {/* Icon-only left side nav: views, content management, save status, outline, settings */}
       <SideNav
         activeViewId={views.activeViewId}
-        onSwitchView={views.switchView}
+        onSwitchView={handleSwitchView}
         onPreview={() => setPreviewOpen(true)}
         onExport={handleExport}
         onGlobalSetting={() => setGlobalSettingsOpen(true)}
