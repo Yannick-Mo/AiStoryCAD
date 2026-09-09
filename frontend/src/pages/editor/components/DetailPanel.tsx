@@ -8,11 +8,16 @@ import WindowControls from './WindowControls'
 // another node does not reset the layout.
 let rememberedWidth = 384
 
+/** cap used when this is the only docked panel */
+const SOLO_MAX_WIDTH = 800
+
 interface DetailPanelProps {
   /** shown in the panel header */
   label: string
-  /** the canvas is closed: the panel takes the freed space instead of a fixed width */
-  fill?: boolean
+  /** the only docked panel: fill the container and stay centred at max width */
+  solo?: boolean
+  /** report float state to the dock so it can compute the solo layout */
+  onFloatChange?: (floating: boolean) => void
   onClose: () => void
   children: ReactNode
 }
@@ -20,13 +25,15 @@ interface DetailPanelProps {
 /**
  * Shared right-hand display container.
  *
- * Docked (default) it is an in-flow flex item that squeezes the canvas host.
+ * Docked it is an in-flow flex item that squeezes the other docked panels.
  * Floated it becomes a draggable, resizable window and no longer takes part in
- * the squeeze, so closing the other docked window never changes its size.
- * Any panel component can be hosted here as children.
+ * the squeeze, so closing another panel never changes its size. Any panel
+ * component can be hosted here as children.
  */
-export default function DetailPanel({ label, fill, onClose, children }: DetailPanelProps) {
-  const { size, handleMouseDown } = useResizePanel({ initial: rememberedWidth, min: 280, max: 800 })
+export default function DetailPanel({
+  label, solo, onFloatChange, onClose, children,
+}: DetailPanelProps) {
+  const { size, handleMouseDown } = useResizePanel({ initial: rememberedWidth, min: 280, max: SOLO_MAX_WIDTH })
 
   useEffect(() => { rememberedWidth = size }, [size])
 
@@ -39,23 +46,29 @@ export default function DetailPanel({ label, fill, onClose, children }: DetailPa
     minH: 240,
   })
 
-  const dockedStyle = fill ? undefined : { width: size, maxWidth: '100%' }
+  useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
+
+  const dockedClass = solo
+    ? 'relative mx-auto flex min-w-0 flex-1 flex-col bg-gray-900/95'
+    : 'relative flex shrink-0 flex-col border-l border-gray-800 bg-gray-900/95'
+
+  const dockedStyle = solo ? { maxWidth: SOLO_MAX_WIDTH } : { width: size, maxWidth: '100%' }
 
   return (
     <div
       className={win.floating
         ? 'fixed z-30 flex flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/95 shadow-2xl'
-        : `relative flex flex-col bg-gray-900/95 ${fill ? 'min-w-0 flex-1' : 'shrink-0 border-l border-gray-800'}`}
+        : dockedClass}
       style={win.floating && win.rect
         ? { left: win.rect.x, top: win.rect.y, width: win.rect.w, height: win.rect.h }
         : dockedStyle}
     >
-      {/* Left-edge resize handle — only when docked with a fixed width */}
-      {!win.floating && !fill && (
+      {/* Left-edge resize handle — only when docked next to another panel */}
+      {!win.floating && !solo && (
         <div
           role="separator"
           aria-orientation="vertical"
-          aria-label="拖动调整右侧面板宽度"
+          aria-label="拖动调整面板宽度"
           onMouseDown={handleMouseDown}
           className="group absolute inset-y-0 left-0 z-10 w-1.5 -translate-x-1/2 cursor-col-resize"
         >

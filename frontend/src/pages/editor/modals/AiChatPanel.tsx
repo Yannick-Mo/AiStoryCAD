@@ -37,6 +37,10 @@ interface AiPanelProps {
   onProjectUpdated?: () => void
   contextView?: string
   contextId?: string
+  /** the only docked panel: fill the container and stay centred at max width */
+  solo?: boolean
+  /** report float state to the dock so it can compute the solo layout */
+  onFloatChange?: (floating: boolean) => void
 }
 
 interface DisplayMessage {
@@ -467,7 +471,7 @@ function ChatInput({
 
 export default function AiChatPanel({
   projectId, onClose, onProjectUpdated,
-  contextView = 'chat', contextId
+  contextView = 'chat', contextId, solo, onFloatChange
 }: AiPanelProps) {
   const chat = useAiChat(projectId, contextView, contextId)
   const [input, setInput] = useState('')
@@ -483,6 +487,8 @@ export default function AiChatPanel({
     minH: 400,
   })
   const { floating, rect: floatRect } = win
+
+  useEffect(() => { onFloatChange?.(floating) }, [floating, onFloatChange])
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -608,14 +614,14 @@ export default function AiChatPanel({
       className={`flex flex-col ${
         floating
           ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl bg-gray-900/95 backdrop-blur-xl'
-          : 'relative h-full shrink-0 border-l border-gray-800 bg-gray-900/95 backdrop-blur-xl'
+          : `relative h-full border-gray-800 bg-gray-900/95 backdrop-blur-xl ${solo ? 'mx-auto min-w-0 flex-1' : 'shrink-0 border-l'}`
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
-        : { width }}
+        : solo ? { maxWidth: 800 } : { width }}
     >
       {/* Resize handle (left edge) — docked only */}
-      {!floating && (
+      {!floating && !solo && (
         <div
           onMouseDown={panelResizeDown}
           className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:w-1.5 hover:bg-amber-500/50 active:bg-amber-500/70 transition-all z-10"

@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import SideNav from './SideNav'
-import CanvasHost from './CanvasHost'
+import CanvasPanel from './CanvasPanel'
+import PanelDock from './PanelDock'
+import type { DockPanel } from './PanelDock'
 import LeftDrawer from './LeftDrawer'
 import ActionButtons from './ActionButtons'
 import PlotCanvas from '../views/plot/PlotCanvas'
@@ -46,6 +48,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [floatingState, setFloatingState] = useState<Record<string, boolean>>({})
 
   const { addToast } = useToast()
 
@@ -148,6 +151,12 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (hasSelection) setDetailOpen(true)
   }, [hasSelection])
+
+  // Panels report their float state so the dock can tell which ones are still
+  // in the docked flow (a floating panel does not count towards the solo rule).
+  const handleFloatChange = useCallback((id: string, floating: boolean) => {
+    setFloatingState(prev => (prev[id] === floating ? prev : { ...prev, [id]: floating }))
+  }, [])
 
   // Closing the canvas deselects the side nav entry but keeps the detail panel
   // open with cleared content.
@@ -406,6 +415,83 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   const detailPanel = renderDetail()
 
+  // The panels of the dock, in left-to-right order. Canvas and detail are
+  // leading panels, the AI chat is anchored to the trailing edge.
+  const dockPanels: DockPanel[] = []
+
+  if (canvasOpen) {
+    dockPanels.push({
+      id: 'canvas',
+      align: 'start',
+      flexible: true,
+      floating: floatingState.canvas === true,
+      render: () => (
+        <CanvasPanel
+          label={`${views.activeView?.label ?? ''}幕布`}
+          onFloatChange={(v) => handleFloatChange('canvas', v)}
+          onClose={closeCanvas}
+          toolbar={views.activeViewId === 'narrative-plot' ? (
+            <PlotToolbar
+              selection={store.selection}
+              selectedActId={selectedActId}
+              connectionMode={connectionMode}
+              onConnectionModeChange={setConnectionMode}
+              onAddAct={() => store.addAct()}
+              onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
+              onDeleteSelected={() => {
+                const sel = store.selection
+                if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
+                if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
+                if (sel.type === 'edge') store.deleteEdge(sel.id!)
+                store.clearSelection()
+              }}
+              onLayout={handleAutoLayout}
+            />
+          ) : null}
+        >
+          {renderCanvas()}
+        </CanvasPanel>
+      ),
+    })
+  }
+
+  if (detailOpen) {
+    dockPanels.push({
+      id: 'detail',
+      align: 'start',
+      floating: floatingState.detail === true,
+      render: (solo) => (
+        <DetailPanel
+          label="详情"
+          solo={solo}
+          onFloatChange={(v) => handleFloatChange('detail', v)}
+          onClose={closeDetail}
+        >
+          {detailPanel}
+        </DetailPanel>
+      ),
+    })
+  }
+
+  if (aiChatOpen) {
+    dockPanels.push({
+      id: 'ai',
+      align: 'end',
+      floating: floatingState.ai === true,
+      render: (solo) => (
+        <AiPanel
+          projectId={projectId}
+          solo={solo}
+          onFloatChange={(v) => handleFloatChange('ai', v)}
+          onClose={() => setAiChatOpen(false)}
+          onProjectUpdated={handleProjectUpdated}
+          contextView={aiContextView}
+          contextId={aiContextId}
+        />
+      ),
+    })
+  }
+
   return (
     <div className="h-screen flex bg-gray-950 text-gray-100 overflow-hidden select-none">
       {/* Icon-only left side nav: views, content management, save status, outline, settings */}
@@ -421,50 +507,14 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onSave={() => store.flushChanges()}
       />
 
-      {/* Workbench: the canvas host on the left, the shared detail panel on the
-          right. Docked they are in-flow flex items that squeeze each other;
-          floated they leave the flow, so closing one never resizes the other.
-          The docked AI panel squeezes the pair. */}
-      <div className="flex-1 flex min-w-0">
-        {canvasOpen && (
-          <CanvasHost
-            label={`${views.activeView?.label ?? ''}幕布`}
-            toolbar={views.activeViewId === 'narrative-plot' ? (
-              <PlotToolbar
-                selection={store.selection}
-                selectedActId={selectedActId}
-                connectionMode={connectionMode}
-                onConnectionModeChange={setConnectionMode}
-                onAddAct={() => store.addAct()}
-                onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
-                onDeleteSelected={() => {
-                  const sel = store.selection
-                  if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
-                  if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
-                  if (sel.type === 'edge') store.deleteEdge(sel.id!)
-                  store.clearSelection()
-                }}
-                onLayout={handleAutoLayout}
-              />
-            ) : null}
-            onClose={closeCanvas}
-          >
-            {renderCanvas()}
-          </CanvasHost>
-        )}
+      {/* The dock: every panel is a sibling here, so docked panels squeeze each
+          other and a floating panel leaves the flow entirely. */}
+      <PanelDock panels={dockPanels} />
 
-        {/* Shared right-hand container: hosts the active detail panel */}
-        {detailOpen && (
-          <DetailPanel label="详情" fill={!canvasOpen} onClose={closeDetail}>
-            {detailPanel}
-          </DetailPanel>
-        )}
-
-        <ActionButtons
-          onAIChat={handleAiChatOpen}
-          onInspiration={() => setInspirationOpen(true)}
-        />
-      </div>
+      <ActionButtons
+        onAIChat={handleAiChatOpen}
+        onInspiration={() => setInspirationOpen(true)}
+      />
 
       {/* Drawer */}
       <LeftDrawer
@@ -551,18 +601,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         }}
         onCancel={() => setConfirmDelete(null)}
       />
-
-      {/* Docked AI chat: a full-height flex item beside the whole workbench,
-          with no z-index, so it squeezes the canvas area instead of floating above it. */}
-      {aiChatOpen && (
-        <AiPanel
-          projectId={projectId}
-          onClose={() => setAiChatOpen(false)}
-          onProjectUpdated={handleProjectUpdated}
-          contextView={aiContextView}
-          contextId={aiContextId}
-        />
-      )}
     </div>
   )
 }

@@ -1,23 +1,28 @@
+import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import WindowControls from '../components/WindowControls'
 
-interface CanvasHostProps {
+interface CanvasPanelProps {
   /** shown in the header when the canvas is floating */
   label: string
   /** the active canvas (plot / character) */
   children: ReactNode
   /** canvas toolbar, positioned inside the canvas area */
   toolbar?: ReactNode
+  /** report float state to the dock so it can compute the solo layout */
+  onFloatChange?: (floating: boolean) => void
   onClose: () => void
 }
 
 /**
- * Hosts the active canvas. Docked (default) it is the flexible left part of the
- * workbench row, so the detail panel squeezes it. Floated it becomes a
- * draggable, resizable window and stops taking part in the squeeze.
+ * Dock panel that hosts the active canvas. Docked it is the flexible panel of
+ * the dock, so every other docked panel squeezes it. Floated it becomes a
+ * draggable, resizable window and leaves the docked flow.
  */
-export default function CanvasHost({ label, children, toolbar, onClose }: CanvasHostProps) {
+export default function CanvasPanel({
+  label, children, toolbar, onFloatChange, onClose,
+}: CanvasPanelProps) {
   const win = useFloatingWindow({
     storageKey: 'aistorycad_canvas_float',
     defaultWidth: Math.min(1100, Math.max(520, window.innerWidth - 200)),
@@ -25,6 +30,8 @@ export default function CanvasHost({ label, children, toolbar, onClose }: Canvas
     minW: 420,
     minH: 320,
   })
+
+  useEffect(() => { onFloatChange?.(win.floating) }, [win.floating, onFloatChange])
 
   return (
     <div
