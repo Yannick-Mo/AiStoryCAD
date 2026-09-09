@@ -409,8 +409,8 @@ function ChatInput({
       onClick={() => onModeChange(m)}
       className={`flex items-center rounded-full border px-2.5 py-1 text-[10px] transition-colors ${
         mode === m
-          ? 'border-amber-400/40 bg-amber-500/20 text-amber-100'
-          : 'border-amber-400/15 text-amber-100/60 hover:border-amber-400/30 hover:text-amber-50'
+          ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+          : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
       }`}
     >
       {label}
@@ -418,7 +418,7 @@ function ChatInput({
   )
 
   return (
-    <div className="rounded-3xl border border-amber-400/20 bg-amber-400/10 backdrop-blur-xl shadow-lg shadow-amber-950/15 p-4 flex flex-col gap-3">
+    <div className="rounded-3xl border border-white/10 bg-white/[0.06] backdrop-blur-xl shadow-lg shadow-black/20 p-4 flex flex-col gap-3">
       <textarea
         ref={taRef}
         value={input}
@@ -426,7 +426,7 @@ function ChatInput({
         onKeyDown={onKeyDown}
         placeholder={UI_TEXT.placeholder}
         disabled={loading || compressing}
-        className="w-full bg-transparent resize-none text-xs text-amber-50/90 leading-relaxed placeholder:text-amber-100/35 focus:outline-none disabled:opacity-50"
+        className="w-full bg-transparent resize-none text-xs text-gray-200 leading-relaxed placeholder:text-gray-500 focus:outline-none disabled:opacity-50"
       />
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
@@ -439,7 +439,7 @@ function ChatInput({
             title="添加附件（暂未开放）"
             aria-label="添加附件"
             onClick={undefined}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-400/10 text-amber-100/60 hover:bg-amber-400/20 hover:text-amber-50 transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
           >
             <Plus size={16} strokeWidth={2} />
           </button>
@@ -453,7 +453,7 @@ function ChatInput({
                 ? 'h-8 min-w-8 px-2.5 bg-gray-700 text-gray-400 text-[10px] cursor-default'
                 : 'h-8 w-8 ' + (loading
                   ? 'bg-red-600 text-white hover:bg-red-500'
-                  : 'bg-amber-500 text-black hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-default')
+                  : 'bg-blue-600 text-white hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-default')
             }`}
           >
             {compressing ? '压缩中' : loading ? <Square size={13} fill="currentColor" /> : <ArrowUp size={16} strokeWidth={2.5} />}
@@ -693,8 +693,8 @@ export default function AiChatPanel({
     <div
       className={`flex flex-col ${
         floating
-          ? 'fixed z-50 rounded-lg border border-amber-400/15 overflow-hidden shadow-2xl bg-[#191612]/95 backdrop-blur-xl'
-          : 'relative h-full shrink-0 border-l border-amber-400/10 bg-gradient-to-b from-[#1d1913] via-[#191612] to-[#15130f]'
+          ? 'fixed z-50 rounded-lg border border-gray-700 overflow-hidden shadow-2xl bg-gray-900/95 backdrop-blur-xl'
+          : 'relative h-full shrink-0 border-l border-gray-800 bg-gray-900/95 backdrop-blur-xl'
       }`}
       style={floating && floatRect
         ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
@@ -710,7 +710,7 @@ export default function AiChatPanel({
       {/* Header — also the drag handle when floating */}
       <div
         onPointerDown={onHeaderPointerDown}
-        className={`flex items-center justify-between px-4 h-12 border-b border-amber-400/10 shrink-0 bg-[#131110]/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
+        className={`flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
       >
         <div className="flex items-center gap-2 min-w-0">
           {/* Conversation switcher — always visible when conversations exist */}
@@ -727,7 +727,7 @@ export default function AiChatPanel({
               {convOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setConvOpen(false)} />
-                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-[#1d1913] border border-amber-400/15 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
                     {chat.conversations.map(c => (
                       <div key={c.id} className={`flex items-center gap-1 px-3 py-2 text-xs transition-colors ${c.id === chat.conversationId ? 'bg-amber-600/20 text-amber-400' : 'text-gray-300 hover:bg-gray-800'}`}>
                         {renameId === c.id ? (
@@ -760,7 +760,7 @@ export default function AiChatPanel({
           {chat.conversationId && (
             <button onClick={() => setCompressConfirm(true)}
               disabled={chat.loading || compressing}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-amber-100/60 hover:bg-white/10 hover:text-amber-50 transition-colors shrink-0 disabled:opacity-30 disabled:cursor-default"
+              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors shrink-0 disabled:opacity-30 disabled:cursor-default"
               title={chat.loading ? 'AI 处理中，暂不可压缩' : compressing ? '压缩进行中' : '压缩上下文，节省 token'}>压缩</button>
           )}
         </div>
@@ -768,18 +768,18 @@ export default function AiChatPanel({
           {floating ? (
             <button
               onClick={() => setFloating(false)}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-amber-100/60 hover:bg-white/10 hover:text-amber-50 transition-colors"
+              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
               title="停靠回右侧面板"
             >⤵ 停靠右侧</button>
           ) : (
             <button
               onClick={enterFloat}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-amber-100/60 hover:bg-white/10 hover:text-amber-50 transition-colors"
+              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
               title="将面板变成可拖动的独立窗口"
             >⤢ 独立窗口</button>
           )}
           <button onClick={handleNewChat}
-            className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-amber-100/60 hover:bg-white/10 hover:text-amber-50 transition-colors"
+            className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
             title="新建对话">{UI_TEXT.newConversation}</button>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none" title="关闭">x</button>
         </div>
@@ -857,7 +857,7 @@ export default function AiChatPanel({
       {/* Compress confirmation */}
       {compressConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60" onClick={() => setCompressConfirm(false)}>
-          <div className="bg-[#1d1913] border border-amber-400/15 rounded-xl p-5 w-80 shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 w-80 shadow-2xl" onClick={e => e.stopPropagation()}>
             <h4 className="text-sm font-medium text-gray-200 mb-2">压缩上下文？</h4>
             <p className="text-xs text-gray-400 leading-relaxed mb-4">
               将把之前的对话内容压缩为摘要以节省 token。之后的 AI 回复将根据摘要理解上下文，部分细节可能丢失。
@@ -881,7 +881,7 @@ export default function AiChatPanel({
         </div>
       )}
       {/* Input */}
-      <div className="p-4 border-t border-amber-400/10 shrink-0">
+      <div className="p-4 border-t border-gray-800 shrink-0">
         <ChatInput
           input={input}
           setInput={setInput}
