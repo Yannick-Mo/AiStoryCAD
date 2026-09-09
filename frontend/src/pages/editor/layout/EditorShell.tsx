@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import BottomNav from './BottomNav'
+import SideNav from './SideNav'
 import LeftDrawer from './LeftDrawer'
 import ActionButtons from './ActionButtons'
 import PlotCanvas from '../views/plot/PlotCanvas'
@@ -232,6 +232,15 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   return (
       <div className="h-screen flex bg-gray-950 text-gray-100 overflow-hidden select-none">
+        {/* Icon-only left side nav (was the bottom bar) */}
+        <SideNav
+          activeViewId={views.activeViewId}
+          onSwitchView={views.switchView}
+          onPreview={() => setPreviewOpen(true)}
+          onExport={handleExport}
+          onGlobalSetting={() => setGlobalSettingsOpen(true)}
+        />
+
         {/* Workbench column — the docked AI panel squeezes it from the right */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Top bar with save indicator */}
@@ -496,14 +505,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             />
           )}
 
-          {/* Bottom nav */}
-          <BottomNav
-            activeViewId={views.activeViewId}
-            onSwitchView={views.switchView}
-            onPreview={() => setPreviewOpen(true)}
-            onExport={handleExport}
-            onGlobalSetting={() => setGlobalSettingsOpen(true)}
-          />
         <ConfirmDialog
           open={confirmDelete !== null}
           title={confirmDelete?.type === 'act' ? '删除幕' : confirmDelete?.type === 'scene' ? '删除场景' : '删除章'}
