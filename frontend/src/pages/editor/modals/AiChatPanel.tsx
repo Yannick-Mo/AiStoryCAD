@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
 import ConfirmDialog from '../components/ConfirmDialog'
+import WindowControls from '../components/WindowControls'
 
 function generateId(): string {
   return crypto.randomUUID()
@@ -626,7 +627,7 @@ export default function AiChatPanel({
       {/* Header — also the drag handle when floating */}
       <div
         onPointerDown={win.headerPointerDown}
-        className={`flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
+        className={`flex items-center justify-between px-3 h-10 border-b border-gray-800 shrink-0 ${floating ? 'cursor-grab active:cursor-grabbing select-none' : ''}`}
       >
         <div className="flex items-center gap-2 min-w-0">
           {!floating && grip}
@@ -681,24 +682,11 @@ export default function AiChatPanel({
               title={chat.loading ? 'AI 处理中，暂不可压缩' : compressing ? '压缩进行中' : '压缩上下文，节省 token'}>压缩</button>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {floating ? (
-            <button
-              onClick={win.dock}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
-              title="停靠回右侧面板"
-            >⤵ 停靠右侧</button>
-          ) : (
-            <button
-              onClick={win.toggleFloat}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
-              title="将面板变成可拖动的独立窗口"
-            >⤢ 独立窗口</button>
-          )}
+        <div className="flex items-center gap-1 shrink-0">
           <button onClick={handleNewChat}
             className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-colors"
             title="新建对话">{UI_TEXT.newConversation}</button>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none" title="关闭">x</button>
+          <WindowControls floating={floating} onToggleFloat={win.toggleFloat} onClose={onClose} />
         </div>
       </div>
 

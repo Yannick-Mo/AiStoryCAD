@@ -44,7 +44,7 @@ export default function DetailPanel({ label, grip, floating, onFloatingChange, o
       {/* Header — also the drag handle when floating */}
       <div
         onPointerDown={win.headerPointerDown}
-        className={`flex h-9 shrink-0 items-center justify-between border-b border-gray-800 px-3 ${win.floating ? 'cursor-grab select-none active:cursor-grabbing' : ''}`}
+        className={`flex h-10 shrink-0 items-center justify-between border-b border-gray-800 px-3 ${win.floating ? 'cursor-grab select-none active:cursor-grabbing' : ''}`}
       >
         <div className="flex min-w-0 items-center gap-1">
           {!win.floating && grip}
