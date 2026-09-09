@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
-from app.storycad.models import Chapter, Scene, ChapterEdge, Character, CharacterRelation
+from app.storycad.models import Act, Chapter, Scene, ChapterEdge, Character, CharacterRelation
 from app.storycad.order import order_by_sequence
 from app.utils import row_to_dict
 
@@ -320,12 +320,13 @@ class SearchNodesTool(BaseTool):
             if node_type in ("chapter", "all"):
                 ch_result = await db.execute(
                     select(Chapter)
+                    .outerjoin(Act, Act.id == Chapter.act_id)
                     .where(Chapter.project_id == pid)
                     .where(
                         Chapter.title.ilike(kw_like) |
                         Chapter.goal.ilike(kw_like)
                     )
-                    .order_by(*order_by_sequence(Chapter))
+                    .order_by(Act.sort_order.asc(), *order_by_sequence(Chapter))
                     .limit(limit)
                 )
                 chapters = ch_result.scalars().all()
