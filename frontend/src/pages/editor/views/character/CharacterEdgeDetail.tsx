@@ -30,7 +30,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 export default function CharacterEdgeDetail({ source, target, relation, onClose, onDelete, onUpdateRelation }: CharacterEdgeDetailProps) {
   return (
-    <div className="h-full bg-gray-900/95 backdrop-blur-xl flex flex-col shadow-2xl">
+    <div className="h-full flex flex-col">
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="flex-1">

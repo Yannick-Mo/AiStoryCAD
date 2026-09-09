@@ -22,7 +22,7 @@ import { useEditorStore } from '../data/editorStore'
 import { loadEditorData, saveSceneContent } from '../../../api/editor'
 import { useToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
-import ResizablePanel from '../components/ResizablePanel'
+import DetailPanel from '../components/DetailPanel'
 import type { Chapter, Scene, EdgeType } from '../types'
 import { getCompletedChain } from '../data/orderUtils'
 
@@ -197,6 +197,156 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     }
   }
 
+  // The content of the shared right-hand panel. Both canvases feed this single
+  // slot, so selecting a plot node and selecting a character node render into
+  // the same container — only the content differs.
+  const renderDetail = () => {
+    if (views.activeViewId === 'narrative-plot') {
+      if (selectedAct) {
+        return (
+          <ActDetail
+            act={selectedAct}
+            chapters={data.chapters.filter(c => c.actId === selectedActId)}
+            onClose={() => setSelectedActId(null)}
+            onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
+            projectId={projectId}
+            onSceneSave={async (chapterId, sceneId, content) => {
+              let updatedChapter: Chapter | undefined
+              setData(d => {
+                if (!d) return d
+                const chs = d.chapters.map(ch =>
+                  ch.id === chapterId
+                    ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
+                    : ch
+                )
+                updatedChapter = chs.find(c => c.id === chapterId)
+                return { ...d, chapters: chs }
+              })
+              try {
+                const result = await saveSceneContent(projectId, sceneId, content)
+                setData(d => {
+                  if (!d) return d
+                  const chs = d.chapters.map(ch => {
+                    if (ch.id !== chapterId) return ch
+                    const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
+                    return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
+                  })
+                  updatedChapter = chs.find(c => c.id === chapterId)
+                  return { ...d, chapters: chs }
+                })
+                if (updatedChapter) setSelectedChapter({ ...updatedChapter })
+              } catch (e) {
+                throw e
+              }
+            }}
+            onOpenSceneEditor={(scene) => setEditingScene(scene)}
+            onUpdateAct={store.updateAct}
+            onUpdateScene={store.updateScene}
+            onAddChapter={store.addChapter}
+            onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
+          />
+        )
+      }
+
+      if (activeChapter) {
+        return (
+          <ChapterDetail
+            chapter={activeChapter}
+            projectId={projectId}
+            onClose={() => setSelectedChapter(null)}
+            onSceneSave={async (chapterId, sceneId, content) => {
+              let updatedChapter: Chapter | undefined
+              setData(d => {
+                if (!d) return d
+                const chs = d.chapters.map(ch =>
+                  ch.id === chapterId
+                    ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
+                    : ch
+                )
+                updatedChapter = chs.find(c => c.id === chapterId)
+                return { ...d, chapters: chs }
+              })
+              try {
+                const result = await saveSceneContent(projectId, sceneId, content)
+                setData(d => {
+                  if (!d) return d
+                  const chs = d.chapters.map(ch => {
+                    if (ch.id !== chapterId) return ch
+                    const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
+                    return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
+                  })
+                  updatedChapter = chs.find(c => c.id === chapterId)
+                  return { ...d, chapters: chs }
+                })
+                if (updatedChapter) setSelectedChapter({ ...updatedChapter })
+              } catch (e) {
+                throw e
+              }
+            }}
+            onChapterSave={handleChapterGoalSave}
+            onOpenSceneEditor={(scene) => setEditingScene(scene)}
+            onOpenGoalFullscreen={() => setGoalFullscreen(true)}
+            onUpdateChapter={store.updateChapter}
+            onUpdateScene={store.updateScene}
+            onAddScene={store.addScene}
+            onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
+            onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
+          />
+        )
+      }
+
+      if (selectedEdge && selectedEdge.type !== 'timeline') {
+        return (
+          <EdgeDetail
+            edge={selectedEdge}
+            chapters={data.chapters}
+            acts={data.acts}
+            onClose={store.clearSelection}
+            onChangeType={(edgeId, newType) => {
+              const changed = store.changeEdgeType(edgeId, newType)
+              if (changed && newType === 'timeline') store.clearSelection()
+            }}
+            onDelete={(edgeId) => { store.deleteEdge(edgeId); store.clearSelection() }}
+            onUpdateEdge={store.updateEdge}
+          />
+        )
+      }
+
+      return null
+    }
+
+    if (views.activeViewId === 'narrative-char') {
+      if (selectedChar) {
+        return (
+          <CharacterDetail
+            character={selectedChar}
+            onClose={() => setSelectedCharacterId(null)}
+            onUpdateCharacter={store.updateCharacter}
+          />
+        )
+      }
+
+      if (selectedRelation) {
+        const srcChar = data.characters.find(c => c.id === selectedRelation.sourceId)
+        const rel = srcChar?.relations.find(r => r.id === selectedRelation.relationId)
+        const tgtChar = rel ? data.characters.find(c => c.id === rel.targetId) : undefined
+        if (!srcChar || !rel || !tgtChar) return null
+        return (
+          <CharacterEdgeDetail
+            source={srcChar}
+            target={tgtChar}
+            relation={rel}
+            onClose={() => setSelectedRelation(null)}
+            onDelete={() => { store.deleteRelation(selectedRelation.sourceId, selectedRelation.relationId); setSelectedRelation(null) }}
+            onUpdateRelation={store.updateRelation}
+          />
+        )
+      }
+    }
+
+    return null
+  }
+
   const handleExport = () => {
     const completed = getCompletedChain(data.chapters, data.edges, data.acts)
     const allChapters = completed.flat()
@@ -230,6 +380,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     URL.revokeObjectURL(url)
   }
 
+  const detailPanel = renderDetail()
+
   return (
     <div className="h-screen flex bg-gray-950 text-gray-100 overflow-hidden select-none">
       {/* Icon-only left side nav: views, content management, save status, outline, settings */}
@@ -245,175 +397,41 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onSave={() => store.flushChanges()}
       />
 
-      {/* Workbench area — the docked AI panel squeezes it from the right.
-          No top bar any more: outline + save live in the left side nav. */}
-      <div className="flex-1 relative min-w-0">
-        {renderCanvas()}
+      {/* Workbench: the canvas host on the left, the shared detail panel on the right.
+          Both are in-flow flex items, so the panel squeezes the canvas instead of
+          covering it, and the docked AI panel squeezes the pair. */}
+      <div className="flex-1 flex min-w-0">
+        {/* Canvas host — hosts the active canvas (plot / character) */}
+        <div className="flex-1 relative min-w-0">
+          {renderCanvas()}
 
-        {views.activeViewId === 'narrative-plot' && (
-          <PlotToolbar
-            selection={store.selection}
-            selectedActId={selectedActId}
-            connectionMode={connectionMode}
-            onConnectionModeChange={setConnectionMode}
-            onAddAct={() => store.addAct()}
-            onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
-            onDeleteSelected={() => {
-              const sel = store.selection
-              if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
-              if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
-              if (sel.type === 'edge') store.deleteEdge(sel.id!)
-              store.clearSelection()
-            }}
-            onLayout={handleAutoLayout}
+          {views.activeViewId === 'narrative-plot' && (
+            <PlotToolbar
+              selection={store.selection}
+              selectedActId={selectedActId}
+              connectionMode={connectionMode}
+              onConnectionModeChange={setConnectionMode}
+              onAddAct={() => store.addAct()}
+              onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
+              onDeleteSelected={() => {
+                const sel = store.selection
+                if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
+                if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
+                if (sel.type === 'edge') store.deleteEdge(sel.id!)
+                store.clearSelection()
+              }}
+              onLayout={handleAutoLayout}
+            />
+          )}
+
+          <ActionButtons
+            onAIChat={handleAiChatOpen}
+            onInspiration={() => setInspirationOpen(true)}
           />
-        )}
+        </div>
 
-        {/* Detail panels - Plot */}
-        {views.activeViewId === 'narrative-plot' && (
-          selectedAct ? (
-            <ResizablePanel>
-              <ActDetail
-                act={selectedAct}
-                chapters={data.chapters.filter(c => c.actId === selectedActId)}
-                onClose={() => setSelectedActId(null)}
-                onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
-                projectId={projectId}
-                onSceneSave={async (chapterId, sceneId, content) => {
-                  let updatedChapter: Chapter | undefined
-                  setData(d => {
-                    if (!d) return d
-                    const chs = d.chapters.map(ch =>
-                      ch.id === chapterId
-                        ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
-                        : ch
-                    )
-                    updatedChapter = chs.find(c => c.id === chapterId)
-                    return { ...d, chapters: chs }
-                  })
-                  try {
-                    const result = await saveSceneContent(projectId, sceneId, content)
-                    setData(d => {
-                      if (!d) return d
-                      const chs = d.chapters.map(ch => {
-                        if (ch.id !== chapterId) return ch
-                        const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
-                        return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
-                      })
-                      updatedChapter = chs.find(c => c.id === chapterId)
-                      return { ...d, chapters: chs }
-                    })
-                    if (updatedChapter) setSelectedChapter({ ...updatedChapter })
-                  } catch (e) {
-                    throw e
-                  }
-                }}
-                onOpenSceneEditor={(scene) => setEditingScene(scene)}
-                onUpdateAct={store.updateAct}
-                onUpdateScene={store.updateScene}
-                onAddChapter={store.addChapter}
-                onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
-              />
-            </ResizablePanel>
-          ) : activeChapter ? (
-            <ResizablePanel>
-              <ChapterDetail
-                chapter={activeChapter}
-                projectId={projectId}
-                onClose={() => setSelectedChapter(null)}
-                onSceneSave={async (chapterId, sceneId, content) => {
-                  let updatedChapter: Chapter | undefined
-                  setData(d => {
-                    if (!d) return d
-                    const chs = d.chapters.map(ch =>
-                      ch.id === chapterId
-                        ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
-                        : ch
-                    )
-                    updatedChapter = chs.find(c => c.id === chapterId)
-                    return { ...d, chapters: chs }
-                  })
-                  try {
-                    const result = await saveSceneContent(projectId, sceneId, content)
-                    setData(d => {
-                      if (!d) return d
-                      const chs = d.chapters.map(ch => {
-                        if (ch.id !== chapterId) return ch
-                        const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
-                        return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
-                      })
-                      updatedChapter = chs.find(c => c.id === chapterId)
-                      return { ...d, chapters: chs }
-                    })
-                    if (updatedChapter) setSelectedChapter({ ...updatedChapter })
-                  } catch (e) {
-                    throw e
-                  }
-                }}
-                onChapterSave={handleChapterGoalSave}
-                onOpenSceneEditor={(scene) => setEditingScene(scene)}
-                onOpenGoalFullscreen={() => setGoalFullscreen(true)}
-                onUpdateChapter={store.updateChapter}
-                onUpdateScene={store.updateScene}
-                onAddScene={store.addScene}
-                onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
-                onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
-              />
-            </ResizablePanel>
-          ) : selectedEdge && selectedEdge.type !== 'timeline' ? (
-            <ResizablePanel>
-              <EdgeDetail
-                edge={selectedEdge}
-                chapters={data.chapters}
-                acts={data.acts}
-                onClose={store.clearSelection}
-                onChangeType={(edgeId, newType) => {
-                  const changed = store.changeEdgeType(edgeId, newType)
-                  if (changed && newType === 'timeline') store.clearSelection()
-                }}
-                onDelete={(edgeId) => { store.deleteEdge(edgeId); store.clearSelection() }}
-                onUpdateEdge={store.updateEdge}
-              />
-            </ResizablePanel>
-          ) : null
-        )}
-
-        {/* Detail panels - Character */}
-        {views.activeViewId === 'narrative-char' && (
-          selectedChar ? (
-            <ResizablePanel>
-              <CharacterDetail
-                character={selectedChar}
-                onClose={() => setSelectedCharacterId(null)}
-                onUpdateCharacter={store.updateCharacter}
-              />
-            </ResizablePanel>
-          ) : selectedRelation ? (
-            (() => {
-              const srcChar = data.characters.find(c => c.id === selectedRelation.sourceId)
-              const rel = srcChar?.relations.find(r => r.id === selectedRelation.relationId)
-              const tgtChar = rel ? data.characters.find(c => c.id === rel.targetId) : undefined
-              if (!srcChar || !rel || !tgtChar) return null
-              return (
-                <ResizablePanel>
-                  <CharacterEdgeDetail
-                    source={srcChar}
-                    target={tgtChar}
-                    relation={rel}
-                    onClose={() => setSelectedRelation(null)}
-                    onDelete={() => { store.deleteRelation(selectedRelation.sourceId, selectedRelation.relationId); setSelectedRelation(null) }}
-                    onUpdateRelation={store.updateRelation}
-                  />
-                </ResizablePanel>
-              )
-            })()
-          ) : null
-        )}
-
-        <ActionButtons
-          onAIChat={handleAiChatOpen}
-          onInspiration={() => setInspirationOpen(true)}
-        />
+        {/* Shared right-hand container: hosts the active detail panel */}
+        {detailPanel && <DetailPanel>{detailPanel}</DetailPanel>}
       </div>
 
       {/* Drawer */}
