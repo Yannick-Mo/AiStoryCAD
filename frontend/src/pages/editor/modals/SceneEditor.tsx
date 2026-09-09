@@ -224,54 +224,58 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
 
   if (!scene) return null
 
+  const charCount = content.length
+  const paragraphs = content.split(/\n+/).filter(s => s.trim()).length
+  const dirty = content !== savedContentRef.current
+
   if (goalOpen) {
     return <SceneGoalEditor scene={scene} onSave={onSaveGoal} onClose={() => setGoalOpen(false)} />
   }
 
   return (
     // no modal chrome: this editor fills the detail panel body it is rendered into
-    <div className="flex h-full w-full min-h-0 flex-col p-4">
-      <div className="flex h-full w-full min-h-0 flex-col">
-        <div className="flex justify-between items-start mb-3">
-          <div>
-            <div className="text-xs text-gray-500 mb-0.5">{chapterTitle}</div>
-            <h4 className="text-amber-600 font-medium">✎ {scene.title}</h4>
-          </div>
-          <div className="flex gap-2 items-center">
-            <button
-              onClick={() => setGoalOpen(true)}
-              className="px-2 py-1 rounded-lg text-xs bg-gray-800/80 text-amber-400/90 hover:bg-amber-700/40 hover:text-amber-300 transition-colors"
-              title="编辑场景目标 / 创作蓝图"
-            >
-              🎯 场景目标
-            </button>
-            <button
-              onClick={handleOpenAiPanel}
-              className="px-2 py-1 rounded-lg text-xs bg-amber-700/30 text-amber-400 hover:bg-amber-700/50 transition-colors"
-              title="打开 AI 助手"
-            >
-              AI
-            </button>
-            <button onClick={handleClose} className="text-gray-400 hover:text-white text-lg">✕</button>
-          </div>
+    <div className="flex h-full w-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-800/80 px-4 py-2.5">
+        <div className="min-w-0">
+          <div className="truncate text-[11px] text-gray-500">{chapterTitle}</div>
+          <h4 className="truncate text-sm font-medium text-gray-100">✎ {scene.title}</h4>
         </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mb-3 pb-3 border-b border-gray-800">
-          <span>🎭 {scene.povCharacter}</span>
-          <span>📍 {scene.setting}</span>
-          <span>⏰ {scene.time}</span>
+        <div className="flex shrink-0 items-center gap-1.5">
           <button
             onClick={() => setGoalOpen(true)}
-            className="flex items-center gap-1.5 italic text-gray-600 hover:text-amber-300 transition-colors group cursor-pointer"
+            className="rounded-lg bg-gray-800/80 px-2 py-1 text-xs text-amber-400/90 transition-colors hover:bg-amber-700/40 hover:text-amber-300"
             title="编辑场景目标 / 创作蓝图"
           >
-            <span>📝 {scene.summary ? (scene.summary.length > 48 ? scene.summary.slice(0, 48) + '…' : scene.summary) : '写场景目标：开场状态 → 冲突 → 目标达成'}</span>
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px] shrink-0">⛶ 编辑</span>
+            🎯 场景目标
           </button>
+          <button
+            onClick={handleOpenAiPanel}
+            className="rounded-lg bg-amber-700/30 px-2 py-1 text-xs text-amber-400 transition-colors hover:bg-amber-700/50"
+            title="打开 AI 助手"
+          >
+            AI
+          </button>
+          <button onClick={handleClose} title="取消（Esc）" className="px-1 text-gray-400 hover:text-white">✕</button>
         </div>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-gray-800/60 bg-gray-900/50 px-4 py-1.5 text-[11px] text-gray-500">
+        <span>🎭 {scene.povCharacter || '未设置 POV'}</span>
+        <span>📍 {scene.setting || '未设置场景'}</span>
+        <span>⏰ {scene.time || '未设置时间'}</span>
+        <button
+          onClick={() => setGoalOpen(true)}
+          className="group flex min-w-0 items-center gap-1.5 italic text-gray-600 transition-colors hover:text-amber-300"
+          title="编辑场景目标 / 创作蓝图"
+        >
+          <span className="truncate">📝 {scene.summary ? (scene.summary.length > 48 ? scene.summary.slice(0, 48) + '…' : scene.summary) : '写场景目标：开场状态 → 冲突 → 目标达成'}</span>
+          <span className="shrink-0 text-[9px] text-amber-400/80 opacity-0 transition-opacity group-hover:opacity-100">⛶ 编辑</span>
+        </button>
+      </div>
 
         {selectionToolbar && (
           <div
-            className="fixed z-[60] flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 shadow-xl"
+            className="fixed z-[60] flex items-center gap-1 rounded-lg border border-gray-700 bg-gray-800/95 px-2 py-1.5 shadow-xl backdrop-blur"
             style={{ top: selectionToolbar.top, left: selectionToolbar.left }}
           >
             <button onClick={() => handleAiInline('polish')} disabled={aiLoading}
@@ -289,86 +293,103 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
         )}
 
         {loadError ? (
-          <div className="flex-1 min-h-0 flex items-center justify-center text-red-400 text-sm">{loadError}</div>
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-red-400">{loadError}</div>
         ) : loading ? (
-          <div className="flex-1 min-h-0 flex items-center justify-center text-gray-500 text-sm">加载中...</div>
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">加载中...</div>
         ) : (
-          <div className="flex-1 min-h-0 relative">
-            <textarea
-              ref={textareaRef}
-              value={content}
-              onChange={e => setContent(e.target.value)}
-              onSelect={handleSelect}
-              onMouseUp={handleSelect}
-              onKeyUp={handleSelect}
-              disabled={!!diffState}
-              className="w-full h-full bg-gray-950 border border-gray-700 rounded-xl p-4 text-base text-gray-200 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              placeholder="在这里写小说正文..."
-            />
+          /* writing surface: a centred measure of prose instead of an input box */
+          <div className="min-h-0 flex-1 overflow-y-auto bg-gray-950/40">
+            <div className="mx-auto flex min-h-full w-full max-w-[46rem] flex-col px-6 py-6">
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                onSelect={handleSelect}
+                onMouseUp={handleSelect}
+                onKeyUp={handleSelect}
+                disabled={!!diffState}
+                spellCheck={false}
+                className="w-full flex-1 resize-none border-0 bg-transparent text-[15px] leading-[1.95] tracking-[0.01em] text-gray-100 caret-amber-400 outline-none selection:bg-amber-500/25 placeholder:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                placeholder="在这里写小说正文..."
+              />
+            </div>
           </div>
         )}
 
         {diffState && (
-          <div className="mt-2 bg-gray-800/95 border border-amber-600/40 rounded-lg p-3 shadow-xl backdrop-blur-sm">
-            <p className="text-[10px] text-gray-500 mb-2 px-1">AI 修改确认</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gray-900/80 rounded-md p-2.5 border border-gray-700">
-                <p className="text-[10px] text-gray-500 mb-1">原文</p>
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  {content.substring(0, diffState.start)}
-                  <span className="line-through text-red-400">{diffState.oldText}</span>
-                  {content.substring(diffState.end)}
-                </p>
+          <div className="shrink-0 border-t border-amber-600/30 bg-gray-900/95 px-4 py-3">
+            <div className="mx-auto w-full max-w-[46rem]">
+              <p className="mb-2 text-[10px] uppercase tracking-wider text-amber-500/70">AI 修改确认</p>
+              <div className="space-y-2">
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-2.5">
+                  <p className="mb-1 text-[10px] text-gray-500">原文</p>
+                  <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-500">
+                    {content.substring(0, diffState.start)}
+                    <span className="line-through text-red-400/90">{diffState.oldText}</span>
+                    {content.substring(diffState.end)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-amber-700/40 bg-gray-950/60 p-2.5">
+                  <p className="mb-1 text-[10px] text-gray-500">AI 结果</p>
+                  <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-200">
+                    {content.substring(0, diffState.start)}
+                    <span className="rounded bg-amber-700/30 px-0.5 text-amber-300">{diffState.newText}</span>
+                    {content.substring(diffState.end)}
+                  </p>
+                </div>
               </div>
-              <div className="bg-gray-900/80 rounded-md p-2.5 border border-amber-700/40">
-                <p className="text-[10px] text-gray-500 mb-1">AI 结果</p>
-                <p className="text-xs text-gray-200 leading-relaxed">
-                  {content.substring(0, diffState.start)}
-                  <span className="bg-amber-700/30 text-amber-300 rounded px-0.5">{diffState.newText}</span>
-                  {content.substring(diffState.end)}
-                </p>
+              <div className="mt-2 flex justify-end gap-2">
+                <button onClick={handleDiscardDiff}
+                  className="rounded-md bg-gray-800 px-3 py-1 text-xs text-gray-300 transition-colors hover:bg-gray-700"
+                >放弃</button>
+                <button onClick={handleApplyDiff}
+                  className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-black transition-colors hover:bg-amber-500"
+                >应用</button>
               </div>
-            </div>
-            <div className="flex gap-2 mt-2 justify-end">
-              <button onClick={handleApplyDiff}
-                className="px-3 py-1 rounded text-xs bg-amber-600 text-black font-medium hover:bg-amber-500 transition-colors"
-              >应用</button>
-              <button onClick={handleDiscardDiff}
-                className="px-3 py-1 rounded text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
-              >放弃</button>
             </div>
           </div>
         )}
 
         {continueSuggestions.length > 0 && !aiLoading && !diffState && (
-          <div className="bg-gray-800/95 border border-gray-700 rounded-lg p-2 shadow-xl backdrop-blur-sm mt-2">
-            <p className="text-[10px] text-gray-500 mb-1.5 px-1">续写建议：</p>
-            <div className="flex gap-1.5">
-              {continueSuggestions.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => handleContinueSelect(s)}
-                  className="flex-1 text-[11px] text-left px-2 py-1.5 rounded-md bg-gray-700/50 text-gray-300 hover:bg-amber-600/20 hover:text-amber-400 transition-colors"
-                >
-                  {s.text}
-                </button>
-              ))}
+          <div className="shrink-0 border-t border-gray-800/70 bg-gray-900/95 px-4 py-2">
+            <div className="mx-auto w-full max-w-[46rem]">
+              <p className="mb-1.5 text-[10px] text-gray-500">续写建议</p>
+              <div className="flex gap-1.5">
+                {continueSuggestions.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleContinueSelect(s)}
+                    className="flex-1 rounded-md bg-gray-800/60 px-2 py-1.5 text-left text-[11px] text-gray-300 transition-colors hover:bg-amber-600/20 hover:text-amber-400"
+                  >
+                    {s.text}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
 
-        <div className="flex gap-2 mt-3 justify-end">
-          {lastReplacement && (
-            <button onClick={handleUndo}
-              className="px-3 py-2 rounded-lg bg-gray-800 text-xs text-orange-400 border border-orange-700/40 hover:bg-orange-900/20 transition-colors mr-auto"
-            >撤销上次 AI 修改</button>
-          )}
-          <button onClick={handleSave} disabled={saving || loading} className="px-5 py-2 rounded-lg bg-amber-600 text-sm font-medium text-black hover:bg-amber-500 transition-colors disabled:opacity-50">
-            {saving ? '保存中...' : '保存'}
-          </button>
-          <button onClick={handleClose} className="px-5 py-2 rounded-lg bg-gray-800 text-sm text-gray-300 border border-gray-700 hover:bg-gray-700 transition-colors">取消</button>
+        {/* status bar */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-gray-800/80 bg-gray-900/70 px-4 py-2">
+          <div className="flex min-w-0 items-center gap-3 text-[11px] text-gray-600">
+            <span className="tabular-nums">{charCount} 字</span>
+            <span className="tabular-nums">{paragraphs} 段</span>
+            {dirty
+              ? <span className="flex items-center gap-1 text-amber-500/80"><span className="h-1.5 w-1.5 rounded-full bg-amber-500/80" />未保存</span>
+              : <span className="text-gray-700">已保存</span>}
+            {lastReplacement && (
+              <button onClick={handleUndo}
+                className="rounded-md border border-orange-700/40 px-2 py-0.5 text-[11px] text-orange-400 transition-colors hover:bg-orange-900/20"
+              >撤销上次 AI 修改</button>
+            )}
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button onClick={handleClose} className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-1.5 text-xs text-gray-300 transition-colors hover:bg-gray-700">取消</button>
+            <button onClick={handleSave} disabled={saving || loading} className="rounded-lg bg-amber-600 px-4 py-1.5 text-xs font-medium text-black transition-colors hover:bg-amber-500 disabled:opacity-50">
+              {saving ? '保存中...' : '保存'}
+            </button>
+          </div>
         </div>
-      </div>
     </div>
   )
 }
