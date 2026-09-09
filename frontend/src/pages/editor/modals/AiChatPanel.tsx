@@ -409,8 +409,8 @@ function ChatInput({
       onClick={() => onModeChange(m)}
       className={`flex items-center rounded-full border px-2.5 py-1 text-[10px] transition-colors ${
         mode === m
-          ? 'border-blue-500/50 bg-blue-600/15 text-blue-300'
-          : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
+          ? 'border-violet-400/50 bg-violet-500/25 text-violet-100'
+          : 'border-violet-400/20 text-violet-200/70 hover:border-violet-400/40 hover:text-violet-100'
       }`}
     >
       {label}
@@ -418,7 +418,7 @@ function ChatInput({
   )
 
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="rounded-3xl border border-violet-400/25 bg-violet-500/10 backdrop-blur-xl shadow-lg shadow-violet-950/20 p-4 flex flex-col gap-3">
       <textarea
         ref={taRef}
         value={input}
@@ -426,7 +426,7 @@ function ChatInput({
         onKeyDown={onKeyDown}
         placeholder={UI_TEXT.placeholder}
         disabled={loading || compressing}
-        className="w-full bg-transparent resize-none text-xs text-gray-300 leading-relaxed placeholder:text-gray-500 focus:outline-none disabled:opacity-50"
+        className="w-full bg-transparent resize-none text-xs text-violet-100/90 leading-relaxed placeholder:text-violet-200/40 focus:outline-none disabled:opacity-50"
       />
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
@@ -439,7 +439,7 @@ function ChatInput({
             title="添加附件（暂未开放）"
             aria-label="添加附件"
             onClick={undefined}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-200/70 hover:bg-violet-500/20 hover:text-violet-100 transition-colors"
           >
             <Plus size={16} strokeWidth={2} />
           </button>
@@ -881,7 +881,7 @@ export default function AiChatPanel({
         </div>
       )}
       {/* Input */}
-      <div className="p-3 border-t border-gray-800 shrink-0">
+      <div className="p-4 border-t border-gray-800 shrink-0">
         <ChatInput
           input={input}
           setInput={setInput}
