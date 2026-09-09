@@ -149,6 +149,21 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     if (hasSelection) setDetailOpen(true)
   }, [hasSelection])
 
+  // Closing the canvas deselects the side nav entry but keeps the detail panel
+  // open with cleared content.
+  const closeCanvas = useCallback(() => views.switchView(null), [views])
+
+  // Closing the panel clears the content and hides the container; whatever was
+  // selected on the canvas is deselected too.
+  const closeDetail = useCallback(() => {
+    setSelectedActId(null)
+    setSelectedChapter(null)
+    setSelectedRelation(null)
+    setSelectedCharacterId(null)
+    store.clearSelection()
+    setDetailOpen(false)
+  }, [store])
+
   if (store.loading) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">加载项目数据...</div>
   if (store.error) return <div className="h-screen bg-gray-950 flex items-center justify-center text-red-400 text-sm">{store.error}</div>
   if (!data) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">暂无数据</div>
@@ -388,21 +403,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }
 
   const canvasOpen = views.activeViewId !== null
-
-  // Closing the canvas deselects the side nav entry but keeps the detail panel
-  // open with cleared content.
-  const closeCanvas = useCallback(() => views.switchView(null), [views])
-
-  // Closing the panel clears the content and hides the container; whatever was
-  // selected on the canvas is deselected too.
-  const closeDetail = useCallback(() => {
-    setSelectedActId(null)
-    setSelectedChapter(null)
-    setSelectedRelation(null)
-    setSelectedCharacterId(null)
-    store.clearSelection()
-    setDetailOpen(false)
-  }, [store])
 
   const detailPanel = renderDetail()
 
