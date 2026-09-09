@@ -137,3 +137,13 @@ class TestPassthrough:
         for internal, display in TOOL_DISPLAY_NAMES.items():
             assert display, internal
             assert display != "执行操作", internal
+
+    def test_every_registered_tool_has_a_display_name(self):
+        """注册了却没写显示名的工具，在聊天里一律显示成「执行操作」，
+        用户看不出 AI 刚做了什么。这个用例防止以后再加工具时漏掉映射。"""
+        from app.agent.tools import get_tool_registry
+
+        registry = get_tool_registry(None)
+        assert len(registry) >= 50, "工具注册表没建起来"
+        missing = sorted(set(registry) - set(TOOL_DISPLAY_NAMES))
+        assert not missing, f"缺少中文显示名的工具：{missing}"

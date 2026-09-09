@@ -55,6 +55,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "create_character": "创建角色",
     "update_character": "修改角色",
     "delete_character": "删除角色",
+    "create_relation": "创建角色关系",
     "delete_relation": "删除关系",
     "update_relation": "修改关系",
     # Edge
@@ -75,6 +76,8 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "expand_selection": "展开选中内容",
     "compress_selection": "压缩选中内容",
     "sync_scene_blueprint": "同步场景蓝图",
+    "recalc_word_counts": "重新统计字数",
+    "invoke_skill": "启用写作技能",
     # Knowledge / Web
     "search_knowledge": "搜索知识库",
     "web_search": "联网搜索",
