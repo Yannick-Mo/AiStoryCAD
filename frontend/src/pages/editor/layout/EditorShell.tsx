@@ -236,6 +236,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
           <button
             onClick={() => setDrawerOpen(true)}
+            title="展开大纲"
+            aria-label="展开大纲"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-gray-400 hover:text-gray-200 bg-gray-800/50 hover:bg-gray-700 transition-colors"
           >
             ☰ 大纲
@@ -433,8 +435,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           open={drawerOpen}
           acts={data.acts}
           chapters={data.chapters}
+          selectedChapterId={activeChapter?.id ?? null}
           onClose={() => setDrawerOpen(false)}
-          onSelectChapter={handleChapterClick}
+          onSelectChapter={(id) => { views.switchView('narrative-plot'); handleChapterClick(id) }}
         />
 
         {/* Modals */}
