@@ -73,6 +73,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
+  // Which view the current selection belongs to. Independent of whether the
+  // canvas panel is open, so the detail panel keeps its content when the canvas
+  // is closed and can be driven from the outline instead.
+  const [selectionView, setSelectionView] = useState<string>('narrative-plot')
   const [floatingState, setFloatingState] = useState<Record<string, boolean>>({})
   const [dockTree, setDockTree] = useState<TreeNode>(loadDockTree)
   // Lives here, not in the panel: floating the panel remounts it, and the
@@ -90,6 +94,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
+    setSelectionView('narrative-plot')
     setSelectedActId(actId); setSelectedChapter(null); store.selectNode('act', actId)
   }, [store])
 
@@ -97,6 +102,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     if (!data) return
     const ch = data.chapters.find(c => c.id === chapterId)
     if (!ch) return
+    setSelectionView('narrative-plot')
     setSelectedChapter(ch); setSelectedActId(null); store.selectNode('chapter', chapterId)
   }, [data, store])
 
@@ -243,8 +249,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onDeleteAct={(id) => setConfirmDelete({ type: 'act', id })}
             onActResize={store.resizeAct}
             selection={store.selection}
-            onSelectNode={store.selectNode}
+            onSelectNode={(type, id) => { setSelectionView('narrative-plot'); store.selectNode(type, id) }}
             onSelectEdge={(edgeId: string) => {
+              setSelectionView('narrative-plot')
               setSelectedActId(null); setSelectedChapter(null); store.selectEdge(edgeId)
             }}
             onClearSelection={store.clearSelection}
@@ -257,8 +264,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <CharCanvas
             characters={data.characters}
             selection={{ type: selectedCharacterId ? 'character' : selectedRelation ? 'relation' : null, id: selectedCharacterId ?? (selectedRelation ? `${selectedRelation.sourceId}|${selectedRelation.relationId}` : null) }}
-            onSelectCharacter={(id) => { setSelectedCharacterId(id); setSelectedRelation(null) }}
-            onSelectRelation={(sourceId, relationId) => { setSelectedRelation({ sourceId, relationId }); setSelectedCharacterId(null) }}
+            onSelectCharacter={(id) => { setSelectionView('narrative-char'); setSelectedCharacterId(id); setSelectedRelation(null) }}
+            onSelectRelation={(sourceId, relationId) => { setSelectionView('narrative-char'); setSelectedRelation({ sourceId, relationId }); setSelectedCharacterId(null) }}
             onClearSelection={() => { setSelectedCharacterId(null); setSelectedRelation(null) }}
             onAddCharacter={() => { const ch = store.addCharacter(); setSelectedCharacterId(ch.id) }}
             onDeleteCharacter={(id) => { store.deleteCharacter(id); setSelectedCharacterId(null) }}
@@ -275,7 +282,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   // slot, so selecting a plot node and selecting a character node render into
   // the same container — only the content differs.
   const renderDetail = () => {
-    if (views.activeViewId === 'narrative-plot') {
+    if (selectionView === 'narrative-plot') {
       if (selectedAct) {
         return (
           <ActDetail
@@ -386,7 +393,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       return null
     }
 
-    if (views.activeViewId === 'narrative-char') {
+    if (selectionView === 'narrative-char') {
       if (selectedChar) {
         return (
           <CharacterDetail
@@ -564,8 +571,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         selectedActId={selectedActId}
         selectedChapterId={activeChapter?.id ?? null}
         onClose={() => setDrawerOpen(false)}
-        onSelectAct={(id) => { views.switchView('narrative-plot'); handleActClick(id) }}
-        onSelectChapter={(id) => { views.switchView('narrative-plot'); handleChapterClick(id) }}
+        onSelectAct={(id) => handleActClick(id)}
+        onSelectChapter={(id) => handleChapterClick(id)}
       />
 
       {/* Modals */}
