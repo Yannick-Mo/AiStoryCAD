@@ -255,7 +255,6 @@ export default function SceneEditor({ projectId, scene, chapterTitle, onClose, o
           >
             AI
           </button>
-          <button onClick={handleClose} title="取消（Esc）" className="px-1 text-gray-400 hover:text-white">✕</button>
         </div>
       </div>
 

@@ -68,10 +68,7 @@ export default function SceneGoalEditor({ scene, onSave, onClose }: SceneGoalEdi
           <div className="truncate text-[11px] text-gray-500">{scene.title}</div>
           <h4 className="truncate text-sm font-medium text-gray-100">🎯 场景目标 / 创作蓝图</h4>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full bg-gray-800/70 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">{charCount} 字</span>
-          <button onClick={handleClose} title="取消（Esc）" className="px-1 text-gray-400 hover:text-white">✕</button>
-        </div>
+        <span className="shrink-0 rounded-full bg-gray-800/70 px-2 py-0.5 text-[10px] tabular-nums text-gray-500">{charCount} 字</span>
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-gray-800/60 bg-gray-900/50 px-4 py-1.5 text-[11px] text-gray-500">
