@@ -289,6 +289,32 @@ class TestWriterPromptHygiene:
         assert "反问澄清" not in text
 
 
+class TestStructureIsNotPrescribed:
+    """日常对话路径不能规定「几幕」。
+
+    用户常常只带一个片段灵感来（「三顾茅庐」这一幕，或「空城计」这一场），
+    结构应该随灵感长出来，而不是被提示词逼着一次补全三幕五幕。
+    """
+
+    def test_app_guide_does_not_fix_the_act_count(self):
+        from app.agent.knowledge import APP_GUIDE
+
+        assert "通常3-5幕" not in APP_GUIDE
+        assert "通常 3-5 幕" not in APP_GUIDE
+        assert "结构是长出来的" in APP_GUIDE
+        assert "不要自动补全整个故事" in APP_GUIDE
+
+    def test_cowriter_prompt_does_not_fix_the_act_count(self):
+        from app.agent.prompts import PromptLoader
+
+        tpl = PromptLoader().load("cowriter")
+        assert tpl is not None
+        text = tpl.render()
+        assert "通常 3-5 幕" not in text
+        assert "数量不固定" in text
+        assert "结构按需生长" in text
+
+
 class TestSystemPromptContent:
     """Integration tests for the assembled system prompt content."""
 
