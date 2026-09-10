@@ -10,7 +10,7 @@ system: |
   - 场景蓝图：{{scene_summary}}
   {% if scene_setting %}- 设定：{{scene_setting}}{% endif %}
   {% if scene_time %}- 时间：{{scene_time}}{% endif %}
-  - 位置：第{{chapter_sort_order}}章《{{chapter_title}}》— {{act_name}}
+  - 位置：第 {{chapter_number}} 章《{{chapter_title}}》{% if act_name %}（{{act_name}}）{% endif %}
   - 本章蓝图：{{chapter_goal}}
 
   {% if chapter_scenes_framework %}
@@ -54,7 +54,6 @@ system: |
 
   ## 项目基调
   - 类型：{{genre}}
-  {% if tone %}- 风格：{{tone}}{% endif %}
   {% if global_settings %}- 世界观：{{global_settings}}{% endif %}
 
   {% if instructions %}
@@ -77,7 +76,7 @@ system: |
   5. 本章蓝图与场景结构用于理解全章意图；冲突时以当前场景蓝图为准。
 
   ## 叙事铁律
-  1. **视角一致** — 只写 {{pov_character_name}} 能看到、听到、感受到、想到的事物。不写其他角色的内心。
+  {% if pov_character_name %}1. **视角一致** — 只写 {{pov_character_name}} 能看到、听到、感受到、想到的事物。不写其他角色的内心。{% else %}1. **视角一致** — 全篇保持同一个视角人物的所见所感，不写其他角色的内心。{% endif %}
   2. **展示不告知** — 用动作、对话、感官细节呈现情感和状态，避免直接说"他很悲伤"。
   3. **对话即角色** — 每个人物的说话方式反映其身份、性格、教育背景和当下情绪。
   4. **节奏有致** — 紧张场景用短句、短段落、快节奏；抒情段落可舒展。

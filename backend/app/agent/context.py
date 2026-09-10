@@ -15,6 +15,7 @@ from app.knowledge.rag import RAGEngine
 from app.knowledge.skill_engine import _shared_engine as _shared_skill_engine
 from app.project.models import Project, ProjectConfig
 from app.storycad.order import order_by_sequence, tie_break
+from app.storycad.timeline import ordered_chapter_ids
 from app.storycad.models import (
     Act,
     Chapter,
@@ -1191,8 +1192,14 @@ class ContextBuilder:
         chapter = result.scalar_one_or_none()
         if chapter:
             ctx["chapter_title"] = chapter.title or ""
-            ctx["chapter_sort_order"] = chapter.sort_order
             ctx["chapter_goal"] = chapter.goal or ""
+            # 全局阅读序号（幕序 → 幕内序）。提示里的「第 N 章」不能用幕内序号，
+            # 否则多幕项目里每一幕的第一章都会被说成「第 1 章」。
+            ordered_ids = await ordered_chapter_ids(self.db, scene.project_id)
+            try:
+                ctx["chapter_number"] = ordered_ids.index(chapter.id) + 1
+            except ValueError:
+                ctx["chapter_number"] = chapter.sort_order
 
             # 4. Act
             if chapter.act_id:
@@ -1280,30 +1287,8 @@ class ContextBuilder:
 
                 ctx["chapter_scenes_framework"] = "\n".join(framework_lines)
 
-            # 7. Related edges for this chapter
-            result = await self.db.execute(
-                select(ChapterEdge).where(
-                    ChapterEdge.project_id == scene.project_id,
-                    ChapterEdge.source_id == chapter.id,
-                )
-            )
-            edges = result.scalars().all()
-            if edges:
-                # Fetch chapter titles for edge display
-                ch_ids = set()
-                for e in edges:
-                    ch_ids.add(e.source_id)
-                    ch_ids.add(e.target_id)
-                ch_result = await self.db.execute(
-                    select(Chapter).where(Chapter.id.in_(list(ch_ids)))
-                )
-                ch_map = {ch.id: ch.title for ch in ch_result.scalars().all()}
-                edge_lines = []
-                for e in edges:
-                    src = ch_map.get(e.source_id, "?")
-                    tgt = ch_map.get(e.target_id, "?")
-                    edge_lines.append(f"- {e.edge_type}: {src} → {tgt}")
-                ctx["related_edges"] = "\n".join(edge_lines)
+            # 说明：这里原来还会查「本章的剧情连线」塞进 ctx，但 writer 模板从不
+            # 引用它 —— 每次写作白查两次库，已移除。
 
         # 9. Project info
         result = await self.db.execute(
@@ -1363,7 +1348,7 @@ class ContextBuilder:
         if other_lines:
             ctx["other_characters"] = "\n".join(other_lines)
 
-        ctx["available_skills"] = await self._get_available_skills()
+        # available_skills 是主循环上下文的字段，writer 模板不使用，故不在这里拼。
         return ctx
 
     # ------------------------------------------------------------------

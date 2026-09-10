@@ -41,7 +41,9 @@ class WritingAgent:
         context: dict,
         user_prompt: str,
     ) -> WritingResult:
-        persona = render_prompt("persona") or ""
+        # 写作链路用专用人格：persona.yaml 是编辑型人格，里面的「不替用户直接写
+        # 内容 / 先解释推理 / 反问澄清」和「直接输出正文」的任务直接冲突。
+        persona = render_prompt("persona_writer") or ""
 
         kwargs = {
             "persona": persona,
@@ -54,9 +56,10 @@ class WritingAgent:
             logger.error("Failed to render writer prompt")
             return WritingResult()
 
+        ask = user_prompt.strip() if user_prompt else "请写出这个场景的正文。"
         messages: list[Message] = [
             Message(role="system", content=system),
-            Message(role="user", content="请直接输出正文，不要添加任何解释。"),
+            Message(role="user", content=f"{ask}\n直接输出正文，不要添加任何解释。"),
         ]
 
         text, truncated = await self._generate(client, messages)
