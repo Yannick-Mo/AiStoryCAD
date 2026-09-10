@@ -1279,9 +1279,14 @@ class ContextBuilder:
                     if marker_str:
                         line += f" {marker_str}"
 
-                    summary = (s.summary or "")[:200]
+                    # 完整蓝图，不截断：这一章的每一场蓝图在写作时都是既成事实，
+                    # 砍掉尾部会让模型看不到【节拍】【结尾状态】这些硬约束。
+                    # 多行蓝图整体缩进两格，保持它归属在当前场那条列表项里。
+                    summary = (s.summary or "").strip()
                     if summary:
-                        line += f"\n  {summary}"
+                        line += "\n" + "\n".join(
+                            f"  {ln}" for ln in summary.splitlines()
+                        )
 
                     framework_lines.append(line)
 
