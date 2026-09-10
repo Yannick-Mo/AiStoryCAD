@@ -9,6 +9,9 @@ interface PlotToolbarProps {
   onAddChapter: () => void
   onDeleteSelected: () => void
   onLayout: () => void
+  /** 按当前章节顺序重新投影主时序线（不改动因果 / 伏笔 / 人物连线） */
+  onRelinkTimeline: () => void
+  relinking?: boolean
 }
 
 const MODE_OPTIONS: { value: 'all' | EdgeType; label: string }[] = [
@@ -23,6 +26,7 @@ export default function PlotToolbar({
   selection, selectedActId, connectionMode,
   onAddAct, onAddChapter, onDeleteSelected,
   onConnectionModeChange, onLayout,
+  onRelinkTimeline, relinking,
 }: PlotToolbarProps) {
   const show = selection.type
 
@@ -49,6 +53,14 @@ export default function PlotToolbar({
         ))}
       </select>
       <button onClick={onLayout} className="px-2.5 py-1 rounded-lg text-xs text-gray-300 hover:bg-gray-700 transition-colors">◉ 布局</button>
+      <button
+        onClick={onRelinkTimeline}
+        disabled={relinking}
+        title="按当前章节顺序重建主时序线（只动时序连线，因果 / 伏笔 / 人物关联不受影响）"
+        className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${
+          relinking ? 'text-gray-600 cursor-wait' : 'text-gray-300 hover:bg-amber-600/20 hover:text-amber-400'
+        }`}
+      >{relinking ? '⟳ 重连中…' : '⟳ 重连时序'}</button>
     </div>
   )
 }

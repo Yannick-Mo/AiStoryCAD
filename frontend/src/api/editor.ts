@@ -22,6 +22,15 @@ export interface SyncResult {
   timeline_edges?: TimelineEdgePayload[]
 }
 
+/** 手动重建主时序线的结果（情节幕布顶部栏的「重连时序」按钮）。 */
+export interface RelinkResult {
+  ok: boolean
+  created: number
+  deleted: number
+  kept: number
+  timeline_edges: TimelineEdgePayload[]
+}
+
 // ============================================================
 // Editor data (full load + incremental sync)
 // ============================================================
@@ -44,6 +53,11 @@ export async function loadEditorData(projectId: string): Promise<EditorMockData>
 
 export async function syncEditorData(projectId: string, changes: SyncPayload): Promise<SyncResult> {
   return apiPost(`/api/projects/${projectId}/editor-data/sync`, changes)
+}
+
+/** 按当前章节顺序重新投影主时序线（顺序没变时服务端不会改动任何东西）。 */
+export async function relinkTimeline(projectId: string): Promise<RelinkResult> {
+  return apiPost(`/api/projects/${projectId}/timeline/relink`)
 }
 
 // ============================================================

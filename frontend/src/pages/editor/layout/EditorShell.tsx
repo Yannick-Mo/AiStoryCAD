@@ -124,7 +124,23 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }, [addToast]))
   const data = store.data
   const [layoutKey, setLayoutKey] = useState(0)
+  const [relinking, setRelinking] = useState(false)
   const handleAutoLayout = useCallback(() => setLayoutKey(k => k + 1), [])
+
+  // 顶部栏「重连时序」：手动把当前章节顺序重新投影成一条时序直链，
+  // 不必等下一次同步、也不用切视图才知道连线有没有跟上。
+  const handleRelinkTimeline = useCallback(async () => {
+    setRelinking(true)
+    try {
+      const result = await store.relinkTimeline()
+      if (result.created === 0 && result.deleted === 0) addToast('时序线已是最新', 'info')
+      else addToast(`时序线已重连：新增 ${result.created} 条，清理 ${result.deleted} 条`, 'success')
+    } catch (e) {
+      addToast((e as Error)?.message || '重连时序线失败', 'error')
+    } finally {
+      setRelinking(false)
+    }
+  }, [store, addToast])
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
@@ -392,6 +408,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onUpdateAct={store.updateAct}
             onUpdateScene={store.updateScene}
             onAddChapter={store.addChapter}
+            onMoveChapter={store.moveChapter}
             onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
           />
         )
@@ -635,6 +652,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 store.clearSelection()
               }}
               onLayout={handleAutoLayout}
+              onRelinkTimeline={handleRelinkTimeline}
+              relinking={relinking}
             />
           ) : null}
         >

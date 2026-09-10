@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import type { Act, Chapter, Scene } from '../../types'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { loadSceneContent } from '../../../../api/editor'
+import { orderActChapters } from '../../data/orderUtils'
 import { useToast } from '../../components/Toast'
 import { useSessionState } from '../../../../hooks/useSessionState'
 
@@ -13,6 +15,8 @@ interface ActDetailProps {
   onUpdateAct: (id: string, updates: Partial<Pick<Act, 'name' | 'color'>>) => void
   onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
   onAddChapter: (actId: string) => void
+  /** 幕内上移 / 下移一章：sort_order 是顺序的唯一真相，改完会重建时序线 */
+  onMoveChapter: (chapterId: string, direction: -1 | 1) => void
   onDeleteScene: (chapterId: string, sceneId: string) => void
   projectId?: string
 }
@@ -23,7 +27,7 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene, projectId }: ActDetailProps) {
+export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onMoveChapter, onDeleteScene, projectId }: ActDetailProps) {
   // session state: the panel remounts when it floats / docks / moves in the dock
   const [expandedId, setExpandedId] = useSessionState<string | null>('act.expandedId', null)
   const [editSceneId, setEditSceneId] = useSessionState<string | null>('act.editSceneId', null)
@@ -31,6 +35,9 @@ export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave,
   const [saving, setSaving] = useState(false)
   const [contentCache, setContentCache] = useSessionState<Record<string, string>>('act.contentCache', {})
   const { addToast } = useToast()
+
+  // 幕内顺序的唯一真相是 sortOrder：按它排一遍，箭头才能用下标判断首尾。
+  const orderedChapters = orderActChapters(chapters)
 
   const totalWords = chapters.reduce((s, c) => s + c.wordCount, 0)
   const totalScenes = chapters.reduce((s, c) => s + c.scenes.length, 0)
@@ -123,28 +130,52 @@ export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave,
             </button>
           </div>
         )}
-        {chapters.map(ch => {
+        {orderedChapters.map((ch, index) => {
           const isExpanded = expandedId === ch.id
           return (
             <div key={ch.id} className="bg-gray-800/40 border border-gray-700/40 rounded-xl overflow-hidden">
-              <button
-                onClick={() => toggleExpand(ch.id)}
-                className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-700/30 transition-colors text-left"
-              >
-                <span className="text-xs text-gray-500 w-4 shrink-0">{isExpanded ? '▾' : '▸'}</span>
-                <span className="text-sm font-medium text-gray-200 flex-1 truncate">{ch.title}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                  ch.status === 'final' ? 'bg-green-900/30 text-green-400' :
-                  ch.status === 'revising' ? 'bg-amber-900/30 text-amber-400' :
-                  'bg-gray-800 text-gray-500'
-                }`}>{STATUS_OPTIONS.find(s => s.value === ch.status)?.label}</span>
-                <span className="text-[10px] text-gray-600 w-10 text-right">{ch.wordCount > 0 ? `${ch.wordCount}w` : '-'}</span>
+              <div className="flex items-center gap-2 pl-3 pr-2 py-2.5 hover:bg-gray-700/30 transition-colors">
                 <button
-                  onClick={(e) => { e.stopPropagation(); onSelectChapter(ch.id) }}
-                  className="text-[10px] text-gray-600 hover:text-amber-400 transition-colors px-1"
+                  onClick={() => toggleExpand(ch.id)}
+                  aria-expanded={isExpanded}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  <span className="text-xs text-gray-500 w-4 shrink-0">{isExpanded ? '▾' : '▸'}</span>
+                  <span className="text-sm font-medium text-gray-200 flex-1 truncate">{ch.title}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                    ch.status === 'final' ? 'bg-green-900/30 text-green-400' :
+                    ch.status === 'revising' ? 'bg-amber-900/30 text-amber-400' :
+                    'bg-gray-800 text-gray-500'
+                  }`}>{STATUS_OPTIONS.find(s => s.value === ch.status)?.label}</span>
+                  <span className="text-[10px] text-gray-600 w-10 text-right">{ch.wordCount > 0 ? `${ch.wordCount}w` : '-'}</span>
+                </button>
+                {/* 与大纲面板一致：箭头就在这里把该章在本幕内上移 / 下移 */}
+                <div className="flex shrink-0 flex-col gap-0.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onMoveChapter(ch.id, -1) }}
+                    disabled={index === 0}
+                    title="上移"
+                    aria-label={`把「${ch.title}」上移`}
+                    className="rounded p-0.5 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-200 disabled:cursor-default disabled:opacity-25"
+                  >
+                    <ChevronUp size={12} />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onMoveChapter(ch.id, 1) }}
+                    disabled={index === orderedChapters.length - 1}
+                    title="下移"
+                    aria-label={`把「${ch.title}」下移`}
+                    className="rounded p-0.5 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-200 disabled:cursor-default disabled:opacity-25"
+                  >
+                    <ChevronDown size={12} />
+                  </button>
+                </div>
+                <button
+                  onClick={() => onSelectChapter(ch.id)}
+                  className="shrink-0 px-1 text-[10px] text-gray-600 transition-colors hover:text-amber-400"
                   title="聚焦到本章"
                 >🔍</button>
-              </button>
+              </div>
 
               {isExpanded && (
                 <div className="px-3 pb-3 space-y-2 border-t border-gray-700/30 pt-2">

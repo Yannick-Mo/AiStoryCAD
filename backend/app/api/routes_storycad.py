@@ -9,6 +9,7 @@ from app.storycad.models import (
     Scene, Chapter, Act, ChapterEdge, Character, CharacterRelation,
 )
 from app.storycad.entity_map import ENTITY_MAP
+from app.storycad.timeline import reconcile_timeline_chain
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["storycad"])
 
@@ -87,6 +88,39 @@ async def sync_editor_data(
     # 这样「顺序变了 → 连线跟着变」不需要前端再实现一遍同样的算法。
     timeline_edges = await repo.list_timeline_edges(project_id)
     return {"ok": True, "version": version, "timeline_edges": timeline_edges}
+
+
+# ============================================================
+# Main timeline: manual re-projection
+# ============================================================
+
+@router.post("/timeline/relink")
+async def relink_timeline(
+    project_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按当前章节顺序重建主时序线（情节幕布顶部栏的「重连时序」按钮）。
+
+    顺序的唯一真相是 sort_order（幕序 → 幕内序号），这里只是把它重新投影成
+    连线；因果 / 伏笔 / 人物关联连线不受影响，顺序没变时不会改动任何东西。
+    """
+    await _check_project_owner(project_id, current_user, db)
+    try:
+        result = await reconcile_timeline_chain(db, project_id)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    repo = await _get_repo(db)
+    timeline_edges = await repo.list_timeline_edges(project_id)
+    return {
+        "ok": True,
+        "created": result["created"],
+        "deleted": result["deleted"],
+        "kept": result["kept"],
+        "timeline_edges": timeline_edges,
+    }
 
 
 # ============================================================

@@ -1,6 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { EditorMockData } from '../types'
-import { loadEditorData, syncEditorData, type SyncPayload } from '../../../api/editor'
+import {
+  loadEditorData, syncEditorData, relinkTimeline as apiRelinkTimeline,
+  type SyncPayload, type TimelineEdgePayload,
+} from '../../../api/editor'
 import { useActs } from './hooks/useActs'
 import { useChapters } from './hooks/useChapters'
 import { useEdges } from './hooks/useEdges'
@@ -79,6 +82,19 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   const flushChangesRef = useRef<() => Promise<boolean>>()
   const runFlushRef = useRef<() => Promise<boolean>>()
 
+  // 主时序线由服务端按章节顺序维护：用返回结果替换本地副本，这样
+  // 「调顺序 → 连线跟着变」不需要前端再实现一遍同样的算法。
+  const applyTimelineEdges = useCallback((edges?: TimelineEdgePayload[]) => {
+    if (!edges) return
+    const timeline = edges.map(e => ({
+      id: e.id, sourceId: e.source_id, targetId: e.target_id, type: 'timeline' as const,
+    }))
+    setData(d => d ? {
+      ...d,
+      edges: [...d.edges.filter(e => e.type !== 'timeline'), ...timeline],
+    } : d)
+  }, [])
+
   const runFlush = useCallback(async (): Promise<boolean> => {
     if (changesRef.current.length === 0) return true
     if (inFlightRef.current) return false
@@ -99,17 +115,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     try {
       const result = await syncEditorData(projectId, payload)
       setVersion(result.version)
-      // 主时序线由服务端按章节顺序维护：用返回结果替换本地副本，这样
-      // 「调顺序 → 连线跟着变」不需要前端再实现一遍同样的算法。
-      if (result.timeline_edges) {
-        const timeline = result.timeline_edges.map(e => ({
-          id: e.id, sourceId: e.source_id, targetId: e.target_id, type: 'timeline' as const,
-        }))
-        setData(d => d ? {
-          ...d,
-          edges: [...d.edges.filter(e => e.type !== 'timeline'), ...timeline],
-        } : d)
-      }
+      applyTimelineEdges(result.timeline_edges)
       flushAttemptRef.current = 0
       return true
     } catch (err) {
@@ -133,7 +139,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     } finally {
       inFlightRef.current = false
     }
-  }, [projectId])
+  }, [projectId, applyTimelineEdges])
 
   runFlushRef.current = runFlush
 
@@ -200,6 +206,21 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   // 顺序一变服务端就会重建主时序线；这几个动作立刻 flush 一次，
   // 画布上的连线不用等 3 秒防抖才跟上。
   const flushSoon = useCallback(() => { void flushChangesRef.current?.() }, [])
+
+  // 顶部栏「重连时序」：顺序改动可能还压在防抖里，先把它落库再让服务端重新
+  // 投影，否则重建出来的是旧顺序的链。落不了库的改动宁可报错，也不重建错的链。
+  const relinkTimeline = useCallback(async (): Promise<{ created: number; deleted: number }> => {
+    for (let attempt = 0; attempt < 5 && changesRef.current.length > 0; attempt++) {
+      await flushChangesRef.current?.()
+      if (changesRef.current.length > 0) await new Promise(r => setTimeout(r, 150))
+    }
+    if (changesRef.current.length > 0) {
+      throw new Error('还有未保存的改动，请等同步完成后再重连时序线')
+    }
+    const result = await apiRelinkTimeline(projectId)
+    applyTimelineEdges(result.timeline_edges)
+    return { created: result.created, deleted: result.deleted }
+  }, [projectId, applyTimelineEdges])
 
   const addChapterAction = useCallback((actId: string) => {
     const created = addChapter(actId)
@@ -276,7 +297,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     saveGlobalSettings,
     updateAct, updateChapter, updateScene, updateEdge,
     updateCharacter, updateRelation,
-    flushChanges, hasPendingChanges,
+    flushChanges, relinkTimeline, hasPendingChanges,
     enqueueChange,
   }
 }
