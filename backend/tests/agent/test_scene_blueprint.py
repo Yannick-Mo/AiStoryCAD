@@ -95,9 +95,9 @@ def test_writer_yaml_has_blueprint_discipline():
         pov_character_name="小明",
         action="write",
     )
-    assert "蓝图纪律" in rendered
+    assert "蓝图怎么用" in rendered
     assert "场景蓝图" in rendered
-    assert "事件级忠实" in rendered
+    assert "必须发生" in rendered
     assert "【关键信息】" in rendered
 
 

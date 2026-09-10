@@ -52,6 +52,16 @@ def _sync_prompt() -> str:
     )
 
 
+def _writer_prompt(**overrides) -> str:
+    ctx = dict(
+        persona="作家", project_title="T", scene_title="S", scene_summary="蓝图",
+        chapter_number=1, chapter_title="C", chapter_goal="G", genre="悬疑",
+        pov_character_name="小", action="write",
+    )
+    ctx.update(overrides)
+    return render_prompt("writer", **ctx)
+
+
 def _example_value(prompt: str, key: str) -> str:
     match = re.search(r'"%s": "(.*?)"' % key, prompt, re.S)
     assert match, f"模板里找不到 {key} 的示例"
@@ -201,13 +211,10 @@ class TestToolDescriptionsUseTheHints:
 
 
 class TestWriterSideTreatsBlueprintAsIntent:
-    def test_writer_rules_are_event_level_not_verbatim(self):
-        prompt = render_prompt(
-            "writer", persona="作家", project_title="T", scene_title="S",
-            scene_summary="蓝图", chapter_number=1, chapter_title="C",
-            chapter_goal="G", genre="悬疑", pov_character_name="小", action="write",
-        )
-        assert "事件级忠实" in prompt
+    def test_writer_rules_are_not_verbatim_translation(self):
+        prompt = _writer_prompt()
+        assert "蓝图怎么用" in prompt
+        assert "读者能获得这个信息" in prompt
         assert "唯一剧本" not in prompt
         assert "不得擅自改动" not in prompt
 
@@ -215,6 +222,53 @@ class TestWriterSideTreatsBlueprintAsIntent:
         persona = PromptLoader().load("persona_writer").render()
         assert "唯一剧本" not in persona
         assert "不规定「怎么写」" in persona
+
+
+class TestWriterKnowsHowToUseTheBlueprint:
+    """写作端要懂「怎么用蓝图」，而不只是「要落实蓝图」。
+
+    以前只有一句「必须全部落实」：模型只能把蓝图当验收表逐条翻译，并把设定说给读者听。
+    """
+
+    def test_authority_is_ranked(self):
+        prompt = _writer_prompt()
+        for level in ("硬约束", "必须发生", "参考项", "仅背景"):
+            assert level in prompt, level
+        assert "以当前场景蓝图为准" in prompt
+
+    def test_other_scenes_are_background_only(self):
+        prompt = _writer_prompt()
+        assert "不得实现其他场的事件" in prompt
+        assert "不得预告或暗示" in prompt
+
+    def test_information_may_arrive_indirectly(self):
+        prompt = _writer_prompt()
+        assert "不是「必须写成一句台词」" in prompt
+        assert "优先选不明说的那一种" in prompt
+
+    def test_anti_checklist_rules(self):
+        prompt = _writer_prompt()
+        assert "## 反罗列" in prompt
+        for rule in ("自我介绍", "不复述读者已经知道的信息", "伏笔只埋不点明", "总结句收尾"):
+            assert rule in prompt, rule
+
+    def test_scene_is_driven_by_character_desire(self):
+        assert "什么在挡他" in _writer_prompt()
+
+    def test_length_follows_the_scene_not_the_checklist(self):
+        prompt = _writer_prompt()
+        assert "不由蓝图条目数决定" in prompt
+        assert "自然而定" not in prompt
+
+    def test_genre_skill_is_advice_not_a_priority_override(self):
+        prompt = _writer_prompt(skill_writing_guidance="爽点模式 A/B/C")
+        assert "类型写作参考" in prompt
+        assert "优先级高于通用写作原则" not in prompt
+
+    def test_persona_asks_for_dramatisation(self):
+        persona = PromptLoader().load("persona_writer").render()
+        assert "要点靠戏演出来，不靠嘴说出来" in persona
+        assert "从人物的欲望写起" in persona
 
 
 class TestLint:
