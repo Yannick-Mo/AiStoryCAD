@@ -241,9 +241,11 @@ class TestWriterKnowsHowToUseTheBlueprint:
         assert "旧格式写作【节拍】" in _writer_prompt()
 
     def test_other_scenes_are_background_only(self):
+        """作用域写成肯定句：否定清单会让模型刻意回避，反而分散注意力。"""
         prompt = _writer_prompt()
-        assert "不得实现其他场的事件" in prompt
-        assert "不得预告或暗示" in prompt
+        assert "本场只落实当前场景蓝图里的事件" in prompt
+        assert "不得预告" not in prompt
+        assert "不得实现其他场" not in prompt
 
     def test_information_may_arrive_indirectly(self):
         prompt = _writer_prompt()
@@ -252,9 +254,11 @@ class TestWriterKnowsHowToUseTheBlueprint:
 
     def test_anti_checklist_rules(self):
         prompt = _writer_prompt()
-        assert "## 反罗列" in prompt
-        for rule in ("自我介绍", "不复述读者已经知道的信息", "伏笔只埋不点明", "总结句收尾"):
+        assert "要点自然落地" in prompt
+        for rule in ("设定靠行动显出来", "已知信息直接当已知用", "伏笔就是细节本身",
+                     "收在一件具体的东西上"):
             assert rule in prompt, rule
+        assert "禁止" not in prompt.split("### 要点自然落地")[1].split("###")[0]
 
     def test_scene_is_driven_by_character_desire(self):
         assert "什么在挡他" in _writer_prompt()
@@ -271,8 +275,9 @@ class TestWriterKnowsHowToUseTheBlueprint:
 
     def test_persona_asks_for_dramatisation(self):
         persona = PromptLoader().load("persona_writer").render()
-        assert "要点靠戏演出来，不靠嘴说出来" in persona
+        assert "要点靠戏演出来" in persona
         assert "从人物的欲望写起" in persona
+        assert "逐条翻译的验收表" in persona
 
 
 class TestLint:
