@@ -86,6 +86,16 @@ class TestSpecSurface:
         assert "计划态字段（【目标】【因果链】【本场基调】）不再保留" in sync
         assert "事实档案是**替换**" in sync
 
+    def test_no_negative_boundary_field(self):
+        """蓝图不写「不涉及」这类否定边界。
+
+        提示词给写作 Agent 的否定清单会被它当成内容去处理（「不出现 X」反而容易让它
+        在正文里提到 X），所以边界靠「只写该写的」表达。
+        """
+        assert "不涉及" not in CHAPTER_BLUEPRINT_FIELDS + SCENE_BLUEPRINT_FIELDS
+        assert "【不涉及】" not in render_spec("all")
+        assert "否定式的边界" in render_spec("all")
+
     def test_hints_carry_every_field(self):
         for field in CHAPTER_BLUEPRINT_FIELDS:
             assert f"【{field}】" in chapter_hint()
