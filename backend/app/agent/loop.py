@@ -537,7 +537,8 @@ async def _build_turn_sections(
             "- 仅在用户明确请求或确认计划后调用写作工具\n"
             "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
             "- 你可以根据用户的思路提供完整段落草稿作为示范或起点\n"
-            "- 场景蓝图先行：创建/规划场景时必须写好完整的场景蓝图（summary 含【目标】【节拍】【关键信息】【结尾状态】）\n"
+            "- 蓝图先行：创建/规划幕、章、场景时，先按《创作蓝图规范》写好完整蓝图"
+            "（章 goal 与场景 summary 的字段见规范），不要留空、不要只写一句话\n"
             "- 写完正文后必须调用 sync_scene_blueprint 同步场景蓝图并做自评；整章完成后 update_chapter(status=final)"
         )
     else:
@@ -703,6 +704,10 @@ async def autonomous_loop(
         base_sections.append("chat_mode_restrictions")
 
     base_system = _build_chat_system_prompt(base_sections)
+    # 蓝图规范：写章蓝图 / 场景蓝图时看的就是这一份。放在应用参考之前——它是
+    # 「怎么建」的规则，比工具清单更贴近写入动作本身。
+    from app.agent.blueprint import render_spec
+    base_system += "\n\n" + render_spec("all")
     from app.agent.knowledge import APP_GUIDE
     base_system += "\n\n# --- 应用参考 ---\n" + APP_GUIDE
     base_system += """

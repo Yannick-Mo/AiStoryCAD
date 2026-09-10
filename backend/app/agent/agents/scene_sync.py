@@ -16,6 +16,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.blueprint import render_spec
 from app.agent.prompts import render_prompt
 from app.agent.utils import GenerationError, parse_json_safe
 from app.llm.client import LLMClient
@@ -80,6 +81,8 @@ async def build_scene_sync_material(
         "scene_setting": scene.setting or "",
         "scene_time": scene.scene_time or "",
         "pov_character_name": scene.pov_character or "",
+        # 回写规范（事实档案字段）由 blueprint.py 统一提供，模板里只留占位符
+        "blueprint_spec": render_spec("sync"),
     }
 
     if content is not None:

@@ -11,6 +11,7 @@ from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterR
 from app.storycad.order import order_by_sequence
 from app.storycad.repository import AiStoryCADRepository
 from app.storycad.timeline import reconcile_timeline_chain
+from app.agent.blueprint import chapter_hint, lint_note
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.project_creator.state import MaterialState
 from app.utils import row_to_dict
@@ -67,7 +68,7 @@ class CreateChapterTool(BaseTool):
             "properties": {
                 "act_id": {"type": "string", "description": "所属幕ID，来自项目框架结构概览或 read_chapters 返回的 act_id"},
                 "title": {"type": "string", "description": "章节标题"},
-                "goal": {"type": "string", "description": "章节蓝图（章级创作计划：含【章核心】【预期节拍】【情绪弧线】【结尾钩】【角色侧重】【主题浸染】）"},
+                "goal": {"type": "string", "description": chapter_hint()},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
             },
             "required": ["act_id"],
@@ -106,7 +107,11 @@ class CreateChapterTool(BaseTool):
             # 新章进了顺序就把它接进主时序线
             await reconcile_timeline_chain(db, project_id)
             await db.commit()
-            return ToolResult(success=True, data=created)
+            data = dict(created)
+            note = lint_note(str(kwargs.get("goal", "")))
+            if note:
+                data["blueprint_note"] = note
+            return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
             return self._err(e)

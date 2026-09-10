@@ -1,4 +1,5 @@
 import asyncio
+from app.agent.blueprint import render_spec
 from app.agent.project_creator.state import MaterialState, SceneDef
 from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt, GenerationError
 from app.llm.types import Message
@@ -38,6 +39,8 @@ async def _generate_one_chapter(
             chapter_goal=chapter_goal,
             characters_raw_text=_chars_text(characters_raw, designed_chars),
             world_elements=world_elements,
+            # 蓝图规范由 blueprint.py 统一提供，模板里只留一个占位符
+            blueprint_spec=render_spec("scene"),
         )
     except KeyError as e:
         logger.error("_generate_one_chapter: KeyError in scenes prompt template: {}", e)

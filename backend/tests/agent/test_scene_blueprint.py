@@ -73,7 +73,8 @@ def test_system_yaml_has_blueprint_discipline_section():
     assert "blueprint_discipline" in builder.cacheable_sections
     text = builder.get_static_section("blueprint_discipline")
     assert "sync_scene_blueprint" in text
-    assert "【结尾状态】" in text
+    # 字段与写法只在《创作蓝图规范》里定义（见 test_blueprint_spec.py）
+    assert "创作蓝图规范" in text
 
 
 def test_writer_yaml_has_blueprint_discipline():
@@ -96,26 +97,40 @@ def test_writer_yaml_has_blueprint_discipline():
     )
     assert "蓝图纪律" in rendered
     assert "场景蓝图" in rendered
-    assert "【节拍】" in rendered or "关键信息" in rendered
+    assert "事件级忠实" in rendered
+    assert "【关键信息】" in rendered
 
 
 def test_project_creator_prompts_are_blueprint_format():
+    from app.agent.blueprint import render_spec
     from app.agent.utils import load_project_prompt
 
-    structure = load_project_prompt("material_structure")
+    # 字段与写法由 blueprint.py 注入，模板里只留占位符
+    structure = load_project_prompt("material_structure").format(
+        genre="", tone="", plot_summary="", world_elements="",
+        blueprint_spec=render_spec("chapter"),
+    )
+    assert "{blueprint_spec}" not in structure
     assert "【章核心】" in structure
-    assert "【预期节拍】" in structure
+    assert "【因果链】" in structure
     assert "【结尾钩】" in structure
 
-    scenes = load_project_prompt("material_scenes")
+    scenes = load_project_prompt("material_scenes").format(
+        act_name="", chapter_title="", chapter_goal="",
+        characters_raw_text="", world_elements="",
+        blueprint_spec=render_spec("scene"),
+    )
+    assert "{blueprint_spec}" not in scenes
     assert "【目标】" in scenes
-    assert "【节拍】" in scenes
+    assert "【因果链】" in scenes
     assert "【结尾状态】" in scenes
     assert "不依赖任何正文" in scenes
 
 
 def test_scene_sync_prompt_renders_and_has_template():
     from app.agent.prompts import render_prompt
+
+    from app.agent.blueprint import render_spec
 
     rendered = render_prompt(
         "scene_sync",
@@ -129,9 +144,11 @@ def test_scene_sync_prompt_renders_and_has_template():
         scene_setting="酒馆",
         scene_time="傍晚",
         genre="悬疑",
+        blueprint_spec=render_spec("sync"),
     )
     assert rendered
-    assert "【目标】" in rendered
+    assert "{{ blueprint_spec }}" not in rendered
+    assert "【本场】" in rendered
     assert "summary" in rendered
     assert "quality_score" in rendered
 

@@ -8,7 +8,8 @@ interface SceneGoalEditorProps {
   onClose: () => void
 }
 
-const PLACEHOLDER = '写本场景要完成什么...\n\n例如：\n【目标】林夏在拍卖会上拿到地图碎片，同时与宿敌首次正面交锋\n【节拍】入场 → 竞价 → 冲突升级 → 夺图逃离\n【关键信息】碎片共 7 片；拍卖会由李家暗中操办\n【结尾状态】林夏负伤但得手，暴露了会古武的事实'
+// 与后端 app/agent/blueprint.py 的《创作蓝图规范》一致：只写事件与状态、用 A → B 写因果。
+const PLACEHOLDER = '写这一场要演什么（事件与状态，不写镜头和台词）...\n\n例如：\n【目标】林夏在拍卖会上拿到地图碎片，并与宿敌首次正面交锋\n【因果链】1. 宿敌当众抬价 → 林夏被迫动用古武；2. 李家暗中封场 → 她只能抢了就走\n【关键信息】碎片共 7 片；拍卖会由李家暗中操办\n【结尾状态】林夏负伤但得手，会古武的事实已经暴露\n【本场基调】紧张、克制\n【不涉及】不揭示李家背后的主使'
 
 /**
  * Scene-goal / blueprint editor. Like the chapter goal editor it fills the
@@ -75,7 +76,7 @@ export default function SceneGoalEditor({ scene, onSave, onClose }: SceneGoalEdi
         <span>🎭 {scene.povCharacter || '未设置 POV'}</span>
         <span>📍 {scene.setting || '未设置场景'}</span>
         <span>⏰ {scene.time || '未设置时间'}</span>
-        <span className="italic text-gray-600">建议按【目标】【节拍】【关键信息】【结尾状态】组织</span>
+        <span className="italic text-gray-600">建议按【目标】【因果链】【关键信息】【结尾状态】【不涉及】组织（A → B 写因果）</span>
       </div>
 
       {/* writing surface: a centred measure of prose instead of an input box */}

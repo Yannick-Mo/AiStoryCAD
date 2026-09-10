@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.agent.blueprint import chapter_hint, lint_note, scene_hint
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, Scene, SceneContent
@@ -152,7 +153,7 @@ class ReadChapterTool(BaseTool):
 class ReadSceneTool(BaseTool):
     meta = ToolMeta(
         name="read_scene",
-        description="读取单个场景：蓝图全文（summary，含【目标】【节拍】【关键信息】【结尾状态】）+ POV/地点/时间/字数/是否已写/正文长度。"
+        description="读取单个场景：蓝图全文（summary，字段见《创作蓝图规范》）+ POV/地点/时间/字数/是否已写/正文长度。"
                     "注意 word_count 为字数、body_chars 为字符数（含标点），口径不同。"
                     "scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes。"
                     "注意：本工具不含正文——需要正文请用 read_scene_content 读取（一次返回完整正文）",
@@ -264,7 +265,7 @@ class CreateSceneTool(BaseTool):
                 "chapter_id": {"type": "string", "description": "所属章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "title": {"type": "string", "description": "场景标题"},
                 "sort_order": {"type": "integer", "description": "章内排序序号（省略时接在该章末尾）"},
-                "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
+                "summary": {"type": "string", "description": scene_hint()},
                 "content": {"type": "string", "description": "场景正文"},
                 "pov_character": {"type": "string", "description": "POV角色"},
                 "setting": {"type": "string", "description": "场景地点"},
@@ -317,6 +318,9 @@ class CreateSceneTool(BaseTool):
             if wc is not None:
                 data["word_count"] = wc
                 data["content_preview"] = content[:200]
+            note = lint_note(scene_data["summary"])
+            if note:
+                data["blueprint_note"] = note
             return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
@@ -334,7 +338,7 @@ class UpdateSceneTool(BaseTool):
             "properties": {
                 "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
                 "title": {"type": "string", "description": "场景标题"},
-                "summary": {"type": "string", "description": "场景蓝图（创作计划：含【目标】【节拍】【关键信息】【结尾状态】）"},
+                "summary": {"type": "string", "description": scene_hint()},
                 "content": {"type": "string", "description": "场景完整正文（整体替换，会覆盖旧文）"},
                 "pov_character": {"type": "string", "description": "POV角色"},
                 "setting": {"type": "string", "description": "场景地点"},
@@ -359,6 +363,10 @@ class UpdateSceneTool(BaseTool):
             updated = await repo.update_entity(Scene, update_data)
             if not updated:
                 return self._not_found("Scene")
+            if "summary" in kwargs and isinstance(updated, dict):
+                note = lint_note(str(kwargs["summary"]))
+                if note:
+                    updated["blueprint_note"] = note
             if "content" in kwargs:
                 content = kwargs["content"]
                 result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
@@ -394,7 +402,7 @@ class SetChapterGoalTool(BaseTool):
             "type": "object",
             "properties": {
                 "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
-                "goal": {"type": "string", "description": "章节蓝图（含【章核心】【预期节拍】【情绪弧线】【结尾钩】【角色侧重】【主题浸染】）"},
+                "goal": {"type": "string", "description": chapter_hint()},
             },
             "required": ["chapter_id", "goal"],
         },
@@ -417,7 +425,11 @@ class SetChapterGoalTool(BaseTool):
                 return self._not_found("Chapter")
             ch.goal = goal_raw
             await db.commit()
-            return ToolResult(success=True, data={"chapter_id": str(ch_id), "goal": goal_raw})
+            data: dict = {"chapter_id": str(ch_id), "goal": goal_raw}
+            note = lint_note(goal_raw)
+            if note:
+                data["blueprint_note"] = note
+            return ToolResult(success=True, data=data)
         except Exception as e:
             await db.rollback()
             return self._err(e)
@@ -434,7 +446,7 @@ class UpdateChapterTool(BaseTool):
                 "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
                 "title": {"type": "string", "description": "章节标题"},
                 "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
-                "goal": {"type": "string", "description": "章节蓝图（章级创作计划）"},
+                "goal": {"type": "string", "description": chapter_hint()},
                 "sort_order": {"type": "integer", "description": "幕内排序序号（越小越靠前）"},
             },
             "required": ["chapter_id"],
@@ -470,12 +482,17 @@ class UpdateChapterTool(BaseTool):
                 await db.flush()
                 await reconcile_timeline_chain(db, ch.project_id)
             await db.commit()
-            return ToolResult(success=True, data={
+            data_ch: dict = {
                 "chapter_id": str(ch_id),
                 "title": ch.title,
                 "status": ch.status,
                 "sort_order": ch.sort_order,
-            })
+            }
+            if "goal" in kwargs:
+                note = lint_note(str(kwargs["goal"]))
+                if note:
+                    data_ch["blueprint_note"] = note
+            return ToolResult(success=True, data=data_ch)
         except Exception as e:
             await db.rollback()
             return self._err(e)
