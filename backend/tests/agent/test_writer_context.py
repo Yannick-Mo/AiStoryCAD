@@ -24,6 +24,9 @@ LONG_SUMMARY = (
     + "\n【结尾状态】灵石到手 —— 尾标记=BLUEPRINT_TAIL_MARKER"
 )
 
+# 当前场自己那份蓝图：prompt 上半部分已经完整给过一次，框架里不该再出现
+CURRENT_SUMMARY = "【目标】收尾\n【结尾状态】钩子=CURRENT_ONLY_MARKER"
+
 
 async def _project(db_session: AsyncSession, test_user: dict):
     repo = AiStoryCADRepository(db_session)
@@ -54,7 +57,7 @@ async def test_framework_carries_every_scene_blueprint_in_full(
     project, repo, chapter_id = await _project(db_session, test_user)
     await _add_scene(repo, project.id, chapter_id, "开场", "【目标】冷启动")
     await _add_scene(repo, project.id, chapter_id, "退婚", LONG_SUMMARY)
-    current = await _add_scene(repo, project.id, chapter_id, "字据", "【目标】收尾")
+    current = await _add_scene(repo, project.id, chapter_id, "字据", CURRENT_SUMMARY)
 
     ctx = await ContextBuilder(db_session).build_for_writing(uuid.UUID(current), "write")
     framework = ctx["chapter_scenes_framework"]
@@ -67,6 +70,22 @@ async def test_framework_carries_every_scene_blueprint_in_full(
     assert "← 当前场景" in framework
     assert "→ 下一场" not in framework, "当前是最后一场，不应该有下一场标记"
     assert ctx["chapter_number"] == 1
+
+
+async def test_current_scene_blueprint_is_not_repeated(
+    db_session: AsyncSession, test_user: dict
+):
+    """当前场的蓝图在上面的「## 当前场景」里已完整出现，框架里只留指针。"""
+    project, repo, chapter_id = await _project(db_session, test_user)
+    await _add_scene(repo, project.id, chapter_id, "A", "【目标】一")
+    current = await _add_scene(repo, project.id, chapter_id, "B", CURRENT_SUMMARY)
+
+    ctx = await ContextBuilder(db_session).build_for_writing(uuid.UUID(current), "write")
+
+    assert ctx["scene_summary"] == CURRENT_SUMMARY, "上半部分的当前场蓝图丢了"
+    assert "CURRENT_ONLY_MARKER" not in ctx["chapter_scenes_framework"], \
+        "当前场蓝图在框架里被重复了一遍"
+    assert "本场蓝图见上" in ctx["chapter_scenes_framework"]
 
 
 async def test_multi_line_blueprint_stays_inside_its_list_item(

@@ -1279,14 +1279,19 @@ class ContextBuilder:
                     if marker_str:
                         line += f" {marker_str}"
 
-                    # 完整蓝图，不截断：这一章的每一场蓝图在写作时都是既成事实，
-                    # 砍掉尾部会让模型看不到【节拍】【结尾状态】这些硬约束。
-                    # 多行蓝图整体缩进两格，保持它归属在当前场那条列表项里。
-                    summary = (s.summary or "").strip()
-                    if summary:
-                        line += "\n" + "\n".join(
-                            f"  {ln}" for ln in summary.splitlines()
-                        )
+                    if is_current:
+                        # 当前场的蓝图在上面「## 当前场景」里已经完整给过一遍，
+                        # 这里只留一个指针，省掉重复的那份 token。
+                        line += "\n  （本场蓝图见上「## 当前场景」，以那一份为准）"
+                    else:
+                        # 其他场的蓝图完整给全，不截断：每一场蓝图在写作时都是
+                        # 既成事实，砍掉尾部会让模型看不到【节拍】【结尾状态】。
+                        # 多行蓝图整体缩进两格，保持它归属在该场那条列表项里。
+                        summary = (s.summary or "").strip()
+                        if summary:
+                            line += "\n" + "\n".join(
+                                f"  {ln}" for ln in summary.splitlines()
+                            )
 
                     framework_lines.append(line)
 
