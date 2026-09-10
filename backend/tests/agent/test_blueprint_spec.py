@@ -236,6 +236,10 @@ class TestWriterKnowsHowToUseTheBlueprint:
             assert level in prompt, level
         assert "以当前场景蓝图为准" in prompt
 
+    def test_legacy_beat_field_maps_to_the_same_tier(self):
+        """现存蓝图还是旧格式（【节拍】），别名要写出来，否则这条权威等级对它们失效。"""
+        assert "旧格式写作【节拍】" in _writer_prompt()
+
     def test_other_scenes_are_background_only(self):
         prompt = _writer_prompt()
         assert "不得实现其他场的事件" in prompt
