@@ -57,9 +57,18 @@ class WritingAgent:
             return WritingResult()
 
         ask = user_prompt.strip() if user_prompt else "请写出这个场景的正文。"
+        # 用户消息是模型最后读到的一段：把「这是在写小说正文」放在这里，比埋在
+        # 系统提示中部更贴近生成时的注意力。
         messages: list[Message] = [
             Message(role="system", content=system),
-            Message(role="user", content=f"{ask}\n直接输出正文，不要添加任何解释。"),
+            Message(
+                role="user",
+                content=(
+                    f"{ask}\n"
+                    "你写的是小说正文：先让它好读，再谈其余约束。\n"
+                    "直接输出正文，不要添加任何解释。"
+                ),
+            ),
         ]
 
         text, truncated = await self._generate(client, messages)

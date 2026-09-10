@@ -273,11 +273,70 @@ class TestWriterKnowsHowToUseTheBlueprint:
         assert "类型写作参考" in prompt
         assert "优先级高于通用写作原则" not in prompt
 
-    def test_persona_asks_for_dramatisation(self):
+    def test_persona_is_identity_level_only(self):
+        """人格只放身份级信念：操作规则在下文「蓝图怎么用」，两处都写会挤占注意力。"""
         persona = PromptLoader().load("persona_writer").render()
-        assert "要点靠戏演出来" in persona
-        assert "从人物的欲望写起" in persona
-        assert "逐条翻译的验收表" in persona
+        assert "你写的是**小说**" in persona
+        assert "蓝图是**材料**，不是验收表" in persona
+        assert "展示不告知" in persona
+        assert len(persona) < 700, len(persona)
+
+
+class TestThePromptEndsOnTheNovel:
+    """收尾锚点：最后读到的一段应该是「这是小说」，而不是一条格式约束。
+
+    约束堆在提示词中部会分走注意力，模型容易变成边写边核对条目；把「先写小说、
+    写完再核对」放在结尾，紧贴生成。
+    """
+
+    def test_the_last_section_is_the_anchor(self):
+        prompt = _writer_prompt()
+        anchor = prompt.rindex("落笔前最后一遍")
+        assert anchor > prompt.rindex("## 语言风格")
+        assert anchor > prompt.rindex("输出要求")
+        assert prompt[anchor:].rstrip().endswith("现在，把这一场戏写出来。")
+
+    def test_anchor_puts_story_first_but_keeps_the_floor(self):
+        prompt = _writer_prompt()
+        assert "好读才是上限" in prompt
+        assert "下限" in prompt
+        assert "用小说家的判断写这一场戏" in prompt
+
+    def test_anchor_frees_the_model_from_checking_while_writing(self):
+        prompt = _writer_prompt()
+        assert "规则读一遍就够了" in prompt
+        assert "这一场里人物想要什么" in prompt
+
+    def test_anchor_has_no_denial_list(self):
+        anchor = _writer_prompt()[_writer_prompt().rindex("落笔前最后一遍"):]
+        for word in ("不得", "禁止", "不该"):
+            assert word not in anchor, word
+
+    async def test_user_message_also_frames_it_as_novel_prose(self):
+        from app.agent.agents.writer_agent import WritingAgent
+
+        captured: dict = {}
+
+        class StubClient:
+            async def chat(self, messages, **kwargs):
+                captured["messages"] = messages
+
+                class _R:
+                    content = "正文正文"
+                    finish_reason = "stop"
+
+                return _R()
+
+        ctx = {
+            "scene_title": "S", "scene_summary": "【目标】x", "project_title": "T",
+            "chapter_title": "C", "chapter_number": 1, "genre": "悬疑",
+            "pov_character_name": "小",
+        }
+        await WritingAgent().run(StubClient(), ctx, "请创作场景《S》的正文。")
+        user = [m for m in captured["messages"] if m.role == "user"][0].content
+        assert "你写的是小说正文" in user
+        assert "先让它好读" in user
+        assert "直接输出正文" in user
 
 
 class TestLint:
