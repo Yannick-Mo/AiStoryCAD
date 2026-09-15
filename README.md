@@ -214,6 +214,20 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 docker compose exec -T backend pytest tests -q
 ```
 
+代码门禁（ruff：未用导入 / 未用变量 / 真 bug 模式，配置在 `backend/ruff.toml`）：
+
+```bash
+# ruff 只在 dev 镜像里（requirements-dev.txt），所以用 run 拉一个 dev 容器；
+# --no-deps 免得顺手把 db/redis 也拉起来。
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  run --rm --no-deps backend ruff check .
+```
+
+**为什么是 ruff 而不是 pyflakes**：ruff 认 `# noqa`。仓库里有几处「导入即注册」的
+副作用导入（`app/database.py` 的模型注册、`app/mcp/server.py` 的工具注册、
+`alembic/env.py` 的 autogenerate 注册），必须显式豁免；裸 pyflakes 不认注释，
+只能把它们变成永远的噪音。
+
 不使用 Docker 的本机开发：
 
 ```bash
@@ -248,7 +262,7 @@ npm run dev
 运行时模型配置（主模型 / 中间压缩模型 / 备用模型 / Embedding）保存在数据库 `model_config` 表，
 可通过前端右上角齿轮按钮修改，保存后立即生效（无需重启）。
 
-完整配置项见 `backend/app/config.py`。后端依赖锁定在 `backend/requirements.lock`（主要依赖精确版本），可用 `pip install -r requirements.lock` 复现生产依赖；测试依赖见 `backend/requirements-dev.txt`（仅 CI 与本地开发安装，不进生产镜像）。CI 配置见 `.github/workflows/ci.yml`（后端 pytest + 前端 typecheck/build）。
+完整配置项见 `backend/app/config.py`。后端依赖锁定在 `backend/requirements.lock`（主要依赖精确版本），可用 `pip install -r requirements.lock` 复现生产依赖；测试依赖见 `backend/requirements-dev.txt`（仅 CI 与本地开发安装，不进生产镜像）。CI 配置见 `.github/workflows/ci.yml`（后端 ruff + pytest + 前端 typecheck/build）。
 
 ---
 
@@ -273,7 +287,7 @@ AiStoryCAD/
 │   │   └── user/                # 用户认证
 │   ├── alembic/                 # 数据库迁移
 │   ├── requirements.txt         # 生产依赖
-│   ├── requirements-dev.txt     # 测试依赖（pytest 等）
+│   ├── requirements-dev.txt     # 测试依赖（pytest / ruff 等）
 │   ├── requirements.lock        # 主要依赖精确版本锁定
 │   └── tests/                   # 后端测试
 ├── frontend/
@@ -288,7 +302,7 @@ AiStoryCAD/
 ├── docker-compose.dev.yml       # 本地开发覆盖（源码挂载 + 热重载）
 ├── .env.example                 # 环境变量模板
 ├── searxng/                     # SearXNG 配置
-└── .github/workflows/ci.yml     # CI：后端 pytest + 前端 typecheck/build
+└── .github/workflows/ci.yml     # CI：后端 ruff + pytest，前端 typecheck/build
 ```
 
 ---

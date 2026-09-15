@@ -1,4 +1,3 @@
-import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.repository import ProjectRepository

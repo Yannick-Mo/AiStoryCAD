@@ -72,7 +72,7 @@ async def update_model_settings(payload: ModelSettingsPayload, db: AsyncSession 
         cfg = await save_config(db, data)
     except Exception as exc:
         logger.exception("failed to save model config")
-        raise HTTPException(status_code=500, detail=f"保存模型配置失败: {exc}")
+        raise HTTPException(status_code=500, detail=f"保存模型配置失败: {exc}") from exc
     return _to_payload(cfg)
 
 

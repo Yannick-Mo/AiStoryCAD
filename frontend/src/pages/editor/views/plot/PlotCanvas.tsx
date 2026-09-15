@@ -7,39 +7,29 @@ import ReactFlow, {
 import 'reactflow/dist/style.css'
 import ChapterNode from './ChapterNode'
 import ActGroupNode from './ActGroupNode'
-import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../../types'
-import { getBestHandle } from '../shared/getBestHandle'
-import { isHandlePairAvailable, getTimelineReplacementEdgeIds } from '../../data/handleAllocation'
-import { orderChapters } from '../../data/orderUtils'
+import type { Chapter, Act, Setup, SelectionState } from '../../types'
+import { chapterNumbers, orderChapters } from '../../data/orderUtils'
+import { countWords } from '../../data/wordCount'
 import ContextMenu from './ContextMenu'
-import { useToast } from '../../components/Toast'
 import { useViewportMemory } from '../../../../hooks/useViewportMemory'
 
 const nodeTypes: NodeTypes = { chapter: ChapterNode, actGroup: ActGroupNode }
-const NODE_W = 176
 const NODE_H = 90
 const ACT_H = 220
 const ACT_GAP = 32
 const CH_PER_ROW = 5
 const ROW_GAP = 24
-
-const EDGE_LABELS: Record<string, string> = {
-  causal: '因果',
-  foreshadow: '伏笔',
-  character: '人物',
-}
-
-function nodeCenter(pos: { x: number; y: number }, w: number, h: number) {
-  return { x: pos.x + w / 2, y: pos.y + h / 2 }
-}
-
-function getAbsPos(node: Node, all: Node[]): { x: number; y: number } {
-  if (node.parentId) {
-    const p = all.find(n => n.id === node.parentId)
-    if (p) return { x: node.position.x + p.position.x + NODE_W / 2, y: node.position.y + p.position.y + NODE_H / 2 }
-  }
-  return nodeCenter(node.position, NODE_W, NODE_H)
-}
+// 章节链的连接点固定「右出 → 左进」（handle id 见 ChapterNode.tsx）。这条链是
+// 从左往右读的，所以不按几何位置挑边：换行 / 换幕时下一章在左边，B 点选边会让线
+// 从章节的左边出去，读起来像倒着走。
+const CHAIN_FROM = 's-r'
+const CHAIN_TO = 't-l'
+// 伏笔线的连接点固定在**节点顶部**：从埋设章的顶点画到收束章的顶点，两条线不会
+// 踩着章节链的左右两侧走。伏笔可以往前跨几十章，顶部进出也让线从章的上面绕过去。
+const SETUP_FROM = 's-t'
+const SETUP_TO = 't-t'
+// 伏笔线的边 id 前缀：点它要能找回 setups 里的那一行（章节链不是可选对象）。
+const SETUP_EDGE_PREFIX = 'setup:'
 
 // Act group interaction layering:
 // React Flow renders edge SVGs below node DOM. If an act group DOM element covers
@@ -68,42 +58,50 @@ function isActGroupResizePosition(node: Node, position: { x: number; y: number }
 }
 
 interface PlotCanvasProps {
-  chapters: Chapter[]; acts: Act[]; edges: ChapterEdge[]
+  chapters: Chapter[]
+  acts: Act[]
+  /** 伏笔：一对配对引用，画成 planted_in → pay_off_in 的一条线。 */
+  setups: Setup[]
+  /** 章的正文（可能还没加载完），只用于节点上的字数。 */
+  contents: Record<string, string>
+  /** 点章节节点：只选中它（详情页自己要它时才显示） */
   onChapterClick?: (chapterId: string) => void
+  /** 右键「编辑本章」：选中它并打开详情页——显式动作，不是自动弹 */
+  onEditChapter?: (chapterId: string) => void
   onActClick?: (actId: string) => void
-  onAddEdge?: (sourceId: string, targetId: string, type?: EdgeType, sourceHandle?: string, targetHandle?: string) => EdgeResult
-  onDeleteEdge?: (edgeId: string) => void
-  onChangeEdgeType?: (edgeId: string, newType: EdgeType) => boolean
-  onReconnectEdge?: (edgeId: string, newSource?: string, newTarget?: string, sourceHandle?: string, targetHandle?: string) => void
   onAddChapter?: (actId: string) => Chapter
   onDeleteChapter?: (chapterId: string) => void
   onAddAct?: (name?: string) => Act
   onDeleteAct?: (actId: string) => void
   onActResize?: (actId: string, width: number, height: number) => void
   selection: SelectionState
+  /** 当前选中的伏笔（点那条虚线选中它） */
+  selectedSetupId?: string | null
   onSelectNode: (type: 'act' | 'chapter', id: string) => void
-  onSelectEdge: (edgeId: string) => void
+  onSelectSetup?: (setupId: string) => void
   onClearSelection: () => void
-  connectionMode: 'all' | EdgeType
   resetKey?: number
 }
 
+/**
+ * 情节幕布只画两样东西（规格第 10 节"前端"）：
+ *   ① 所有章节按 sort_order 串成一条链——纯渲染，数据层没有"时序线"这张表；
+ *   ② 伏笔线——每条 setups 记录一条 planted_in → pay_off_in 的线（只在 pay_off_in 有值时画）。
+ *
+ * 边的创建 / 编辑 / 重连 / 类型切换全部删除：没有 edge_type 可存，也没有
+ * chapter_edges 表可写。
+ */
 export default function PlotCanvas({
-  chapters, acts, edges,
-  onChapterClick, onActClick,
-  onAddEdge, onDeleteEdge, onChangeEdgeType, onReconnectEdge,
+  chapters, acts, setups, contents,
+  onChapterClick, onEditChapter, onActClick,
   onAddChapter, onDeleteChapter, onAddAct, onDeleteAct, onActResize,
-  selection, onSelectNode, onSelectEdge, onClearSelection,
-  connectionMode, resetKey = 0,
+  selection, selectedSetupId, onSelectNode, onSelectSetup, onClearSelection,
+  resetKey = 0,
 }: PlotCanvasProps) {
-  const { addToast } = useToast()
   const sortedActs = useMemo(() => [...acts].sort((a, b) => a.order - b.order), [acts])
 
-  // 顺序来自 sort_order（幕序 → 幕内序号）；时序线只表达叙事关系，不参与排序。
-  const orderMap = useMemo(() => {
-    const ordered = orderChapters(chapters, acts)
-    return new Map(ordered.map((ch, i) => [ch.id, i + 1]))
-  }, [chapters, acts])
+  // 顺序来自 sort_order（幕序 → 幕内序号）。
+  const orderMap = useMemo(() => chapterNumbers(chapters, acts), [chapters, acts])
 
   const initialNodes: Node[] = useMemo(() => {
     const result: Node[] = []
@@ -143,9 +141,8 @@ export default function PlotCanvas({
             actColor: act.color,
             title: ch.title,
             goal: ch.goal,
-            wordCount: ch.wordCount,
+            wordCount: countWords(contents[ch.id]),
             status: ch.status,
-            sceneCount: ch.scenes.length,
             orderBadge: orderMap.get(ch.id),
           },
         })
@@ -153,45 +150,74 @@ export default function PlotCanvas({
       y += h + ACT_GAP
     })
     return result
-  }, [chapters, sortedActs, orderMap])
+  }, [chapters, sortedActs, orderMap, contents])
 
   const rfEdges: Edge[] = useMemo(() => {
-    const visible = connectionMode === 'all' ? edges : edges.filter(e => e.type === connectionMode)
+    const nodeById = new Map(initialNodes.map(n => [n.id, n]))
 
-    return visible.map(e => {
-      const srcNode = initialNodes.find(n => n.id === e.sourceId)
-      const tgtNode = initialNodes.find(n => n.id === e.targetId)
-      if (!srcNode || !tgtNode) return null
-      const a = getAbsPos(srcNode, initialNodes)
-      const b = getAbsPos(tgtNode, initialNodes)
-
-      const isTimeline = e.type === 'timeline'
-      const sourceHandle = e.sourceHandle ?? getBestHandle(a, b, isTimeline).sourceHandle
-      const targetHandle = e.targetHandle ?? getBestHandle(a, b, isTimeline).targetHandle
-      const isSelected = selection.type === 'edge' && selection.id === e.id
-      return {
-        id: e.id,
-        source: e.sourceId,
-        target: e.targetId,
-        sourceHandle,
-        targetHandle,
+    // ① 章节链：所有章按叙事顺序串成一条。这是 sort_order 的渲染，不是存储。
+    const chain: Edge[] = []
+    const ordered = orderChapters(chapters, acts)
+    for (let i = 0; i + 1 < ordered.length; i++) {
+      const a = ordered[i]
+      const b = ordered[i + 1]
+      if (!nodeById.has(a.id) || !nodeById.has(b.id)) continue
+      chain.push({
+        id: `chain:${a.id}:${b.id}`,
+        source: a.id,
+        target: b.id,
+        sourceHandle: CHAIN_FROM,
+        targetHandle: CHAIN_TO,
         type: 'default',
-        animated: isTimeline,
-        selected: isSelected,
-        style: {
-          stroke: isSelected ? (isTimeline ? '#fbbf24' : '#60a5fa') : (isTimeline ? '#d4a373' : '#6b7280'),
-          strokeWidth: isTimeline ? 3 : 1.5,
-          strokeDasharray: isTimeline ? 'none' : '6 3',
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: isSelected ? (isTimeline ? '#fbbf24' : '#60a5fa') : (isTimeline ? '#d4a373' : '#6b7280'),
-        },
-        label: e.type !== 'timeline' ? (e.label ? (e.label.length > 20 ? e.label.slice(0, 20) + '…' : e.label) : EDGE_LABELS[e.type]) : undefined,
-        labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
-      }
-    }).filter(Boolean) as Edge[]
-  }, [edges, initialNodes, selection, connectionMode])
+        animated: true,
+        style: { stroke: '#d4a373', strokeWidth: 3 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#d4a373' },
+      })
+    }
+
+    // ② 伏笔线：每条 setups 记录一条（pay_off_in 为空表示还没定在哪收，不画）。
+    // 这条线是**可以点的**：点它选中的是 setups 里的一行，详情面板显示那条伏笔。
+    const setupLines: Edge[] = setups
+      .filter(s => Boolean(s.payOffIn))
+      .map(s => {
+        const targetId = s.payOffIn as string
+        if (!nodeById.has(s.plantedIn) || !nodeById.has(targetId)) return null
+        const isSelected = selectedSetupId === s.id
+        const stroke = isSelected ? '#fbbf24'
+          : s.status === 'paid' ? '#22c55e'
+          : s.status === 'dropped' ? '#6b7280'
+          : '#a78bfa'
+        const label = s.note.length > 20 ? s.note.slice(0, 20) + '…' : s.note
+        return {
+          id: `${SETUP_EDGE_PREFIX}${s.id}`,
+          source: s.plantedIn,
+          target: targetId,
+          sourceHandle: SETUP_FROM,
+          targetHandle: SETUP_TO,
+          type: 'default',
+          selected: isSelected,
+          animated: isSelected,
+          style: {
+            stroke,
+            strokeWidth: isSelected ? 3 : 2,
+            cursor: 'pointer',
+            ...(isSelected ? {} : { strokeDasharray: '6 3' }),
+          },
+          markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+          label,
+          labelStyle: {
+            fontSize: 10,
+            fill: isSelected ? '#fbbf24' : '#9ca3af',
+            background: '#1f2937',
+            padding: '2px 6px',
+            borderRadius: 4,
+          },
+        } as Edge
+      })
+      .filter((e): e is Edge => e !== null)
+
+    return [...chain, ...setupLines]
+  }, [chapters, acts, setups, initialNodes, selectedSetupId])
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [rfEdgesState, setRfEdges, onEdgesChange] = useEdgesState([])
@@ -251,43 +277,11 @@ export default function PlotCanvas({
     ))
   }, [handleResize, handleResizeEnd, setNodes])
 
-  const onConnect = useCallback((conn: import('reactflow').Connection) => {
-    if (!conn.source || !conn.target || conn.source === conn.target) return
-    if (!conn.sourceHandle || !conn.targetHandle) return
-
-    const edgeType = connectionMode === 'all' ? 'timeline' : connectionMode
-
-    const ignoreEdgeIds = edgeType === 'timeline'
-      ? getTimelineReplacementEdgeIds(edges, conn.source, conn.target)
-      : []
-
-    if (!isHandlePairAvailable(conn.source, conn.target, conn.sourceHandle, conn.targetHandle, edges, ignoreEdgeIds, edgeType)) {
-      addToast('该侧连接点已被占用', 'warning')
-      return
-    }
-
-    const result = onAddEdge?.(conn.source, conn.target, edgeType, conn.sourceHandle, conn.targetHandle)
-    if (result?.cycle) addToast('不能创建环路，操作已取消', 'error')
-  }, [edges, onAddEdge, addToast, connectionMode])
-
-  const onEdgeUpdate = useCallback((oldEdge: Edge, newConn: import('reactflow').Connection) => {
-    if (!newConn.source || !newConn.target) return
-    if (!newConn.sourceHandle || !newConn.targetHandle) return
-
-    const domainEdge = edges.find(e => e.id === oldEdge.id)
-    const edgeType = domainEdge?.type ?? 'timeline'
-    const ignoreEdgeIds = [oldEdge.id]
-    if (edgeType === 'timeline') {
-      ignoreEdgeIds.push(...getTimelineReplacementEdgeIds(edges, newConn.source, newConn.target, oldEdge.id))
-    }
-
-    if (!isHandlePairAvailable(newConn.source, newConn.target, newConn.sourceHandle, newConn.targetHandle, edges, ignoreEdgeIds, edgeType)) {
-      addToast('该侧连接点已被占用', 'warning')
-      return
-    }
-
-    onReconnectEdge?.(oldEdge.id, newConn.source, newConn.target, newConn.sourceHandle, newConn.targetHandle)
-  }, [edges, onReconnectEdge, addToast])
+  /** 点伏笔线：选中的是 setups 里的一行（章节链只是 sort_order 的渲染，不选）。 */
+  const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+    if (!edge.id.startsWith(SETUP_EDGE_PREFIX)) return
+    onSelectSetup?.(edge.id.slice(SETUP_EDGE_PREFIX.length))
+  }, [onSelectSetup])
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     if (node.type === 'chapter') {
@@ -300,18 +294,6 @@ export default function PlotCanvas({
       onActClick?.(actId)
     }
   }, [onSelectNode, onChapterClick, onActClick])
-
-  const edgesRef = useRef(edges)
-  edgesRef.current = edges
-
-  const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
-    const domainEdge = edgesRef.current.find(item => item.id === edge.id)
-    if (!domainEdge) {
-      onClearSelection()
-      return
-    }
-    onSelectEdge(edge.id)
-  }, [onClearSelection, onSelectEdge])
 
   const isInteractiveFlowTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) return false
@@ -436,7 +418,7 @@ export default function PlotCanvas({
     }
   }, [onClearSelection, onSelectNode, onActClick])
 
-  // Context menus
+  // Context menus: only the two real objects, acts and chapters.
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault()
     const id = node.type === 'actGroup' ? node.id.replace('act-', '') : node.id
@@ -454,27 +436,12 @@ export default function PlotCanvas({
       setCtxMenu({
         x: event.clientX, y: event.clientY,
         items: [
-          [{ label: '编辑目标', icon: '✎', onClick: () => onChapterClick?.(id) }],
+          [{ label: '编辑本章', icon: '✎', onClick: () => onEditChapter?.(id) }],
           [{ label: '删除章', icon: '✕', onClick: () => onDeleteChapter?.(id) }],
         ],
       })
     }
-  }, [onSelectNode, onAddChapter, onDeleteAct, onChapterClick, onDeleteChapter])
-
-  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
-    event.preventDefault()
-    onSelectEdge(edge.id)
-    setCtxMenu({
-      x: event.clientX, y: event.clientY,
-      items: [
-        [{ label: '删除连线', icon: '✕', onClick: () => { onDeleteEdge?.(edge.id); onClearSelection() } }],
-        [
-          { label: '改为时序', icon: '→', onClick: () => onChangeEdgeType?.(edge.id, 'timeline') },
-          { label: '改为因果', icon: '⚡', onClick: () => onChangeEdgeType?.(edge.id, 'causal') },
-        ],
-      ],
-    })
-  }, [onSelectEdge, onDeleteEdge, onChangeEdgeType, onClearSelection])
+  }, [onSelectNode, onAddChapter, onDeleteAct, onEditChapter, onDeleteChapter])
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
@@ -524,23 +491,20 @@ export default function PlotCanvas({
         edges={rfEdgesState}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
         onPaneClick={handlePaneClick}
-        onEdgeUpdate={onEdgeUpdate}
         onNodeContextMenu={onNodeContextMenu}
-        onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: 'default' }}
+        nodesConnectable={false}
+        edgesFocusable={false}
         onInit={(instance) => { rfRef.current = instance }}
-        deleteKeyCode="Delete"
+        deleteKeyCode={null}
         {...(viewport.initial ? { defaultViewport: viewport.initial } : { fitView: true })}
         onMoveEnd={viewport.onMoveEnd}
         minZoom={0.05}
         maxZoom={5}
-        connectionRadius={48}
         proOptions={{ hideAttribution: true }}
       >
         <style>{`
@@ -560,7 +524,6 @@ export default function PlotCanvas({
           maskColor="rgba(0,0,0,0.7)"
           className="!bg-gray-900 !border-gray-700"
         />
-
       </ReactFlow>
       {ctxMenu && <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />}
     </div>

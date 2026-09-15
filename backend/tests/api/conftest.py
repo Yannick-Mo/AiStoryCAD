@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.project.models import Base
 
 # Register all model tables on Base.metadata so create_all covers them.
-import app.project.models  # noqa: F401
-import app.storycad.models  # noqa: F401
-import app.knowledge.models  # noqa: F401
-import app.settings.models  # noqa: F401
+import app.project.models
+import app.storycad.models
+import app.knowledge.models
+import app.settings.models
 import app.agent.memory.models  # noqa: F401
 
 
@@ -58,14 +58,19 @@ async def client(monkeypatch):
         yield c
 
     app.dependency_overrides.pop(deps.get_db, None)
-    # Drop tables not registered on Base.metadata (historical leftovers) with
-    # CASCADE before Base tables, otherwise DROP TABLE scenes hits FK errors.
+    # 与 tests/conftest.py 同理：清掉改造前遗留的表（它们不在 Base.metadata 里，
+    # 且外键指向 scenes）——必须在 drop_all 之前 CASCADE，否则会 FK 报错。
+    # 全新的库上这是空操作。
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "DROP TABLE IF EXISTS scene_fact_cache, consistency_facts,"
-                " entity_aliases, conflict_candidates, consistency_time_cache,"
-                " consistency_fact_queue, consistency_logs, consistency_reports"
+                "DROP TABLE IF EXISTS"
+                " scene_fact_cache, scene_contents, scenes,"
+                " chapter_edges, project_configs, project_versions,"
+                " theme_chapters, chapter_rhythms, themes,"
+                " consistency_facts, consistency_fact_queue, consistency_logs,"
+                " consistency_reports, consistency_time_cache,"
+                " conflict_candidates, entity_aliases"
                 " CASCADE"
             )
         )

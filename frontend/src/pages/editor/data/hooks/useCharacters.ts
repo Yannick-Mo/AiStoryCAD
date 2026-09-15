@@ -14,7 +14,8 @@ export function useCharacters(
     const id = crypto.randomUUID()
     const newChar: Character = {
       id, name: name ?? `新角色 ${data.characters.length + 1}`,
-      role: 'ally', personality: '', appearance: '', background: '', motivation: '', relations: [],
+      role: 'supporting', personality: '', appearance: '', background: '',
+      motivation: '', arc: '', relations: [],
     }
     setData(d => d ? { ...d, characters: [...d.characters, newChar] } : d)
     enqueueChange({ entity: 'characters', op: 'create', data: { id, project_id: projectId, name: newChar.name, role: newChar.role } })
@@ -31,7 +32,7 @@ export function useCharacters(
     clearSelection()
   }, [data, enqueueChange, clearSelection, setData])
 
-  const updateCharacter = useCallback((id: string, updates: Partial<Pick<Character, 'name' | 'role' | 'personality' | 'appearance' | 'background' | 'motivation'>>) => {
+  const updateCharacter = useCallback((id: string, updates: Partial<Pick<Character, 'name' | 'role' | 'personality' | 'appearance' | 'background' | 'motivation' | 'arc'>>) => {
     setData(d => d ? { ...d, characters: d.characters.map(c => c.id === id ? { ...c, ...updates } : c) } : d)
     const backendData: Record<string, unknown> = { id }
     if (updates.name !== undefined) backendData.name = updates.name
@@ -40,13 +41,14 @@ export function useCharacters(
     if (updates.appearance !== undefined) backendData.appearance = updates.appearance
     if (updates.background !== undefined) backendData.background = updates.background
     if (updates.motivation !== undefined) backendData.motivation = updates.motivation
+    if (updates.arc !== undefined) backendData.arc = updates.arc
     enqueueChange({ entity: 'characters', op: 'update', data: backendData })
   }, [enqueueChange, setData])
 
   const addRelation = useCallback((sourceId: string, targetId: string) => {
     if (!data) return
     const id = crypto.randomUUID()
-    const newRel: CharacterRelation = { id, targetId, type: '关联', label: '', description: '', trust: 50, threat: 50, attraction: 50 }
+    const newRel: CharacterRelation = { id, targetId, type: '关联', label: '', description: '' }
     setData(d => d ? {
       ...d,
       characters: d.characters.map(c => c.id === sourceId ? { ...c, relations: [...c.relations, newRel] } : c),

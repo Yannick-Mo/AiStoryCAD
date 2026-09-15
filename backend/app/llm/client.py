@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, Literal
+from collections.abc import AsyncGenerator
 
 import httpx
 from loguru import logger
@@ -48,14 +49,14 @@ class LLMFatalError(LLMError):
 
 
 _tracker = TokenTracker()
-_shared_client: "LLMClient | None" = None
+_shared_client: LLMClient | None = None
 
 
 def get_tracker() -> TokenTracker:
     return _tracker
 
 
-def get_shared_client() -> "LLMClient":
+def get_shared_client() -> LLMClient:
     global _shared_client
     if _shared_client is None:
         _shared_client = LLMClient()
@@ -140,7 +141,7 @@ class LLMClient:
             )
             self._owns_client = True
 
-    def fork(self) -> "LLMClient":
+    def fork(self) -> LLMClient:
         """Create a per-request fork sharing the connection pool.
 
         All requests share the same ``httpx.AsyncClient`` (connection pool is
@@ -219,7 +220,11 @@ class LLMClient:
         reasoning_effort: str | None = None,
         request_id: str = "",
         session_id: str | None = None,
+        timeout: float | None = None,
     ) -> ChatResult:
+        """``timeout`` 只覆盖这一次请求的读超时（秒）——写手一次要写满一章，
+        默认的 120 秒会在长章上掐断生成。
+        """
         resolved = _resolve_models(model or self.model, self.fallback_models)
         models_to_try = resolved
         last_error: Exception | None = None
@@ -247,7 +252,10 @@ class LLMClient:
 
             if not stream:
                 try:
-                    return await self._chat_non_streaming(url, headers, body, current_model, session_id=session_id)
+                    return await self._chat_non_streaming(
+                        url, headers, body, current_model,
+                        session_id=session_id, timeout=timeout,
+                    )
                 except LLMFatalError:
                     raise  # account-level: no point switching models
                 except (LLMNonRetryableError, LLMRetryExhaustedError) as e:
@@ -325,11 +333,19 @@ class LLMClient:
         body: dict[str, Any],
         model_name: str,
         session_id: str | None = None,
+        timeout: float | None = None,
     ) -> ChatResult:
         last_error: Exception | None = None
+        # httpx 里 ``timeout=None`` 是"关掉超时"，不是"用客户端默认值"——所以
+        # 只有调用方明确要更长时才把 timeout 传下去。
+        post_kwargs: dict[str, Any] = {}
+        if timeout is not None:
+            post_kwargs["timeout"] = httpx.Timeout(
+                connect=10.0, read=timeout, write=30.0, pool=10.0
+            )
         for attempt in range(MAX_RETRIES):
             try:
-                resp = await self._client.post(url, headers=headers, json=body)
+                resp = await self._client.post(url, headers=headers, json=body, **post_kwargs)
                 resp.raise_for_status()
                 data = resp.json()
                 return self._parse_response(data, model_name, session_id=session_id)

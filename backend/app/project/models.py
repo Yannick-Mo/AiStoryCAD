@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, Integer, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import DeclarativeBase, relationship
+from datetime import datetime, UTC
+from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
@@ -10,42 +10,38 @@ class Base(DeclarativeBase):
 
 
 class Project(Base):
+    """作品层：这本书是什么、要走到哪。
+
+    字段去留的依据见 docs/故事模型设计规格.md 第 3 节总表。
+
+    已删除（见规格第 10 节）：
+    - ``workflow_stage``：全仓只有模型定义和迁移，从未被读写。
+    - ``ProjectVersion``：它是编辑器同步游标（快照里只有
+      ``{"type": "editor_sync", ...}``），既不是版本也不能回滚。
+    - ``ProjectConfig``：只剩目标字数一个字段，不值得单独一张表，
+      已并进 ``projects.total_words``。
+    """
+
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    title = Column(String(255), default="Untitled Project")
+
+    # ---- 规格总表的 7 个字段 ----
+    title = Column(String(255), default="Untitled Project")  # 书名
+    genre = Column(String(100), default="")                  # 类型
+    logline = Column(Text, default="")                       # 一句话梗概
+    ending = Column(Text, default="")                        # 终局
+    spine = Column(Text, default="")                         # 主线骨架
+    global_settings = Column(Text, default="")               # 全局设定
+    total_words = Column(Integer, default=100000)            # 目标字数
+
+    # 规格总表未列入、但仍有消费者的两个历史字段：
+    # ``description`` 只有创建对话框在写；``status`` 被首页项目卡的阶段
+    # 徽章和进度条读取（frontend/src/pages/home/ProjectGrid.tsx）。
+    # 本次重构不动它们（规格没有授权删除），留待专门决定。
     description = Column(Text, default="")
-    genre = Column(String(100), default="")
     status = Column(String(20), default="init")
-    workflow_stage = Column(String(30), default="init")
-    logline = Column(Text, default="")
-    global_settings = Column(Text, default="")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    versions = relationship("ProjectVersion", back_populates="project", order_by="ProjectVersion.version.desc()", cascade="all, delete-orphan")
-
-
-class ProjectVersion(Base):
-    __tablename__ = "project_versions"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
-    version = Column(Integer, default=1)
-    snapshot = Column(JSONB, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    project = relationship("Project", back_populates="versions")
-
-
-class ProjectConfig(Base):
-    __tablename__ = "project_configs"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
-    total_words = Column(Integer, default=100000)
-    template_type = Column(String(50), default="four_act")
-    target_audience = Column(String(100), default="")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))

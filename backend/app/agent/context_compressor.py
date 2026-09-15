@@ -18,9 +18,9 @@ datasets are disjoint, so the two summaries are complementary, not redundant.
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 from app.config import settings
 
@@ -62,7 +62,7 @@ def estimate_text_tokens(text: str) -> int:
 
 
 def estimate_tokens(
-    messages: list["Message"],
+    messages: list[Message],
     model_limit: int = DEFAULT_MODEL_LIMIT,
     system_prompt: str | None = None,
 ) -> int:
@@ -95,7 +95,7 @@ def estimate_tokens(
 
 
 def should_compress(
-    messages: list["Message"],
+    messages: list[Message],
     model_limit: int = DEFAULT_MODEL_LIMIT,
     system_prompt: str = "",
 ) -> bool:
@@ -112,7 +112,7 @@ def _msg_role_label(role: str) -> str:
 
 
 def _pair_safe_tail_start(
-    messages: list["Message"],
+    messages: list[Message],
     head_count: int,
     tail_count: int,
 ) -> int:
@@ -143,12 +143,12 @@ def _pair_safe_tail_start(
 
 
 def compress_history(
-    messages: list["Message"],
+    messages: list[Message],
     *,
     model_limit: int = DEFAULT_MODEL_LIMIT,
     head_count: int | None = None,
     tail_count: int | None = None,
-) -> list["Message"]:
+) -> list[Message]:
     """Compress a message list by summarizing the middle portion.
 
     Returns a new list: ``head + [summary] + tail``.
@@ -216,10 +216,10 @@ def compress_history(
 
 
 def reactive_compress(
-    messages: list["Message"],
+    messages: list[Message],
     *,
     model_limit: int = DEFAULT_MODEL_LIMIT,
-) -> list["Message"]:
+) -> list[Message]:
     """Aggressive compression for API 413 / context overflow recovery.
 
     More aggressive than ``compress_history``:
@@ -295,7 +295,7 @@ def reactive_compress(
 # ── Layer 3: LLM-powered compression (async, real summary) ────────
 
 
-def _format_for_summary(messages: list["Message"]) -> str:
+def _format_for_summary(messages: list[Message]) -> str:
     """Format messages into a text block suitable for LLM summarization."""
     lines: list[str] = []
     for m in messages:
@@ -316,7 +316,7 @@ _SUMMARY_PROMPT = """你是一个对话摘要助手。请用简洁的中文摘�
 - 保留 AI 给出的重要建议和已执行的操作
 - 标记任何待办事项或未完成的任务
 - 提到的实体（场景/章节/角色/幕/关系/连线）用名称或标题指代并注明状态，
-  不需要保留 UUID（形如 scene_id=xxx 的 ID 一律省略——需要时可用 read_*/list_* 工具随时查询最新 ID）
+  不需要保留 UUID（形如 chapter_id=xxx 的 ID 一律省略——需要时可用 read_*/list_* 工具随时查询最新 ID）
 - 摘要控制在 300 字以内
 
 对话内容：
@@ -332,7 +332,7 @@ _LIGHTER_SUMMARY_PROMPT = """你是一个对话摘要助手。请用中文详细
 - 保留 AI 给出的重要建议和已执行的操作
 - 标记任何待办事项或未完成的任务
 - 提到的实体（场景/章节/角色/幕/关系/连线）用名称或标题指代并注明状态，
-  不需要保留 UUID（形如 scene_id=xxx 的 ID 一律省略——需要时可用 read_*/list_* 工具随时查询最新 ID）
+  不需要保留 UUID（形如 chapter_id=xxx 的 ID 一律省略——需要时可用 read_*/list_* 工具随时查询最新 ID）
 - 尽量保留对话中的重要细节和上下文信息
 - 摘要控制在 500 字以内
 
@@ -343,7 +343,7 @@ _LIGHTER_SUMMARY_PROMPT = """你是一个对话摘要助手。请用中文详细
 
 
 async def async_compress_context(
-    messages: list["Message"],
+    messages: list[Message],
     llm_chat: Callable[..., Any],
     *,
     model_limit: int = DEFAULT_MODEL_LIMIT,
@@ -351,7 +351,7 @@ async def async_compress_context(
     tail_count: int | None = None,
     threshold: float = COMPRESS_THRESHOLD,
     summary_prompt: str | None = None,
-) -> list["Message"]:
+) -> list[Message]:
     """Async compression using LLM-generated summary for the middle section.
 
     Falls back to synchronous ``compress_history`` if the LLM call fails,
@@ -418,7 +418,7 @@ async def async_compress_context(
     return result
 
 
-def build_boundary_message(original_count: int, compressed_count: int, reactive: bool = False) -> "Message":
+def build_boundary_message(original_count: int, compressed_count: int, reactive: bool = False) -> Message:
     """Create a user-visible boundary message for context compression events."""
     from app.llm.types import Message as M
 

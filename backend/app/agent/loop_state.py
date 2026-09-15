@@ -101,7 +101,7 @@ class LoopState:
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def replace(self, **overrides) -> "LoopState":
+    def replace(self, **overrides) -> LoopState:
         """Return a new ``LoopState`` with *overrides* applied.
 
         Uses ``dataclasses.replace`` so all fields are preserved except
@@ -113,7 +113,7 @@ class LoopState:
     # ── Factory / serialization ──────────────────────────────────────
 
     @classmethod
-    def from_initial(cls, initial_state: dict) -> "LoopState":
+    def from_initial(cls, initial_state: dict) -> LoopState:
         """Build a ``LoopState`` from a flat state dictionary.
 
         The previous code path (LangGraph) built ``AgentState`` dicts.

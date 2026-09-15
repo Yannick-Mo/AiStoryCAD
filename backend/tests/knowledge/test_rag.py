@@ -1,7 +1,6 @@
 """Tests for RAGEngine: retrieve_context and retrieve_chunks."""
 import uuid
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from app.knowledge.rag import RAGEngine
 
 

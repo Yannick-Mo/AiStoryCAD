@@ -38,28 +38,6 @@ def _cache_set(key: str, data: str):
         _cache.popitem(last=False)
 
 
-# ── Preapproved domains (bypass content warning) ───────────────────────────────
-_PREAPPROVED_DOMAINS: set[str] = {
-    "wikipedia.org", "en.wikipedia.org", "zh.wikipedia.org",
-    "python.org", "docs.python.org",
-    "github.com",
-    "stackoverflow.com",
-    "stackexchange.com",
-    "developer.mozilla.org", "mdn.dev",
-    "react.dev", "nextjs.org", "vuejs.org",
-    "docs.docker.com",
-    "kubernetes.io",
-    "redis.io",
-    "postgresql.org",
-    "nginx.org",
-    "pypi.org",
-    "npmjs.com",
-    "nodejs.org",
-    "typescriptlang.org",
-    "fastapi.tiangolo.com",
-    "sqlalchemy.org",
-}
-
 # ── HTML→text extraction ───────────────────────────────────────────────────────
 
 try:
@@ -98,14 +76,6 @@ def _extract_text(html: str, url: str) -> str:
 
 
 # ── Content fetching ───────────────────────────────────────────────────────────
-
-
-def _is_preapproved(url: str) -> bool:
-    host = urlparse(url).hostname or ""
-    for domain in _PREAPPROVED_DOMAINS:
-        if host == domain or host.endswith("." + domain):
-            return True
-    return False
 
 
 def _validate_url(url: str) -> str | None:
@@ -272,7 +242,7 @@ async def _fetch_url(url: str) -> tuple[str | None, str | None]:
 class WebFetchTool(BaseTool):
     meta = ToolMeta(
         name="web_fetch",
-        description="抓取指定 URL 的正文内容并转为纯文本/ Markdown。适用于阅读文章、文档、教程等在线内容。URL通常来自 web_search 的返回结果",
+        description="抓取指定 URL 的正文内容并转为纯文本 / Markdown。URL 通常来自 web_search",
         concurrency=ConcurrencyMode.SAFE,
         max_result_chars=settings.web_fetch_max_chars,
         timeout=settings.web_fetch_timeout,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any
@@ -107,10 +106,6 @@ class PromptLoader:
 
 
 _global_loader = PromptLoader()
-
-
-def get_prompt_loader() -> PromptLoader:
-    return _global_loader
 
 
 def render_prompt(name: str, **kwargs: Any) -> str | None:

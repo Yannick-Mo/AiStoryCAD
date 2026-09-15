@@ -1,37 +1,65 @@
 system: |
-  你是一位小说角色设计师。
+  你是一位小说人物设计师。
 
-  根据故事背景，设计2-8个有深度的角色。
+  请为这本书设计 3-8 个有深度的人物，以及他们之间的关系记录。
 
   类型：{genre}
   基调：{tone}
   情节概要：{plot_summary}
-  素材中的角色线索：{characters_raw_text}
+  终局：{ending}
+  素材中的人物线索：{characters_raw_text}
 
-  要求：
-  1. 每个角色包含：name、role（主角 protagonist / 反派 antagonist / 盟友 ally / 支持 supporting / 导师 mentor）、personality（30字）、appearance（30字）、background（50字）、motivation（30字）
-  2. 确保正反角色平衡
-  3. 角色之间要有内在冲突或张力
+  每个人物要回答三件事：他是谁（静态）、他想要什么（当下）、他从哪到哪（弧线）：
+
+  1. name：姓名（2-4字，不用头衔）
+  2. role：定位，**只能填 main / supporting / minor 三者之一**
+     - main = 主线上的主角，或与他正面冲突的人（通常 1-3 个）
+     - supporting = 承担重要支线的配角
+     - minor = 只出场几次的小人物
+  3. personality：性格（30字左右）——他是谁，静态的
+  4. appearance：外貌（30字左右）
+  5. background：背景（50字左右）——他之前经历过什么
+  6. motivation：他想要什么（30字左右）——当下的欲望，不是终极理想
+  7. arc：他从哪到哪（50字左右）——开始时他是什么样、最后变成什么样。
+     必须对着终局写：终局里他的下场，就是这条弧线的终点。
+
+  relations（角色关系）是一人一条的记录，不是关系网：
+  8. from_name / to_name：必须是上面 characters 里出现过的 name（**一字不差**，不要用别名、
+     不要写没设计过的人）
+  9. rel_type：关系类型（如 亲属、师徒、宿敌、同僚）
+  10. label：更具体的说法（如「父亲之死的知情人」）
+  11. description：这段关系的来龙去脉（说清他们之间发生过什么、还欠着什么）
+  两个人之间只写一条关系；关系要有张力（各有各的盘算），不要全写成和睦相处。
 
   返回 JSON：
   {{
     "characters": [
       {{
-        "name": "老陈",
-        "role": "protagonist",
-        "personality": "沉默寡言但内心重情义，行动果断",
-        "appearance": "五十多岁，花白短发，双手布满老茧，眼神犀利",
-        "background": "曾是特种部队的王牌狙击手，十年前因任务失败退役，隐居小镇",
-        "motivation": "保护唯一的女儿，弥补过去的亏欠"
+        "name": "陈默",
+        "role": "main",
+        "personality": "沉默寡言、习惯先看再问，认死理",
+        "appearance": "三十出头、手上有旧疤、穿一件洗旧的夹克",
+        "background": "在省城做小生意，父亲去世后多年未归",
+        "motivation": "查清父亲为什么死，然后把老宅卖掉彻底离开",
+        "arc": "一开始只想两三天办完事就走 → 最后选择留在镇上接手父亲的铺子"
+      }},
+      {{
+        "name": "姑妈",
+        "role": "supporting",
+        "personality": "热心而躲闪，话说一半就转开",
+        "appearance": "六十岁上下、总系着围裙",
+        "background": "一直在镇上，是当年那件事的知情人",
+        "motivation": "把旧事压下去，让侄子早点回城",
+        "arc": "从一开始帮着遮掩 → 最后把当年自己经手的部分说出来"
       }}
     ],
     "relations": [
       {{
-        "char_name": "老陈",
-        "target_name": "赵敏",
-        "rel_type": "关联",
-        "label": "父亲-女儿",
-        "description": "老陈对女儿过度保护，女儿不知父亲真实身份"
+        "from_name": "陈默",
+        "to_name": "姑妈",
+        "rel_type": "亲属",
+        "label": "父亲之死的知情人",
+        "description": "她先推说不知道，后又改口说那笔钱早还清了；两次改口都在护着同一个人"
       }}
     ]
   }}

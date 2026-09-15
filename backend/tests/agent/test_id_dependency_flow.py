@@ -2,13 +2,19 @@
 
 Verifies the complete lifecycle of ID-dependent tool calling:
 1. Tool filter: list tools available in both modes; write tools only in cowriter
-2. ← markers in descriptions tell AI which list tool to call first
+2. ← markers tell the AI which read tool to call first
 3. Error messages for missing params guide AI back to the right list tool
 4. Mode gate (interceptor) blocks write tools in chat mode
+
+标记的位置随这次重构迁移了：它不再写在工具的 ``meta.description`` 里，而是写在
+**参数描述**里（``{"chapter_id": {"description": "章节ID，来自 read_chapters 或 read_acts"}}``）。
+``app.agent.tools.get_tool_descriptions()`` 会把 ``来自 X`` 渲染成
+``chapter_id ← read_chapters`` 提示——模型看到的正是这个箭头，所以这里断言的是
+「参数描述点名了 ID 来源」＋「渲染结果里真的出现了箭头」，比只查工具描述更强。
 """
 
 import pytest
-from app.agent.tools import get_tool_registry, get_filtered_tools
+from app.agent.tools import get_tool_registry, get_filtered_tools, get_tool_descriptions
 from app.agent.tools.base import BaseTool
 from app.agent.tool_filter import READ_ONLY_TOOLS, COWRITER_TOOLS
 from app.agent.interceptors import apply_interceptors
@@ -16,7 +22,7 @@ from app.agent.interceptors import apply_interceptors
 
 # ── Tool sets ───────────────────────────────────────────────────────────────
 
-LIST_TOOLS = {"list_characters", "list_relations", "list_edges"}
+LIST_TOOLS = {"list_characters", "list_relations", "list_setups"}
 
 READ_TOOLS = READ_ONLY_TOOLS - LIST_TOOLS
 
@@ -56,95 +62,70 @@ class TestListToolsAvailableInBothModes:
         missing = WRITE_TOOLS - cowriter_names
         assert not missing, f"Write tools missing in cowriter mode: {missing}"
 
+    def test_chat_mode_still_reaches_every_read_tool(self):
+        registry = get_tool_registry()
+        chat_names = set(get_filtered_tools(registry, mode="chat"))
+        assert READ_ONLY_TOOLS <= chat_names
 
-# ── ID Dependency Marker in Descriptions Tests ─────────────────────────────
 
-class TestIdDependencyMarkersInDescriptions:
-    """Tools that consume an entity ID must reference the source
-    read/list tool in meta.description so the AI knows to call it first.
+# ── ID Dependency Marker in parameter schemas ──────────────────────────────
 
-    Known gaps (descriptions missing ← marker):
-      * create_chapter / create_edge — should name the act/chapter source
-      * update_character, delete_character — should mention list_characters
-      * delete_relation            — should mention list_characters
-    """
+class TestIdDependencyMarkersInSchemas:
+    """Tools that consume an entity ID must name the source read/list tool in
+    the **parameter description**, so the AI knows to call it first."""
 
-    def test_write_scene_content_links_id_source(self):
-        desc = get_tool_registry()["write_scene_content"].meta.description
-        assert "read_chapter" in desc, desc[:200]
+    ID_SOURCE = [
+        # 读：读一个节点 → 也消费 ID
+        ("read_chapter_content", "chapter_id", "read_chapters"),
+        ("read_character", "character_id", "list_characters"),
+        ("read_relation", "relation_id", "list_relations"),
+        # 写：内容
+        ("write_chapter", "chapter_id", "read_chapters"),
+        ("continue_chapter", "chapter_id", "read_chapters"),
+        # 写：章
+        ("create_chapter", "act_id", "read_acts"),
+        ("update_chapter", "chapter_id", "read_chapters"),
+        ("move_chapter", "chapter_id", "read_chapters"),
+        ("delete_chapter", "chapter_id", "read_chapters"),
+        # 写：幕
+        ("update_act", "act_id", "read_acts"),
+        ("move_act", "act_id", "read_acts"),
+        ("delete_act", "act_id", "read_acts"),
+        # 写：人物与关系
+        ("update_character", "character_id", "list_characters"),
+        ("delete_character", "character_id", "list_characters"),
+        ("create_relation", "character_id", "list_characters"),
+        ("update_relation", "relation_id", "list_relations"),
+        ("delete_relation", "relation_id", "list_relations"),
+        # 写：伏笔
+        ("create_setup", "planted_in", "read_chapters"),
+        ("update_setup", "setup_id", "list_setups"),
+        ("delete_setup", "setup_id", "list_setups"),
+        # 写作侧
+        ("call_writer_agent", "chapter_id", "read_chapters"),
+    ]
 
-    def test_read_scene_links_id_source(self):
-        desc = get_tool_registry()["read_scene"].meta.description
-        assert "read_chapter" in desc, desc[:200]
+    @pytest.mark.parametrize(("tool", "param", "source"), ID_SOURCE)
+    def test_param_description_names_the_id_source(self, tool, param, source):
+        prop = get_tool_registry()[tool].meta.parameters["properties"][param]
+        desc = prop.get("description", "")
+        assert source in desc, \
+            f"{tool}.{param} 的参数描述没有点名 ID 来源 {source!r}：{desc[:200]}"
 
-    def test_delete_scene_links_id_source(self):
-        desc = get_tool_registry()["delete_scene"].meta.description
-        assert "read_chapter" in desc, desc[:200]
+    @pytest.mark.parametrize(("tool", "param", "source"), ID_SOURCE)
+    def test_param_description_uses_the_来自_wording(self, tool, param, source):
+        """箭头是从参数描述里正则抓出来的——措辞不能漂。"""
+        prop = get_tool_registry()[tool].meta.parameters["properties"][param]
+        assert "来自" in prop.get("description", ""), f"{tool}.{param}"
 
-    def test_read_chapter_links_read_chapters(self):
-        desc = get_tool_registry()["read_chapter"].meta.description
-        assert "read_chapters" in desc, desc[:200]
-
-    def test_update_chapter_links_read_chapters(self):
-        desc = get_tool_registry()["update_chapter"].meta.description
-        assert "read_chapters" in desc, desc[:200]
-
-    def test_delete_chapter_links_read_chapters(self):
-        desc = get_tool_registry()["delete_chapter"].meta.description
-        assert "read_chapters" in desc, desc[:200]
-
-    def test_delete_act_links_read_chapters(self):
-        desc = get_tool_registry()["delete_act"].meta.description
-        assert "read_chapters" in desc, desc[:200]
-
-    # ── Known gaps (descriptions lack ← markers) ──────────────────────
-
-    def test_update_scene_should_link_id_source(self):
-        """GAP: description is '更新场景内容、标题、POV、地点、时间、梗概等'
-        — should mention read_chapter as the ID source."""
-        desc = get_tool_registry()["update_scene"].meta.description
-        assert "read_chapter" in desc, \
-            f"MISSING ← marker in update_scene: {desc[:200]}"
-
-    def test_create_scene_should_link_read_chapters(self):
-        """GAP: description mentions '章节ID' generically
-        — should name read_chapters as the source."""
-        desc = get_tool_registry()["create_scene"].meta.description
-        assert "read_chapters" in desc, \
-            f"MISSING ← marker in create_scene: {desc[:200]}"
-
-    def test_create_chapter_should_link_read_chapters(self):
-        """GAP: description mentions '幕ID' generically
-        — should name read_chapters as the source."""
-        desc = get_tool_registry()["create_chapter"].meta.description
-        assert "read_chapters" in desc, \
-            f"MISSING ← marker in create_chapter: {desc[:200]}"
-
-    def test_update_character_should_link_list_characters(self):
-        """GAP: description says '需提供角色ID' generically
-        — should name list_characters as the source."""
-        desc = get_tool_registry()["update_character"].meta.description
-        assert "list_characters" in desc, \
-            f"MISSING ← marker in update_character: {desc[:200]}"
-
-    def test_delete_character_should_link_list_characters(self):
-        """GAP: no ← marker in delete_character description."""
-        desc = get_tool_registry()["delete_character"].meta.description
-        assert "list_characters" in desc, \
-            f"MISSING ← marker in delete_character: {desc[:200]}"
-
-    def test_create_edge_should_link_read_chapters(self):
-        """GAP: create_edge needs source_id/target_id but description
-        doesn't name read_chapters as their source."""
-        desc = get_tool_registry()["create_edge"].meta.description
-        assert "read_chapters" in desc, \
-            f"MISSING ← marker in create_edge: {desc[:200]}"
-
-    def test_delete_relation_should_link_list_relations(self):
-        """delete_relation takes relation_id, which comes from list_relations."""
-        desc = get_tool_registry()["delete_relation"].meta.description
-        assert "relation_id" in desc and "list_relations" in desc, \
-            f"MISSING ← marker in delete_relation: {desc[:200]}"
+    def test_the_rendered_tool_reference_shows_the_arrow(self):
+        """模型真正看到的提示行里必须出现 `param ← 读取工具`。"""
+        text = get_tool_descriptions(get_tool_registry())
+        assert "chapter_id ← read_chapters" in text
+        assert "character_id ← list_characters" in text
+        assert "act_id ← read_acts" in text
+        assert "relation_id ← list_relations" in text
+        assert "setup_id ← list_setups" in text
 
 
 # ── Error Message Tests ────────────────────────────────────────────────────
@@ -155,12 +136,13 @@ class TestMissingParamErrorGuidesToListTool:
 
     ID_MAPPING: list[tuple[str, str]] = [
         ("chapter_id",   "read_chapters"),
-        ("scene_id",     "read_chapter"),
+        ("act_id",       "read_acts"),
         ("character_id", "list_characters"),
-        ("edge_id",      "list_edges"),
+        ("relation_id",  "list_relations"),
+        ("setup_id",     "list_setups"),
     ]
 
-    @pytest.mark.parametrize("param_name,expected_list_tool", ID_MAPPING)
+    @pytest.mark.parametrize(("param_name", "expected_list_tool"), ID_MAPPING)
     def test_error_mentions_specific_list_tool(self, param_name,
                                                 expected_list_tool):
         result = BaseTool._missing_param(param_name)
@@ -168,19 +150,18 @@ class TestMissingParamErrorGuidesToListTool:
             f"_missing_param('{param_name}').error should mention "\
             f"'{expected_list_tool}', got: {result.error[:200]}"
 
-    @pytest.mark.parametrize("param_name,expected_list_tool", ID_MAPPING)
-    def test_correction_hint_is_too_generic(self, param_name,
-                                             expected_list_tool):
-        """Known gap: correction_hint says 'list_* 系列' instead of
-        naming the specific tool like the error field does."""
+    @pytest.mark.parametrize(("param_name", "expected_list_tool"), ID_MAPPING)
+    def test_correction_hint_names_the_read_tool(self, param_name,
+                                                 expected_list_tool):
+        """correction_hint 必须点名具体工具，而不是只说「先使用读取工具」。"""
         result = BaseTool._missing_param(param_name)
         assert result.correction_hint is not None
-        expected_specific = expected_list_tool in result.correction_hint
-        if not expected_specific:
-            pytest.xfail(
-                f"correction_hint is generic: '{result.correction_hint}' "
-                f"— should mention '{expected_list_tool}'"
-            )
+        assert expected_list_tool in result.correction_hint, result.correction_hint
+
+    def test_unknown_param_still_gets_a_chinese_error(self):
+        result = BaseTool._missing_param("unknown_field")
+        assert not result.success
+        assert "unknown_field" in result.error
 
 
 # ── Interceptor / Mode Gate Tests ──────────────────────────────────────────
@@ -227,19 +208,16 @@ class TestListThenWriteScenario:
     # Write tools that CREATE new entities don't need existing IDs
     TOOLS_WITHOUT_ID_REQUIREMENT = {
         "create_character", "create_act", "create_project_from_material",
-        "set_chapter_goal",
         "update_project",
-        # 按章节顺序重建主时序线：项目身份由会话注入，不需要实体 ID
-        "relink_timeline",
     }
 
     def test_required_id_params_exist(self):
         """Every write tool that references an existing entity has at
         least one *-id in its 'required' list."""
         registry = get_tool_registry()
-        id_params = {"act_id", "chapter_id", "scene_id", "character_id",
-                     "source_id", "target_id", "edge_id",
-                     "relation_id", "project_id"}
+        id_params = {"act_id", "chapter_id", "character_id", "relation_id",
+                     "setup_id", "source_id", "target_id", "planted_in",
+                     "pay_off_in", "project_id"}
 
         for name in WRITE_TOOLS:
             if name in self.TOOLS_WITHOUT_ID_REQUIREMENT:
@@ -256,48 +234,50 @@ class TestListThenWriteScenario:
         registry = get_tool_registry()
         for name in LIST_TOOLS:
             tool = registry.get(name)
+            assert tool is not None, name
             assert not tool.is_write_operation, \
                 f"List tool '{name}' should NOT be a write operation"
 
-    def test_read_chapter_output_feeds_update_chapter(self):
-        """read_chapters/read_chapter → update_chapter chain."""
+    def test_read_chapters_output_feeds_update_chapter(self):
+        """read_chapters → update_chapter chain."""
         update_ch = get_tool_registry()["update_chapter"]
         required = update_ch.meta.parameters.get("required", [])
         assert "chapter_id" in required, \
             f"update_chapter needs chapter_id, got {required}"
 
-    def test_read_scene_output_feeds_write_scene(self):
-        """read_chapter (scenes) → write_scene_content chain."""
-        write_sc = get_tool_registry()["write_scene_content"]
-        required = write_sc.meta.parameters.get("required", [])
-        assert "scene_id" in required, \
-            f"write_scene_content needs scene_id, got {required}"
+    def test_read_chapters_output_feeds_write_chapter(self):
+        """read_chapters → write_chapter chain."""
+        write_ch = get_tool_registry()["write_chapter"]
+        required = write_ch.meta.parameters.get("required", [])
+        assert "chapter_id" in required, \
+            f"write_chapter needs chapter_id, got {required}"
+        props = write_ch.meta.parameters["properties"]
+        assert "content" in props
 
-    def test_list_tools_accept_scope_params(self):
-        """Most navigation/read tools accept a scope param to narrow results."""
+    def test_list_setups_scope_param_is_status(self):
+        """list_setups 是唯一带筛选参数的名录工具：只看 open / paid / dropped。"""
+        props = get_tool_registry()["list_setups"].meta.parameters["properties"]
+        assert props["status"]["enum"] == ["open", "paid", "dropped"]
+
+    def test_range_and_pagination_params_exist(self):
         registry = get_tool_registry()
         scoping = {
-            "list_character_relations": "character_id",
-            "read_chapters":            "chapter_from",
-            "read_recent_scenes":       "n",
-            "read_chapter_scenes":      "chapter_id",
-            "read_scene_content":       "content_offset",
+            "read_chapters": "chapter_from",
+            "read_chapter_content": "content_offset",
         }
         for tool_name, scope_param in scoping.items():
-            tool = registry[tool_name]
-            props = tool.meta.parameters.get("properties", {})
+            props = registry[tool_name].meta.parameters.get("properties", {})
             assert scope_param in props, \
                 f"'{tool_name}' should accept '{scope_param}', " \
                 f"got props={list(props.keys())}"
 
-    @pytest.mark.xfail(reason="Known gap: list_characters accepts no scope params (uses session context)")
-    def test_list_characters_accepts_no_scope_param(self):
-        """Known gap: list_characters has no project_id param.
-        It implicitly returns all characters via session context."""
-        tool = get_tool_registry()["list_characters"]
-        props = tool.meta.parameters.get("properties", {})
-        assert "project_id" in props, \
-            f"GAP: list_characters accepts no scope params: {list(props.keys())}"
+    def test_project_scoped_tools_have_no_project_filter(self):
+        """项目身份由会话注入：这些工具不接受按项目筛选的参数。"""
+        registry = get_tool_registry()
+        for name in ("list_characters", "list_relations", "list_setups",
+                     "read_progress", "read_acts", "read_project"):
+            props = registry[name].meta.parameters.get("properties", {})
+            assert "project_id" not in props, name
 
     def test_read_chapters_provides_window_ids(self):
         """read_chapters is the range-read entry point — returns chapters
@@ -325,3 +305,14 @@ class TestListThenWriteScenario:
         update = registry["update_character"]
         update_req = update.meta.parameters.get("required", [])
         assert "character_id" in update_req  # update needs existing ID
+
+    def test_create_chapter_then_write_it_then_record_the_result(self):
+        """建章 → 写正文 → 写回「本章写成了什么」的完整链条。"""
+        registry = get_tool_registry()
+        create_req = registry["create_chapter"].meta.parameters["required"]
+        assert set(create_req) == {"act_id", "chapters"}
+        assert "chapter_id" in registry["write_chapter"].meta.parameters["required"]
+
+        update_props = registry["update_chapter"].meta.parameters["properties"]
+        assert {"title", "goal", "result", "status"} <= set(update_props)
+        assert update_props["status"]["enum"] == ["draft", "revising", "final"]

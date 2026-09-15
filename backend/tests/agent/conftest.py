@@ -1,6 +1,6 @@
 """Shared fixtures for agent tests."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from app.llm.types import Message, ChatResult, Usage
 
 

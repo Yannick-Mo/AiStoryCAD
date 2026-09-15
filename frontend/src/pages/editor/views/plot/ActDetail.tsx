@@ -1,24 +1,19 @@
-import { useState, useEffect } from 'react'
-import type { Act, Chapter, Scene } from '../../types'
+import type { Act, Chapter } from '../../types'
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import { loadSceneContent } from '../../../../api/editor'
 import { orderActChapters } from '../../data/orderUtils'
-import { useToast } from '../../components/Toast'
+import { countWords } from '../../data/wordCount'
 import { useSessionState } from '../../../../hooks/useSessionState'
 
 interface ActDetailProps {
   act: Act
   chapters: Chapter[]
+  contents: Record<string, string>
   onSelectChapter: (chapterId: string) => void
-  onSceneSave: (chapterId: string, sceneId: string, content: string) => void
-  onOpenSceneEditor?: (scene: Scene) => void
-  onUpdateAct: (id: string, updates: Partial<Pick<Act, 'name' | 'color'>>) => void
-  onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
+  onUpdateAct: (id: string, updates: Partial<Pick<Act, 'name' | 'purpose' | 'color'>>) => void
+  onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'result' | 'status' | 'actId'>>) => void
   onAddChapter: (actId: string) => void
-  /** 幕内上移 / 下移一章：sort_order 是顺序的唯一真相，改完会重建时序线 */
+  /** 幕内上移 / 下移一章：sort_order 是顺序的唯一真相 */
   onMoveChapter: (chapterId: string, direction: -1 | 1) => void
-  onDeleteScene: (chapterId: string, sceneId: string) => void
-  projectId?: string
 }
 
 const STATUS_OPTIONS = [
@@ -27,59 +22,16 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onMoveChapter, onDeleteScene, projectId }: ActDetailProps) {
+/** 幕详情：幕不是"章的分组标签"，它必须有自己「这一幕要干什么」。 */
+export default function ActDetail({
+  act, chapters, contents, onSelectChapter, onUpdateAct, onUpdateChapter, onAddChapter, onMoveChapter,
+}: ActDetailProps) {
   // session state: the panel remounts when it floats / docks / moves in the dock
   const [expandedId, setExpandedId] = useSessionState<string | null>('act.expandedId', null)
-  const [editSceneId, setEditSceneId] = useSessionState<string | null>('act.editSceneId', null)
-  const [editContent, setEditContent] = useSessionState('act.editContent', '')
-  const [saving, setSaving] = useState(false)
-  const [contentCache, setContentCache] = useSessionState<Record<string, string>>('act.contentCache', {})
-  const { addToast } = useToast()
 
   // 幕内顺序的唯一真相是 sortOrder：按它排一遍，箭头才能用下标判断首尾。
   const orderedChapters = orderActChapters(chapters)
-
-  const totalWords = chapters.reduce((s, c) => s + c.wordCount, 0)
-  const totalScenes = chapters.reduce((s, c) => s + c.scenes.length, 0)
-
-  useEffect(() => {
-    if (!projectId || !expandedId) return
-    const ch = chapters.find(c => c.id === expandedId)
-    if (!ch) return
-    for (const sc of ch.scenes) {
-      if (sc.wordCount > 0 && !sc.content && !contentCache[sc.id]) {
-        loadSceneContent(projectId, sc.id)
-          .then(text => { if (text) setContentCache(prev => ({ ...prev, [sc.id]: text })) })
-          .catch(() => {})
-      }
-    }
-  }, [expandedId, projectId, chapters])
-
-  const toggleExpand = (chId: string) => {
-    setExpandedId(expandedId === chId ? null : chId)
-    setEditSceneId(null)
-  }
-
-  const sceneContent = (sc: Scene) => sc.content || contentCache[sc.id] || ''
-
-  const startEdit = (scene: Scene) => {
-    setEditSceneId(scene.id)
-    setEditContent(sceneContent(scene))
-  }
-
-  const saveScene = async (chapterId: string) => {
-    if (!editSceneId) return
-    setSaving(true)
-    try {
-      await onSceneSave(chapterId, editSceneId, editContent)
-      addToast('保存成功', 'success')
-      setEditSceneId(null)
-    } catch {
-      addToast('保存失败，请重试', 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
+  const totalWords = orderedChapters.reduce((sum, c) => sum + countWords(contents[c.id]), 0)
 
   return (
     <div className="h-full flex flex-col">
@@ -104,7 +56,6 @@ export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave,
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 text-[10px] text-gray-500">
             <span>{chapters.length} 章</span>
-            <span>{totalScenes} 场</span>
             <span>{totalWords > 0 ? `${totalWords} 字` : '未开始'}</span>
             <span>{chapters.filter(c => c.status === 'final').length}/{chapters.length} 完成</span>
           </div>
@@ -115,6 +66,18 @@ export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave,
             + 添加章节
           </button>
         </div>
+      </div>
+
+      {/* 这一幕要干什么 */}
+      <div className="shrink-0 border-b border-gray-800 px-4 py-3">
+        <div className="text-[10px] text-gray-500 mb-1">🎯 这一幕要干什么</div>
+        <textarea
+          value={act.purpose}
+          onChange={e => onUpdateAct(act.id, { purpose: e.target.value })}
+          placeholder="这一幕承担什么转变（第一幕建立与触发、第二幕上半升级、第二幕下半崩塌、第三幕解决）..."
+          rows={3}
+          className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-2 text-xs leading-relaxed text-gray-300 focus:border-amber-600 focus:outline-none"
+        />
       </div>
 
       {/* Chapter list */}
@@ -132,23 +95,32 @@ export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave,
         )}
         {orderedChapters.map((ch, index) => {
           const isExpanded = expandedId === ch.id
+          const words = countWords(contents[ch.id])
           return (
             <div key={ch.id} className="bg-gray-800/40 border border-gray-700/40 rounded-xl overflow-hidden">
               <div className="flex items-center gap-2 pl-3 pr-2 py-2.5 hover:bg-gray-700/30 transition-colors">
                 <button
-                  onClick={() => toggleExpand(ch.id)}
+                  onClick={() => setExpandedId(expandedId === ch.id ? null : ch.id)}
                   aria-expanded={isExpanded}
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
                   <span className="text-xs text-gray-500 w-4 shrink-0">{isExpanded ? '▾' : '▸'}</span>
                   <span className="text-sm font-medium text-gray-200 flex-1 truncate">{ch.title}</span>
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                </button>
+                <select
+                  value={ch.status}
+                  onChange={e => onUpdateChapter(ch.id, { status: e.target.value as Chapter['status'] })}
+                  className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] outline-none border border-transparent focus:border-amber-600/50 ${
                     ch.status === 'final' ? 'bg-green-900/30 text-green-400' :
                     ch.status === 'revising' ? 'bg-amber-900/30 text-amber-400' :
                     'bg-gray-800 text-gray-500'
-                  }`}>{STATUS_OPTIONS.find(s => s.value === ch.status)?.label}</span>
-                  <span className="text-[10px] text-gray-600 w-10 text-right">{ch.wordCount > 0 ? `${ch.wordCount}w` : '-'}</span>
-                </button>
+                  }`}
+                >
+                  {STATUS_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value} className="bg-gray-900 text-gray-300">{opt.label}</option>
+                  ))}
+                </select>
+                <span className="shrink-0 text-[10px] text-gray-600 w-10 text-right">{words > 0 ? `${words}w` : '-'}</span>
                 {/* 与大纲面板一致：箭头就在这里把该章在本幕内上移 / 下移 */}
                 <div className="flex shrink-0 flex-col gap-0.5">
                   <button
@@ -178,94 +150,27 @@ export default function ActDetail({ act, chapters, onSelectChapter, onSceneSave,
               </div>
 
               {isExpanded && (
-                <div className="px-3 pb-3 space-y-2 border-t border-gray-700/30 pt-2">
-                  {ch.scenes.map(scene => (
-                    <div key={scene.id} className="bg-gray-800/60 border border-gray-700/40 rounded-lg p-2.5">
-                      <div className="flex items-center gap-1">
-                        <input
-                          value={scene.title}
-                          onChange={e => onUpdateScene(ch.id, scene.id, { title: e.target.value })}
-                          className="bg-transparent text-xs font-medium text-gray-300 outline-none border-b border-transparent focus:border-amber-600/50 flex-1"
-                        />
-                        <button
-                          onClick={() => onDeleteScene(ch.id, scene.id)}
-                          className="text-gray-600 hover:text-red-400 transition-colors text-[10px] px-1 shrink-0"
-                          title="删除场景"
-                        >✕</button>
-                      </div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-gray-600 mb-1.5">
-                        <span className="flex items-center gap-1">
-                          🎭
-                          <input
-                            value={scene.povCharacter}
-                            onChange={e => onUpdateScene(ch.id, scene.id, { povCharacter: e.target.value })}
-                            className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-16"
-                            placeholder="POV"
-                          />
-                        </span>
-                        <span className="flex items-center gap-1">
-                          📍
-                          <input
-                            value={scene.setting}
-                            onChange={e => onUpdateScene(ch.id, scene.id, { setting: e.target.value })}
-                            className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-20"
-                            placeholder="场景"
-                          />
-                        </span>
-                        <span className="flex items-center gap-1">
-                          ⏰
-                          <input
-                            value={scene.time}
-                            onChange={e => onUpdateScene(ch.id, scene.id, { time: e.target.value })}
-                            className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-20"
-                            placeholder="时间"
-                          />
-                        </span>
-                      </div>
-                      <textarea
-                        value={scene.summary}
-                        onChange={e => onUpdateScene(ch.id, scene.id, { summary: e.target.value })}
-                        placeholder="梗概..."
-                        className="w-full bg-transparent text-[11px] text-gray-400 italic outline-none resize-none border-b border-transparent focus:border-amber-600/50 mb-1.5 leading-relaxed"
-                        rows={1}
-                      />
-                      {editSceneId === scene.id ? (
-                        <div className="space-y-1.5">
-                          <textarea
-                            value={editContent}
-                            onChange={e => setEditContent(e.target.value)}
-                            className="w-full h-28 bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 font-mono leading-relaxed"
-                            placeholder="写小说正文..."
-                          />
-                          <div className="flex gap-2">
-                            <button onClick={() => saveScene(ch.id)} disabled={saving} className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${saving ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-amber-600 text-black hover:bg-amber-500'}`}>{saving ? '保存中...' : '保存'}</button>
-                            <button onClick={() => setEditSceneId(null)} className="px-3 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition-colors">取消</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => startEdit(scene)}
-                          className={`w-full text-left px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                            sceneContent(scene)
-                              ? 'bg-gray-950/50 text-gray-400 hover:bg-gray-800 border border-gray-800'
-                              : 'bg-gray-800/30 text-gray-600 hover:bg-gray-700 border border-dashed border-gray-700'
-                          }`}
-                        >
-                          {sceneContent(scene)
-                            ? <span className="line-clamp-2 font-mono leading-relaxed">{sceneContent(scene)}</span>
-                            : '✏️ 点击开始写作...'}
-                        </button>
-                      )}
-                      {editSceneId !== scene.id && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onOpenSceneEditor?.(scene) }}
-                          className="w-full mt-1 px-2 py-1 rounded text-[10px] text-gray-600 hover:text-gray-400 hover:bg-gray-700/50 transition-colors text-center"
-                        >
-                          全屏编辑 ↗
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                <div className="space-y-2 border-t border-gray-700/30 px-3 pb-3 pt-2">
+                  <div>
+                    <div className="text-[10px] text-gray-500 mb-1">📝 本章要写什么</div>
+                    <textarea
+                      value={ch.goal}
+                      onChange={e => onUpdateChapter(ch.id, { goal: e.target.value })}
+                      placeholder="动笔前的计划..."
+                      rows={2}
+                      className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-2 text-[11px] leading-relaxed text-gray-300 focus:border-amber-600 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-gray-500 mb-1">🏁 本章写成了什么</div>
+                    <textarea
+                      value={ch.result}
+                      onChange={e => onUpdateChapter(ch.id, { result: e.target.value })}
+                      placeholder="写完之后的事实（下一章的前情）..."
+                      rows={2}
+                      className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-2 text-[11px] leading-relaxed text-gray-300 focus:border-amber-600 focus:outline-none"
+                    />
+                  </div>
                 </div>
               )}
             </div>

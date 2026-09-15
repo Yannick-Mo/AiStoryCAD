@@ -16,8 +16,16 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/tests:/app/tests
       - ./backend/pytest.ini:/app/pytest.ini:ro
+      # ruff 的配置与验收脚本也要挂进来，否则容器里的 `ruff check .` 看不到它们
+      # （scripts 本来只在镜像里有一份，改完脚本不重建镜像是不会生效的）
+      - ./backend/scripts:/app/scripts
+      - ./backend/ruff.toml:/app/ruff.toml:ro
     environment:
       - DEV_MODE=1
+      # /app 是宿主挂进来的 bind mount（宿主 uid 拥有），容器里的 appuser 写不进去，
+      # 所以 ruff 默认的 /app/.ruff_cache 会 permission denied——把缓存挪到 /tmp。
+      # （同一个原因也让 pytest 每次报一句 PytestCacheWarning，那个还没动。）
+      - RUFF_CACHE_DIR=/tmp/.ruff_cache
 
   frontend:
     build:

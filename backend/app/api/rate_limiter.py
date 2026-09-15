@@ -113,7 +113,7 @@ def get_rate_limiter() -> _GuardRateLimiter:
         return _guard_limiter
 
     # Defer the heavy import so guard.py can be loaded first
-    from app.agent.guard import RateLimiter as _GuardRateLimiter  # noqa: F811
+    from app.agent.guard import RateLimiter as _GuardRateLimiter
 
     redis_client = None
     try:

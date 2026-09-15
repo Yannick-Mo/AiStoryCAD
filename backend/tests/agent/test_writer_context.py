@@ -1,105 +1,462 @@
-"""build_for_writing — the focused context handed to the writing agent.
+"""``ContextBuilder.build_for_writing`` —— 交给写作智能体的专注上下文（**按章**）。
 
-The chapter framework lists every scene of the chapter so the writer knows the
-shape of the whole chapter; each entry carries that scene's blueprint.
+本文件守住两件历史上真的出过事故的事：
+
+1. **上下文不许再装场景层**。写作单位是章：``build_for_writing(chapter_id, action)``
+   只装这一章要写什么、它在整本书里的位置、上一章写成了什么样、人物此刻要什么、
+   还没收的伏笔、已有正文。视角没有字段（写在章蓝图里）。
+2. **模板变量与上下文字段必须一致**。历史上 ``writer.yaml`` 引用了
+   ``build_for_writing`` 从不提供的 ``tone``，而 ``build_for_writing`` 又拼了模板
+   从不使用的 ``related_edges`` / ``available_skills`` —— 每次写作白查两次库。
+   这条用例就是为那次事故留的哨兵：模板要的变量必须全给，给的字段必须全被用。
 """
 import uuid
+from pathlib import Path
 
 import pytest
+import yaml
+from jinja2 import Environment
+from jinja2.meta import find_undeclared_variables
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import ContextBuilder
+from app.agent.prompts import PromptLoader
 from app.project.repository import ProjectRepository
-from app.storycad.repository import AiStoryCADRepository
+from app.storycad.models import Act, Chapter, Character, Setup
+
+WRITER_YAML = (Path(__file__).resolve().parents[2]
+               / "app" / "agent" / "prompts" / "writer.yaml")
+
+# 不是 build_for_writing 产出、但渲染时一定会有的变量：
+#   persona          —— WritingAgent 渲染 persona_writer 后传入
+#   action           —— CallWriterAgentTool 传进 build_for_writing 的动作
+#   user_requirement —— 用户这一轮的要求（可能为空）
+CALLER_SUPPLIED = {"persona", "action", "user_requirement"}
+
+# 只在特定 action 下才会被 Jinja2 取值的变量。
+# write 是整体替换，build_for_writing 故意不提供续写点（模板里的 if 会短路，
+# 未取值的变量不会报错）。continue / rewrite 必须全都给到。
+ACTION_CONDITIONAL = {
+    "write": {"existing_content_tail"},
+    "continue": set(),
+    "rewrite": set(),
+}
+
+# 由**项目状态**（而不是 action）决定在不在的变量：最后一章没有"下一章"。
+# 豁免必须有正向用例兜着（test_the_next_chapter_is_given_only_as_a_stopping_point），
+# 否则这张表就成了掩盖 bug 的后门。
+STATE_OPTIONAL = {"next_chapter_title", "next_chapter_goal"}
+
+# build_for_writing 会多装、模板目前不用的三个键。
+#
+# 历史上"白查两次库"的正是这一类多余负载，所以刻意把它点名列出来。
+# 现在**一个都没有**——上下文里的每个键 writer.yaml 都会用到。
+# 名单留空但仍要断言，这样以后再加多余键会被拦住，而不是悄悄堆在上下文里。
+UNUSED_CTX_KEYS: set[str] = set()
+
+PREV_RESULT = "上一章写成了什么：陈默拿到账本，姑妈改了口。"
+CHAPTER_GOAL = "本章要写什么：陈默连夜去杂货铺问老板。"
+CHAPTER_BODY = "陈默推门进去，老板正在擦杯子。" * 5
 
 
-pytestmark = pytest.mark.asyncio
+def _template_vars() -> set[str]:
+    """writer.yaml 里 Jinja2 模板真正引用的变量。"""
+    text = yaml.safe_load(WRITER_YAML.read_text(encoding="utf-8"))["system"]
+    return set(find_undeclared_variables(Environment().parse(text)))
 
 
-# 超过 200 字的蓝图，尾部埋一个标记：框架里还看得到它，就说明没有被截断
-LONG_SUMMARY = (
-    "【目标】把柳家登门的退婚戏演成荒诞喜剧。"
-    + "铺垫" * 80
-    + "\n【节拍】1.柳父登门；2.呈上书信；3.主角抢话同意。"
-    + "\n【结尾状态】灵石到手 —— 尾标记=BLUEPRINT_TAIL_MARKER"
-)
-
-# 当前场自己那份蓝图：prompt 上半部分已经完整给过一次，框架里不该再出现
-CURRENT_SUMMARY = "【目标】收尾\n【结尾状态】钩子=CURRENT_ONLY_MARKER"
-
-
-async def _project(db_session: AsyncSession, test_user: dict):
-    repo = AiStoryCADRepository(db_session)
+async def _project(db_session: AsyncSession, test_user: dict) -> dict:
     project = await ProjectRepository(db_session).create("WriterCtx", "", test_user["id"])
-    act_id = str(uuid.uuid4())
-    await repo.sync_editor_data(project.id, {"acts": {"created": [
-        {"id": act_id, "name": "第一幕", "sort_order": 1}
-    ]}})
-    chapter_id = str(uuid.uuid4())
-    await repo.sync_editor_data(project.id, {"chapters": {"created": [
-        {"id": chapter_id, "act_id": act_id, "title": "第一章", "goal": "章蓝图"}
-    ]}})
-    return project, repo, chapter_id
+    project.spine = "主线骨架：奔丧 → 发现账本缺页 → 姑妈改口 → 陈默留下"
+    project.ending = "终局：陈默留下查清旧债"
+    project.genre = "悬疑"
+    project.logline = "一句话梗概：一个外人的丧事变成他的旧案"
+    project.global_settings = "小镇名叫渡口，杂货铺是唯一还开着的店。"
+    await db_session.flush()
+
+    act = Act(id=uuid.uuid4(), project_id=project.id, name="第一幕",
+              purpose="第一幕要干什么：把他扣在镇上", sort_order=1)
+    db_session.add(act)
+
+    prev = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
+                   title="第一章", goal="上一章要写什么", result=PREV_RESULT,
+                   content="上一章正文的结尾段落。", status="final", sort_order=1)
+    target = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
+                     title="第二章", goal=CHAPTER_GOAL, result="",
+                     content=CHAPTER_BODY, status="revising", sort_order=2)
+    db_session.add_all([prev, target])
+
+    hero = Character(id=uuid.uuid4(), project_id=project.id, name="陈默", role="main",
+                     appearance="瘦高个，校服洗得发白，眼神比同龄人老成",
+                     personality="克制", motivation="查清父亲留下的债",
+                     arc="从局外人到留下来的人", background="十年没回过镇上",
+                     sort_order=1)
+    db_session.add(hero)
+    await db_session.flush()
+
+    open_setup = Setup(id=uuid.uuid4(), project_id=project.id, note="缺了几页的账本",
+                       planted_in=prev.id, pay_off_in=target.id, status="open")
+    paid_setup = Setup(id=uuid.uuid4(), project_id=project.id, note="已经收了的旧硬币",
+                       planted_in=prev.id, pay_off_in=None, status="paid")
+    db_session.add_all([open_setup, paid_setup])
+    await db_session.flush()
+
+    return {"project": project, "act": act, "prev": prev, "target": target, "hero": hero}
 
 
-async def _add_scene(repo: AiStoryCADRepository, project_id, chapter_id, title, summary) -> str:
-    scene_id = str(uuid.uuid4())
-    await repo.sync_editor_data(project_id, {"scenes": {"created": [
-        {"id": scene_id, "chapter_id": chapter_id, "title": title,
-         "summary": summary, "pov_character": "林青风"}
-    ]}})
-    return scene_id
+# ── 按章、且只按章 ────────────────────────────────────────────────────────────
+
+async def test_context_is_chapter_scoped_and_carries_no_scene_layer(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    leaked = sorted(key for key in ctx if "scene" in key or "pov" in key or "edge" in key)
+    assert not leaked, f"场景层已删除，上下文里不该再有这些键：{leaked}"
+
+    assert ctx["chapter_title"] == "第二章"
+    assert ctx["chapter_goal"] == CHAPTER_GOAL
+    assert ctx["chapter_number"] == 2, "全局章号是算出来的"
+    assert ctx["act_name"] == "第一幕"
+    assert ctx["act_purpose"] == "第一幕要干什么：把他扣在镇上"
 
 
-async def test_framework_carries_every_scene_blueprint_in_full(
-    db_session: AsyncSession, test_user: dict
-):
-    project, repo, chapter_id = await _project(db_session, test_user)
-    await _add_scene(repo, project.id, chapter_id, "开场", "【目标】冷启动")
-    await _add_scene(repo, project.id, chapter_id, "退婚", LONG_SUMMARY)
-    current = await _add_scene(repo, project.id, chapter_id, "字据", CURRENT_SUMMARY)
+async def test_unknown_chapter_yields_an_empty_context(db_session: AsyncSession, test_user: dict):
+    await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(uuid.uuid4(), "write")
+    assert ctx == {}
 
-    ctx = await ContextBuilder(db_session).build_for_writing(uuid.UUID(current), "write")
-    framework = ctx["chapter_scenes_framework"]
 
-    assert "BLUEPRINT_TAIL_MARKER" in framework, "蓝图第 200 字之后的内容被截断了"
-    assert "【节拍】1.柳父登门；2.呈上书信；3.主角抢话同意。" in framework
-    assert "- **1. 开场**" in framework
-    assert "- **2. 退婚**" in framework
-    assert "- **3. 字据**" in framework
-    assert "← 当前场景" in framework
-    assert "→ 下一场" not in framework, "当前是最后一场，不应该有下一场标记"
+# ── 跨章连续性：上一章写成了什么 ──────────────────────────────────────────────
+
+async def test_previous_chapter_result_is_the_starting_point(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert ctx["previous_chapter_title"] == "第一章"
+    assert ctx["previous_chapter_result"] == PREV_RESULT
+    assert ctx["previous_chapter_tail"] == "上一章正文的结尾段落。"
+
+
+async def test_the_first_chapter_has_no_previous_chapter_keys(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["prev"].id, "write")
+
     assert ctx["chapter_number"] == 1
+    assert "previous_chapter_result" not in ctx
+    assert "previous_chapter_title" not in ctx
 
 
-async def test_current_scene_blueprint_is_not_repeated(
-    db_session: AsyncSession, test_user: dict
+# ── 整本书里的位置 ────────────────────────────────────────────────────────────
+
+async def test_position_in_the_book_is_included(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert ctx["project_title"] == "WriterCtx"
+    assert ctx["genre"] == "悬疑"
+    assert ctx["logline"].startswith("一句话梗概")
+    assert "主线骨架" in ctx["spine"], "主线骨架是判断「该往哪使劲」的依据"
+    assert "终局" in ctx["ending"]
+    assert "渡口" in ctx["global_settings"]
+
+
+async def test_characters_text_carries_want_and_arc(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    text = ctx["characters_text"]
+    assert "陈默" in text
+    assert "他想要什么：查清父亲留下的债" in text
+    assert "他从哪到哪：从局外人到留下来的人" in text
+
+
+async def test_characters_text_carries_appearance(db_session: AsyncSession, test_user: dict):
+    """外貌必须进正文材料：先前只给性格/动机/弧光/背景，每一章的长相都是写手现编的。"""
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert "外貌：瘦高个" in ctx["characters_text"]
+
+
+async def test_empty_character_list_says_so(db_session: AsyncSession, test_user: dict):
+    project = await ProjectRepository(db_session).create("NoChar", "", test_user["id"])
+    act = Act(id=uuid.uuid4(), project_id=project.id, name="第一幕", purpose="甲", sort_order=1)
+    db_session.add(act)
+    chapter = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
+                      title="第一章", goal="要写什么", sort_order=1)
+    db_session.add(chapter)
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(chapter.id, "write")
+    assert ctx["characters_text"] == "暂无人物"
+
+
+# ── 还没收的伏笔 ──────────────────────────────────────────────────────────────
+
+async def test_open_setups_text_lists_only_unpaid_setups(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    text = ctx["open_setups_text"]
+    assert "缺了几页的账本" in text
+    assert "已经收了的旧硬币" not in text, "已收的伏笔不该再提醒写手"
+    assert "第 1 章埋下" in text
+    assert "打算第 2 章收" in text
+
+
+async def test_no_open_setups_means_no_key_at_all(db_session: AsyncSession, test_user: dict):
+    project = await ProjectRepository(db_session).create("NoSetup", "", test_user["id"])
+    act = Act(id=uuid.uuid4(), project_id=project.id, name="第一幕", purpose="甲", sort_order=1)
+    db_session.add(act)
+    chapter = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
+                      title="第一章", goal="要写什么", sort_order=1)
+    db_session.add(chapter)
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(chapter.id, "write")
+    assert "open_setups_text" not in ctx
+
+
+async def test_a_setup_without_a_pay_off_chapter_says_so(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    f["project"].spine = f["project"].spine  # 保持项目不变，只加一条没有回收计划的伏笔
+    db_session.add(Setup(id=uuid.uuid4(), project_id=f["project"].id, note="没定在哪收的东西",
+                         planted_in=f["prev"].id, pay_off_in=None, status="open"))
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    assert "没定在哪收的东西（第 1 章埋下）（还没定在哪收）" in ctx["open_setups_text"]
+
+
+# ── 已有正文与 action ─────────────────────────────────────────────────────────
+
+async def test_existing_content_is_given_for_write_and_rewrite(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert ctx["existing_content"] == CHAPTER_BODY
+    assert "existing_content_tail" not in ctx, "write 是整体替换，不需要续写点"
+    # 正文字数不给写手：它对写手没有信息量（正文本身就在 existing_content 里），
+    # 多一个键就是一份会和模板悄悄漂移的载荷。UNUSED_CTX_KEYS 为空即为此。
+    assert "chapter_body_chars" not in ctx
+    assert "chapter_status" not in ctx
+    assert "chapter_result" not in ctx
+
+
+async def test_continue_and_rewrite_get_the_tail(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    for action in ("continue", "rewrite"):
+        ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, action)
+        assert ctx["existing_content_tail"] == CHAPTER_BODY[-1500:], action
+
+
+async def test_a_chapter_without_prose_has_no_existing_content(db_session: AsyncSession, test_user: dict):
+    project = await ProjectRepository(db_session).create("Empty", "", test_user["id"])
+    act = Act(id=uuid.uuid4(), project_id=project.id, name="第一幕", purpose="甲", sort_order=1)
+    db_session.add(act)
+    chapter = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
+                      title="第一章", goal="要写什么", content="", sort_order=1)
+    db_session.add(chapter)
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(chapter.id, "continue")
+    assert "existing_content" not in ctx
+    assert "existing_content_tail" not in ctx
+    assert "chapter_body_chars" not in ctx
+
+
+# ── 提示词 / 上下文变量一致性（历史上真出过 bug 的那条）────────────────────────
+
+@pytest.mark.parametrize("action", ["write", "continue", "rewrite"])
+async def test_writer_template_variables_are_all_supplied(db_session: AsyncSession, test_user: dict, action: str):
+    """writer.yaml 引用的每一个变量，都必须由 build_for_writing（或调用方）提供。"""
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, action)
+
+    missing = (_template_vars() - set(ctx) - CALLER_SUPPLIED
+               - ACTION_CONDITIONAL[action] - STATE_OPTIONAL)
+    assert not missing, f"writer.yaml 引用了没人提供的变量：{sorted(missing)}"
+
+
+async def test_writer_context_keys_are_all_used_by_the_template(db_session: AsyncSession, test_user: dict):
+    """反方向：上下文里装的字段必须真的被模板用到（否则就是每次写作白查库）。"""
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "continue")
+
+    unused = set(ctx) - _template_vars()
+    assert unused == UNUSED_CTX_KEYS, (
+        f"多出来的上下文键变了：{sorted(unused)}；"
+        f"已知的多余键是 {sorted(UNUSED_CTX_KEYS)}"
+    )
+
+
+@pytest.mark.parametrize("action", ["write", "continue", "rewrite"])
+async def test_the_prompt_renders_without_leftover_placeholders(
+    db_session: AsyncSession, test_user: dict, action: str
 ):
-    """当前场的蓝图在上面的「## 当前场景」里已完整出现，框架里只留指针。"""
-    project, repo, chapter_id = await _project(db_session, test_user)
-    await _add_scene(repo, project.id, chapter_id, "A", "【目标】一")
-    current = await _add_scene(repo, project.id, chapter_id, "B", CURRENT_SUMMARY)
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, action)
+    ctx.update({"action": action, "persona": "你是一位资深中文小说家"})
 
-    ctx = await ContextBuilder(db_session).build_for_writing(uuid.UUID(current), "write")
-
-    assert ctx["scene_summary"] == CURRENT_SUMMARY, "上半部分的当前场蓝图丢了"
-    assert "CURRENT_ONLY_MARKER" not in ctx["chapter_scenes_framework"], \
-        "当前场蓝图在框架里被重复了一遍"
-    assert "本场蓝图见上" in ctx["chapter_scenes_framework"]
+    rendered = PromptLoader().load("writer").render(**ctx)
+    assert "{{" not in rendered
+    assert "}}" not in rendered
 
 
-async def test_multi_line_blueprint_stays_inside_its_list_item(
-    db_session: AsyncSession, test_user: dict
-):
-    """多行蓝图要整体缩进，否则第二行会掉出列表项、被当成新条目。"""
-    project, repo, chapter_id = await _project(db_session, test_user)
-    await _add_scene(repo, project.id, chapter_id, "A", "【目标】一")
-    current = await _add_scene(repo, project.id, chapter_id, "B", LONG_SUMMARY)
+async def test_the_new_variable_set_actually_reaches_the_prompt(db_session: AsyncSession, test_user: dict):
+    """spine / ending / previous_chapter_result / characters_text / open_setups_text
+    这五个是这次重构新增或改名的，缺一个都会让写手失去判断依据。"""
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    ctx.update({"action": "write", "persona": "你是一位资深中文小说家"})
+    rendered = PromptLoader().load("writer").render(**ctx)
 
-    ctx = await ContextBuilder(db_session).build_for_writing(uuid.UUID(current), "write")
+    assert ctx["spine"] in rendered
+    assert ctx["ending"] in rendered
+    assert PREV_RESULT in rendered
+    assert "他想要什么：查清父亲留下的债" in rendered
+    assert "缺了几页的账本" in rendered
 
-    for line in ctx["chapter_scenes_framework"].splitlines():
-        if not line.strip():
-            continue
-        assert line.startswith("- **") or line.startswith("  "), \
-            f"蓝图行跑出了列表项：{line!r}"
+    # 章是写作单位，提示词里不再有场景层的说法
+    assert "## 当前这一章" in rendered
+    assert "场景" not in rendered
+
+
+# ── 篇幅参考：写手原来只拿到「由这一章的分量决定」────────────────────────────
+
+async def test_length_target_uses_the_average_of_written_chapters(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    f["prev"].content = "上一章正文。" * 400          # 2400 字
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    # 平均 2400 → 下限 0.8 倍 = 1920、上限 1.35 倍 = 3240，都取整到百位
+    assert "1900–3200 字" in ctx["length_target"]
+    assert "本书已写 1 章，平均 2400 字" in ctx["length_target"]
+    assert "写到 1900 字以下" in ctx["length_target"]
+
+
+async def test_length_target_falls_back_when_nothing_is_written(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    f["prev"].content = ""
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert "2500–4000 字" in ctx["length_target"]
+    assert "还没有正文" in ctx["length_target"]
+
+
+async def test_length_target_ignores_the_chapter_being_written(db_session: AsyncSession, test_user: dict):
+    """本章自己的正文不能算进"本书平均"——否则重写时会自己锚定自己。"""
+    f = await _project(db_session, test_user)
+    f["prev"].content = ""
+    f["target"].content = "本章已经写过的正文。" * 400     # 4000 字
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "rewrite")
+
+    assert "2500–4000 字" in ctx["length_target"]
+
+
+# ── 下一章：只当停点用 ───────────────────────────────────────────────────────
+
+async def test_the_next_chapter_is_given_only_as_a_stopping_point(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    db_session.add(Chapter(id=uuid.uuid4(), project_id=f["project"].id, act_id=f["act"].id,
+                           title="第三章", goal="他决定留下。", sort_order=3))
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert ctx["next_chapter_title"] == "第三章"
+    assert ctx["next_chapter_goal"] == "他决定留下。"
+
+
+async def test_the_last_chapter_has_no_next_chapter_keys(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert "next_chapter_title" not in ctx
+    assert "next_chapter_goal" not in ctx
+
+
+# ── 人物档案：不再硬切在半句话上，名单一个都不丢 ──────────────────────────────
+
+async def test_character_roles_are_rendered_in_chinese(db_session: AsyncSession, test_user: dict):
+    """写手不该在提示词里读到 main / supporting 这种字段值。"""
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert "- 陈默（主角）" in ctx["characters_text"]
+
+
+async def test_long_character_fields_are_cut_at_a_sentence_end(db_session: AsyncSession, test_user: dict):
+    """硬切的后果是写手读到「……骨子里有」这种半句话，只能自己补完。"""
+    f = await _project(db_session, test_user)
+    f["hero"].personality = "谨慎。" * 200            # 600 字，超过 320 的额度
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    line = next(row for row in ctx["characters_text"].splitlines() if row.startswith("  性格："))
+
+    assert line.endswith("……（后文略）"), line
+    body = line[: -len("……（后文略）")]
+    assert body.endswith("。"), "截断必须落在句末标点上，不能切断半句话"
+    assert len(body) <= 320 + len("  性格：")
+
+
+async def test_short_character_fields_get_no_marker(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert "性格：克制" in ctx["characters_text"]
+    assert "后文略" not in ctx["characters_text"]
+
+
+async def test_character_names_are_never_dropped(db_session: AsyncSession, test_user: dict):
+    """档案超预算时只给名单——名单丢了，写手就会自己造一个人顶上去。"""
+    f = await _project(db_session, test_user)
+    for i in range(30):
+        db_session.add(Character(id=uuid.uuid4(), project_id=f["project"].id,
+                                 name=f"配角{i}", role="supporting",
+                                 personality="小心。" * 200, motivation="活下去",
+                                 sort_order=10 + i))
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    text = ctx["characters_text"]
+
+    assert "- 陈默（主角）" in text, "排在前面的档案要留住"
+    assert "只列了名字" in text, "裁掉了谁必须说清楚"
+    assert "配角29" in text, "名单一个都不能丢"
+
+
+# ── 世界观：预算变大，被截断时必须说出来 ─────────────────────────────────────
+
+async def test_a_huge_world_bible_is_cut_with_an_honest_marker(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    f["project"].global_settings = "设定。" * 4000     # 12000 字
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    text = ctx["global_settings"]
+
+    assert text.endswith("……（后文略）")
+    assert len(text) <= 8000 + len("……（后文略）")
+
+
+async def test_a_short_world_bible_is_given_whole(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert ctx["global_settings"] == "小镇名叫渡口，杂货铺是唯一还开着的店。"
+
+
+def test_writer_yaml_references_no_scene_or_dead_variables():
+    text = WRITER_YAML.read_text(encoding="utf-8")
+    for dead in ("related_edges", "available_skills", "tone", "user_prompt",
+                 "pov_character", "scene_title", "scene_summary",
+                 "previous_scene_tail", "chapter_scenes_framework"):
+        assert dead not in text, f"writer.yaml 不该引用 {dead}"

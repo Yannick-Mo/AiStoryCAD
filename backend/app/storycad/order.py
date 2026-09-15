@@ -1,12 +1,15 @@
 """Deterministic ordering for narrative entities.
 
-``sort_order`` is the single source of truth for the order of acts, chapters
-and scenes everywhere: the outline, the plot canvas, the preview / export and
-the agent's own context.  The column has no UNIQUE constraint (legacy rows may
-hold duplicates), so PostgreSQL is free to return tied rows in any order and
-two loads of the same project could disagree.  Every query that orders by
-``sort_order`` must therefore append a deterministic tie-break, which is what
-:func:`order_by_sequence` provides.
+``sort_order`` is the single source of truth for the order of **acts and
+chapters** everywhere: the outline, the plot canvas, the preview / export and
+the agent's own context.  (章是最底层——没有更下层的实体需要排序。）
+
+The column has no UNIQUE constraint, so PostgreSQL is free to return tied rows
+in any order and two loads of the same project could disagree.  The
+implementation keeps the sequence dense (see ``storycad/sequence.py``), but
+every query that orders by ``sort_order`` must still append a deterministic
+tie-break — a query that runs mid-transaction can legitimately see a tie.
+That is what :func:`order_by_sequence` provides.
 """
 
 from __future__ import annotations

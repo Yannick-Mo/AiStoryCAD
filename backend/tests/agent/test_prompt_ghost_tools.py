@@ -58,8 +58,11 @@ def test_loop_static_teaching_references_only_registered_tools():
     # Only the static teaching blocks, not arbitrary code identifiers.
     start = text.find("# --- 项目数据访问规则（必须遵守） ---")
     end = text.find("cowriter_persona = ", start)
-    assert start != -1 and end != -1, "loop.py teaching block moved?"
+    assert start != -1, "loop.py teaching block start moved?"
+    assert end != -1, "loop.py teaching block end moved?"
     _assert_text_names(text[start:end], "loop.py 数据访问规则")
-    guide_start = text.find("# --- 获取实体 ID 指南 ---")
-    assert guide_start != -1, "loop.py ID guide moved?"
-    _assert_text_names(text[guide_start:guide_start + 3000], "loop.py ID 指南")
+    # 取数指南（原「获取实体 ID 指南」）：标题改了，定位符跟着改——
+    # 这个用例要守的是"提到的工具都得真存在"，不是某个标题不朽。
+    guide_start = text.find("# --- 怎么取到需要的东西 ---")
+    assert guide_start != -1, "loop.py 取数指南段不见了"
+    _assert_text_names(text[guide_start:guide_start + 3000], "loop.py 取数指南")

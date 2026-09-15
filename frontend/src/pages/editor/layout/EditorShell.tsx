@@ -11,28 +11,51 @@ import PlotCanvas from '../views/plot/PlotCanvas'
 import PlotToolbar from '../views/plot/PlotToolbar'
 import ChapterDetail from '../views/plot/ChapterDetail'
 import ActDetail from '../views/plot/ActDetail'
-import EdgeDetail from '../views/plot/EdgeDetail'
+import SetupPanel from '../views/plot/SetupPanel'
+import SetupDetail from '../views/plot/SetupDetail'
 import CharCanvas from '../views/character/CharCanvas'
 import CharacterDetail from '../views/character/CharacterDetail'
 import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
 import PreviewPanel from '../modals/PreviewPanel'
-import SceneEditor from '../modals/SceneEditor'
-import ChapterGoalEditor from '../modals/ChapterGoalEditor'
+import ChapterTextEditor from '../modals/ChapterTextEditor'
+import type { ChapterTextField } from '../modals/ChapterTextEditor'
 import GlobalSettingsPanel from '../modals/GlobalSettingsPanel'
 import AiPanel, { useAiChat } from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useSessionState } from '../../../hooks/useSessionState'
 import { useEditorStore } from '../data/editorStore'
-import { loadEditorData, saveSceneContent } from '../../../api/editor'
+import { loadAllChapterContents, loadChapterContent, loadEditorData, saveChapterContent } from '../../../api/editor'
 import { useToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DetailPanel from '../components/DetailPanel'
-import type { Chapter, EdgeType } from '../types'
+import type { Chapter } from '../types'
 import { orderChapters, orderActChapters } from '../data/orderUtils'
 
 const DOCK_TREE_KEY = 'aistorycad_dock_tree'
 const DOCK_PANEL_IDS = ['outline', 'canvas', 'detail', 'ai']
+
+/**
+ * AI 面板开着还是关着，按项目记在浏览器里：刷新页面之后现场还在，
+ * 而不是每次都要重新点开（面板里还会自己回到上次那个会话）。
+ */
+const AI_PANEL_KEY = 'aistorycad_ai_panel'
+
+function readStoredPanelOpen(projectId: string): boolean {
+  try {
+    return localStorage.getItem(`${AI_PANEL_KEY}:${projectId}`) === '1'
+  } catch {
+    return false
+  }
+}
+
+function storePanelOpen(projectId: string, open: boolean) {
+  try {
+    localStorage.setItem(`${AI_PANEL_KEY}:${projectId}`, open ? '1' : '0')
+  } catch {
+    // 隐私模式 / 存储被禁用：记不住就算了
+  }
+}
 
 /** share of the container the outline takes when it is added to an older layout */
 const OUTLINE_WEIGHT = 0.2
@@ -88,25 +111,29 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [finalOnly, setFinalOnly] = useSessionState<boolean>('editor.finalOnly', false)
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
-  const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
-  // What the detail panel shows instead of the normal selection view: a
-  // full-panel editor, the finished-content preview or the global settings.
+  // What the detail panel shows instead of the normal selection view: a full-panel
+  // field editor (本章要写什么 / 本章写成了什么 / 正文), the finished-content
+  // preview, the setups list or the global settings.
   // Cleared on save / cancel or when the selection moves on.
   const [detailMode, setDetailMode] = useState<
-    | { kind: 'chapter-goal'; chapterId: string }
-    | { kind: 'scene'; sceneId: string }
+    | { kind: 'chapter-field'; chapterId: string; field: ChapterTextField }
     | { kind: 'preview' }
     | { kind: 'settings' }
+    | { kind: 'setups' }
     | null
   >(null)
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter' | 'scene'; id: string; chapterId?: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter'; id: string } | null>(null)
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
-  const [aiChatOpen, setAiChatOpen] = useState(false)
+  // 伏笔不是画布节点（数据层是一对配对引用），所以选中状态和人物/关系一样放这里
+  const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null)
+  const [aiChatOpen, setAiChatOpen] = useState(() => readStoredPanelOpen(projectId))
   const [aiContextView, setAiContextView] = useState<string>('chat')
   const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
-  const [detailOpen, setDetailOpen] = useState(false)
+  // 进入工作台默认打开：详情页是这一页的主视图之一，先摆出来用户才知道它在哪、
+  // 里面显示选中的东西。之后怎么开关由用户决定——选中不再自动弹（见下面的注释）。
+  const [detailOpen, setDetailOpen] = useState(true)
   // Which view the current selection belongs to. Independent of whether the
   // canvas panel is open, so the detail panel keeps its content when the canvas
   // is closed and can be driven from the outline instead.
@@ -124,28 +151,13 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }, [addToast]))
   const data = store.data
   const [layoutKey, setLayoutKey] = useState(0)
-  const [relinking, setRelinking] = useState(false)
   const handleAutoLayout = useCallback(() => setLayoutKey(k => k + 1), [])
-
-  // 顶部栏「重连时序」：手动把当前章节顺序重新投影成一条时序直链，
-  // 不必等下一次同步、也不用切视图才知道连线有没有跟上。
-  const handleRelinkTimeline = useCallback(async () => {
-    setRelinking(true)
-    try {
-      const result = await store.relinkTimeline()
-      if (result.created === 0 && result.deleted === 0) addToast('时序线已是最新', 'info')
-      else addToast(`时序线已重连：新增 ${result.created} 条，清理 ${result.deleted} 条`, 'success')
-    } catch (e) {
-      addToast((e as Error)?.message || '重连时序线失败', 'error')
-    } finally {
-      setRelinking(false)
-    }
-  }, [store, addToast])
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
     setDetailMode(null)
     setSelectionView('narrative-plot')
+    setSelectedSetupId(null)
     setSelectedActId(actId); setSelectedChapter(null); store.selectNode('act', actId)
   }, [store])
 
@@ -155,38 +167,63 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     if (!ch) return
     setDetailMode(null)
     setSelectionView('narrative-plot')
+    setSelectedSetupId(null)
     setSelectedChapter(ch); setSelectedActId(null); store.selectNode('chapter', chapterId)
   }, [data, store])
 
-  const setData = useCallback(store.setData, [])
-
-  const handleSceneSaved = useCallback((sceneId: string, content: string, wordCount: number) => {
-    let updatedChapter: Chapter | undefined
-    setData(d => {
-      if (!d) return d
-      const newChapters = d.chapters.map(ch => {
-        if (!ch.scenes.some(s => s.id === sceneId)) return ch
-        const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount } : s)
-        const updated = { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
-        updatedChapter = updated
-        return updated
-      })
-      return { ...d, chapters: newChapters }
-    })
-    if (updatedChapter) setSelectedChapter(updatedChapter)
-  }, [setData])
-
-  const handleChapterGoalSave = useCallback((chapterId: string, goal: string) => {
-    store.updateChapter(chapterId, { goal })
-    setSelectedChapter(prev => (prev && prev.id === chapterId ? { ...prev, goal } : prev))
+  /** 点情节幕布上的伏笔线：选中那条伏笔，详情面板显示它。 */
+  const handleSetupSelect = useCallback((setupId: string) => {
+    setDetailMode(null)
+    setSelectionView('narrative-plot')
+    setSelectedActId(null)
+    setSelectedChapter(null)
+    setSelectedCharacterId(null)
+    setSelectedRelation(null)
+    store.clearSelection()
+    setSelectedSetupId(setupId)
   }, [store])
 
-  const handleSceneGoalSave = useCallback((sceneId: string, summary: string) => {
-    const chapter = store.data?.chapters.find(c => c.scenes.some(s => s.id === sceneId))
-    if (chapter) {
-      store.updateScene(chapter.id, sceneId, { summary })
+  /** 幕布右键「编辑本章」是**显式**动作：选中它，并把详情页打开。 */
+  const handleEditChapter = useCallback((chapterId: string) => {
+    handleChapterClick(chapterId)
+    setDetailOpen(true)
+  }, [handleChapterClick])
+
+  /**
+   * 全屏字段编辑器保存。goal / result 只是 store 上的字段；正文要先写服务端再改
+   * 本地——正文是延迟列，本地那份只是副本。
+   */
+  const handleFieldSave = useCallback(async (text: string) => {
+    if (detailMode?.kind !== 'chapter-field') return
+    const { chapterId, field } = detailMode
+    if (field === 'body') {
+      await saveChapterContent(projectId, chapterId, text)
+      store.setChapterContent(chapterId, text)
+      return
     }
-  }, [store])
+    if (field === 'goal') store.updateChapter(chapterId, { goal: text })
+    else store.updateChapter(chapterId, { result: text })
+    setSelectedChapter(prev => (prev && prev.id === chapterId
+      ? (field === 'goal' ? { ...prev, goal: text } : { ...prev, result: text })
+      : prev))
+  }, [detailMode, projectId, store])
+
+  /**
+   * 正文全屏编辑前先确认正文已经取回来：正文是延迟列，批量请求失败时 store 里
+   * 根本没有这一章的正文，编辑器会拿着空字符串去保存——那等于清空一章。
+   */
+  const handleOpenBodyEditor = useCallback(async (chapter: Chapter) => {
+    if (!Object.prototype.hasOwnProperty.call(data?.chapterContents ?? {}, chapter.id)) {
+      try {
+        const text = await loadChapterContent(projectId, chapter.id)
+        store.setChapterContent(chapter.id, text)
+      } catch {
+        addToast('正文读取失败，暂时不能全屏编辑', 'error')
+        return
+      }
+    }
+    setDetailMode({ kind: 'chapter-field', chapterId: chapter.id, field: 'body' })
+  }, [data, projectId, store, addToast])
 
   const handleOpenAiPanel = useCallback((contextView: string, contextId?: string) => {
     setAiContextView(contextView)
@@ -200,15 +237,23 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     setAiChatOpen(true)
   }, [])
 
+  // AI 写完项目数据后重载：正文（chapters.content）是延迟列，editor-data 不带它，
+  // 所以两个请求一起发，否则新写入的正文在编辑器里看不到。
   const handleProjectUpdated = useCallback(() => {
-    store.flushChanges().then(ok => {
-      if (ok) {
-        loadEditorData(projectId).then(d => store.setData(d)).catch((err) => {
-          console.error('Failed to reload project data:', err)
-          addToast('重载项目数据失败', 'error')
-        })
-      } else {
+    store.flushChanges().then(async ok => {
+      if (!ok) {
         addToast('本地修改尚未保存，无法安全重载 AI 写入数据，请稍后再试', 'warning')
+        return
+      }
+      try {
+        const [fresh, contents] = await Promise.all([
+          loadEditorData(projectId),
+          loadAllChapterContents(projectId),
+        ])
+        store.setData({ ...fresh, chapterContents: contents })
+      } catch (err) {
+        console.error('Failed to reload project data:', err)
+        addToast('重载项目数据失败', 'error')
       }
     })
   }, [projectId, store, addToast])
@@ -227,15 +272,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
 
-  // The detail container stays open even when its content is cleared (e.g. the
-  // canvas was closed), so its visibility is explicit state instead of being
-  // derived from "is something selected".
-  const hasSelection = store.selection.id !== null
-    || selectedCharacterId !== null
-    || selectedRelation !== null
-  useEffect(() => {
-    if (hasSelection) setDetailOpen(true)
-  }, [hasSelection])
+  // 详情页**不再随幕布上的选择自动弹出**：点章节节点 / 人物节点 / 幕框、点大纲一行
+  // 都只是"选中"（幕布上高亮），要看详情走左导航的「详情页」，或用幕布右键的
+  // 「编辑本章」。所以面板的可见性是自己的一份状态，不从"有没有选东西"推出来。
+  // 全局设定 / 已完成内容 / 伏笔仍然自己打开这个面板——那是导航动作，不是自动弹。
 
   // Moving to another act / chapter / node (or switching canvas) closes the
   // full-panel editor and hands the detail panel back to the selection view.
@@ -245,12 +285,17 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     selectedActId ?? '',
     selectedCharacterId ?? '',
     selectedRelation ? `${selectedRelation.sourceId}|${selectedRelation.relationId}` : '',
+    selectedSetupId ?? '',
     store.selection.type,
     store.selection.id ?? '',
   ].join('|')
   useEffect(() => {
     setDetailMode(null)
   }, [detailTargetKey])
+
+  useEffect(() => {
+    storePanelOpen(projectId, aiChatOpen)
+  }, [aiChatOpen, projectId])
 
   // Debounced so a divider drag does not write to localStorage on every frame.
   useEffect(() => {
@@ -285,10 +330,22 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     setSelectedChapter(null)
     setSelectedRelation(null)
     setSelectedCharacterId(null)
+    setSelectedSetupId(null)
     store.clearSelection()
     setDetailMode(null)
     setDetailOpen(false)
   }, [store])
+
+  /**
+   * 左导航「详情页」：总是落在**详情**（当前选中项那一页）上——面板正开着预览 /
+   * 伏笔 / 全局设定时点它也回到详情。已经停在详情页上时再点一次就关掉，和面板
+   * 自己的 ✕ 是同一套语义。
+   */
+  const handleDetailNav = useCallback(() => {
+    if (detailOpen && detailMode === null) { closeDetail(); return }
+    setDetailMode(null)
+    setDetailOpen(true)
+  }, [detailOpen, detailMode, closeDetail])
 
   // Side-nav entries that used to open a modal: they now open the detail panel
   // on that page instead.
@@ -302,17 +359,19 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     setDetailMode({ kind: 'settings' })
   }, [])
 
+  const openSetups = useCallback(() => {
+    setDetailOpen(true)
+    setDetailMode({ kind: 'setups' })
+  }, [])
+
   if (store.loading) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">加载项目数据...</div>
   if (store.error) return <div className="h-screen bg-gray-950 flex items-center justify-center text-red-400 text-sm">{store.error}</div>
   if (!data) return <div className="h-screen bg-gray-950 flex items-center justify-center text-gray-500 text-sm">暂无数据</div>
 
-  const selectedEdge = store.selection.type === 'edge'
-    ? data.edges.find(edge => edge.id === store.selection.id) ?? null
-    : null
-
   const selectedAct = selectedActId ? data.acts.find(a => a.id === selectedActId) ?? null : null
   const activeChapter = selectedChapter ? data.chapters.find(c => c.id === selectedChapter.id) ?? null : null
   const selectedChar = selectedCharacterId ? data.characters.find(c => c.id === selectedCharacterId) ?? null : null
+  const selectedSetup = selectedSetupId ? data.setups.find(s => s.id === selectedSetupId) ?? null : null
 
   const renderCanvas = () => {
     switch (views.activeViewId) {
@@ -321,26 +380,21 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <PlotCanvas
             chapters={data.chapters}
             acts={data.acts}
-            edges={data.edges}
+            setups={data.setups}
+            contents={data.chapterContents}
             onChapterClick={handleChapterClick}
+            onEditChapter={handleEditChapter}
             onActClick={handleActClick}
-            onAddEdge={store.addEdge}
-            onDeleteEdge={store.deleteEdge}
-            onChangeEdgeType={store.changeEdgeType}
-            onReconnectEdge={store.reconnectEdge}
             onAddChapter={store.addChapter}
             onDeleteChapter={(id) => setConfirmDelete({ type: 'chapter', id })}
             onAddAct={store.addAct}
             onDeleteAct={(id) => setConfirmDelete({ type: 'act', id })}
             onActResize={store.resizeAct}
             selection={store.selection}
+            selectedSetupId={selectedSetupId}
             onSelectNode={(type, id) => { setSelectionView('narrative-plot'); store.selectNode(type, id) }}
-            onSelectEdge={(edgeId: string) => {
-              setSelectionView('narrative-plot')
-              setSelectedActId(null); setSelectedChapter(null); store.selectEdge(edgeId)
-            }}
-            onClearSelection={store.clearSelection}
-            connectionMode={connectionMode}
+            onSelectSetup={handleSetupSelect}
+            onClearSelection={() => { setSelectedSetupId(null); store.clearSelection() }}
             resetKey={layoutKey}
           />
         )
@@ -349,8 +403,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <CharCanvas
             characters={data.characters}
             selection={{ type: selectedCharacterId ? 'character' : selectedRelation ? 'relation' : null, id: selectedCharacterId ?? (selectedRelation ? `${selectedRelation.sourceId}|${selectedRelation.relationId}` : null) }}
-            onSelectCharacter={(id) => { setSelectionView('narrative-char'); setSelectedCharacterId(id); setSelectedRelation(null) }}
-            onSelectRelation={(sourceId, relationId) => { setSelectionView('narrative-char'); setSelectedRelation({ sourceId, relationId }); setSelectedCharacterId(null) }}
+            onSelectCharacter={(id) => { setSelectionView('narrative-char'); setSelectedSetupId(null); setSelectedCharacterId(id); setSelectedRelation(null) }}
+            onSelectRelation={(sourceId, relationId) => { setSelectionView('narrative-char'); setSelectedSetupId(null); setSelectedRelation({ sourceId, relationId }); setSelectedCharacterId(null) }}
             onClearSelection={() => { setSelectedCharacterId(null); setSelectedRelation(null) }}
             onAddCharacter={() => { const ch = store.addCharacter(); setSelectedCharacterId(ch.id) }}
             onDeleteCharacter={(id) => { store.deleteCharacter(id); setSelectedCharacterId(null) }}
@@ -368,48 +422,30 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   // the same container — only the content differs.
   const renderDetail = () => {
     if (selectionView === 'narrative-plot') {
+      if (selectedSetup) {
+        return (
+          <SetupDetail
+            key={selectedSetup.id}
+            setup={selectedSetup}
+            chapters={orderChapters(data.chapters, data.acts)}
+            acts={data.acts}
+            onUpdate={store.updateSetup}
+            onDelete={async (id) => { await store.deleteSetup(id); setSelectedSetupId(null) }}
+          />
+        )
+      }
+
       if (selectedAct) {
         return (
           <ActDetail
             act={selectedAct}
             chapters={orderActChapters(data.chapters.filter(c => c.actId === selectedActId))}
+            contents={data.chapterContents}
             onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
-            projectId={projectId}
-            onSceneSave={async (chapterId, sceneId, content) => {
-              let updatedChapter: Chapter | undefined
-              setData(d => {
-                if (!d) return d
-                const chs = d.chapters.map(ch =>
-                  ch.id === chapterId
-                    ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
-                    : ch
-                )
-                updatedChapter = chs.find(c => c.id === chapterId)
-                return { ...d, chapters: chs }
-              })
-              try {
-                const result = await saveSceneContent(projectId, sceneId, content)
-                setData(d => {
-                  if (!d) return d
-                  const chs = d.chapters.map(ch => {
-                    if (ch.id !== chapterId) return ch
-                    const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
-                    return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
-                  })
-                  updatedChapter = chs.find(c => c.id === chapterId)
-                  return { ...d, chapters: chs }
-                })
-                if (updatedChapter) setSelectedChapter({ ...updatedChapter })
-              } catch (e) {
-                throw e
-              }
-            }}
-            onOpenSceneEditor={(scene) => setDetailMode({ kind: 'scene', sceneId: scene.id })}
             onUpdateAct={store.updateAct}
-            onUpdateScene={store.updateScene}
+            onUpdateChapter={store.updateChapter}
             onAddChapter={store.addChapter}
             onMoveChapter={store.moveChapter}
-            onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
           />
         )
       }
@@ -417,61 +453,25 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       if (activeChapter) {
         return (
           <ChapterDetail
+            key={activeChapter.id}
             chapter={activeChapter}
-            projectId={projectId}
-            onSceneSave={async (chapterId, sceneId, content) => {
-              let updatedChapter: Chapter | undefined
-              setData(d => {
-                if (!d) return d
-                const chs = d.chapters.map(ch =>
-                  ch.id === chapterId
-                    ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
-                    : ch
-                )
-                updatedChapter = chs.find(c => c.id === chapterId)
-                return { ...d, chapters: chs }
-              })
-              try {
-                const result = await saveSceneContent(projectId, sceneId, content)
-                setData(d => {
-                  if (!d) return d
-                  const chs = d.chapters.map(ch => {
-                    if (ch.id !== chapterId) return ch
-                    const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
-                    return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
-                  })
-                  updatedChapter = chs.find(c => c.id === chapterId)
-                  return { ...d, chapters: chs }
-                })
-                if (updatedChapter) setSelectedChapter({ ...updatedChapter })
-              } catch (e) {
-                throw e
-              }
-            }}
-            onChapterSave={handleChapterGoalSave}
-            onOpenSceneEditor={(scene) => setDetailMode({ kind: 'scene', sceneId: scene.id })}
-            onEditGoal={(chapter) => setDetailMode({ kind: 'chapter-goal', chapterId: chapter.id })}
-            onUpdateChapter={store.updateChapter}
-            onUpdateScene={store.updateScene}
-            onAddScene={store.addScene}
-            onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
-            onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
-          />
-        )
-      }
-
-      if (selectedEdge && selectedEdge.type !== 'timeline') {
-        return (
-          <EdgeDetail
-            edge={selectedEdge}
-            chapters={data.chapters}
             acts={data.acts}
-            onChangeType={(edgeId, newType) => {
-              const changed = store.changeEdgeType(edgeId, newType)
-              if (changed && newType === 'timeline') store.clearSelection()
+            projectId={projectId}
+            content={data.chapterContents[activeChapter.id] ?? ''}
+            contentLoaded={Object.prototype.hasOwnProperty.call(data.chapterContents, activeChapter.id)}
+            onContentLoad={async (chapterId) => {
+              const text = await loadChapterContent(projectId, chapterId)
+              store.setChapterContent(chapterId, text)
             }}
-            onDelete={(edgeId) => { store.deleteEdge(edgeId); store.clearSelection() }}
-            onUpdateEdge={store.updateEdge}
+            onUpdateChapter={store.updateChapter}
+            onContentSave={async (chapterId, text) => {
+              await saveChapterContent(projectId, chapterId, text)
+              store.setChapterContent(chapterId, text)
+            }}
+            onEditGoal={(chapter) => setDetailMode({ kind: 'chapter-field', chapterId: chapter.id, field: 'goal' })}
+            onEditResult={(chapter) => setDetailMode({ kind: 'chapter-field', chapterId: chapter.id, field: 'result' })}
+            onEditBody={(chapter) => handleOpenBodyEditor(chapter)}
+            onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
           />
         )
       }
@@ -521,13 +521,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         lastActId = act.id
       }
       parts.push(`\n## ${ch.title}\n`)
-      if (ch.goal) parts.push(`目标：${ch.goal}\n\n`)
-      for (const scene of ch.scenes) {
-        if (scene.content) {
-          if (scene.title) parts.push(`【${scene.title}】\n\n`)
-          parts.push(scene.content + '\n\n')
-        }
-      }
+      if (ch.goal) parts.push(`要写什么：${ch.goal}\n\n`)
+      if (ch.result) parts.push(`写成了什么：${ch.result}\n\n`)
+      const body = data.chapterContents[ch.id]
+      if (body) parts.push(body + '\n\n')
     }
     const text = parts.join('')
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
@@ -546,55 +543,70 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   // A pending full-panel editor replaces the normal detail content; save /
   // cancel clears it and the panel falls back to the selection view.
-  const editingScene = detailMode?.kind === 'scene'
-    ? data.chapters.flatMap(c => c.scenes).find(s => s.id === detailMode.sceneId) ?? null
+  const fieldEditor = detailMode?.kind === 'chapter-field' ? detailMode : null
+  const fieldEditorChapter = fieldEditor
+    ? data.chapters.find(c => c.id === fieldEditor.chapterId) ?? null
     : null
-  const goalChapter = detailMode?.kind === 'chapter-goal'
-    ? data.chapters.find(c => c.id === detailMode.chapterId) ?? null
-    : null
+  const fieldEditorField: ChapterTextField | null = fieldEditor ? fieldEditor.field : null
   const previewMode = detailMode?.kind === 'preview'
   const settingsMode = detailMode?.kind === 'settings'
+  const setupsMode = detailMode?.kind === 'setups'
   // 预览与导出共用同一个过滤：定稿模式只保留 status === 'final' 的章节。
   const orderedChapters = orderChapters(data.chapters, data.acts)
   const previewChapters = finalOnly
     ? orderedChapters.filter(ch => ch.status === 'final')
     : orderedChapters
 
-  const detailPanel = editingScene ? (
-    <SceneEditor
-      projectId={projectId}
-      scene={editingScene}
-      chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
-      onClose={() => setDetailMode(null)}
-      onSaved={handleSceneSaved}
-      onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
-      onSaveGoal={(summary) => handleSceneGoalSave(editingScene.id, summary)}
-    />
-  ) : goalChapter ? (
-    <ChapterGoalEditor
-      chapter={goalChapter}
-      onSave={(goal) => handleChapterGoalSave(goalChapter.id, goal)}
+  // 详情面板的内容：全屏字段编辑器 > 预览 / 伏笔 / 全局设定 > 选中项的详情。
+  // renderDetail() 在"什么都没选"时返回 null——那时给一句提示，而不是一片空白。
+  const selectionDetail = renderDetail()
+
+  const detailPanel = fieldEditorChapter && fieldEditorField ? (
+    <ChapterTextEditor
+      key={`${fieldEditorChapter.id}:${fieldEditorField}`}
+      chapter={fieldEditorChapter}
+      field={fieldEditorField}
+      content={fieldEditorField === 'body' ? data.chapterContents[fieldEditorChapter.id] : undefined}
+      contentLoaded={Object.prototype.hasOwnProperty.call(data.chapterContents, fieldEditorChapter.id)}
+      onSave={handleFieldSave}
       onClose={() => setDetailMode(null)}
     />
   ) : previewMode ? (
     <PreviewPanel
       chapters={previewChapters}
       acts={data.acts}
+      contents={data.chapterContents}
       finalOnly={finalOnly}
       onFinalOnlyChange={setFinalOnly}
     />
+  ) : setupsMode ? (
+    <SetupPanel
+      setups={data.setups}
+      chapters={data.chapters}
+      acts={data.acts}
+      onCreate={store.addSetup}
+      onUpdate={store.updateSetup}
+      onDelete={store.deleteSetup}
+    />
   ) : settingsMode ? (
     <GlobalSettingsPanel
-      initialText={data.globalSettings}
-      onSave={(text) => store.saveGlobalSettings(text)}
+      projectId={projectId}
+      initialGlobalSettings={data.globalSettings}
+      onSaved={(patch) => store.setData(prev => prev ? { ...prev, globalSettings: patch.global_settings } : prev)}
       onClose={() => setDetailMode(null)}
     />
-  ) : renderDetail()
+  ) : selectionDetail ?? (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+      <p className="text-xs text-gray-400">详情页显示当前选中的东西</p>
+      <p className="text-[11px] leading-relaxed text-gray-600">
+        在幕布或大纲里点一幕、一章、一个人物；伏笔线也可以直接点。
+      </p>
+    </div>
+  )
 
-  const detailLabel = editingScene ? '场景编辑'
-    : goalChapter ? '本章目标'
-    : previewMode ? '预览'
+  const detailLabel = previewMode ? '预览'
     : settingsMode ? '全局设定'
+    : setupsMode ? '伏笔'
     : '详情'
 
   // Everything the dock may host. Panels that are closed are simply absent; the
@@ -610,6 +622,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         <OutlinePanel
           acts={data.acts}
           chapters={data.chapters}
+          contents={data.chapterContents}
           selectedActId={selectedActId}
           selectedChapterId={activeChapter?.id ?? null}
           grip={<DockGrip id="outline" />}
@@ -640,20 +653,14 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             <PlotToolbar
               selection={store.selection}
               selectedActId={selectedActId}
-              connectionMode={connectionMode}
-              onConnectionModeChange={setConnectionMode}
               onAddAct={() => store.addAct()}
               onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
               onDeleteSelected={() => {
                 const sel = store.selection
-                if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
-                if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
-                if (sel.type === 'edge') store.deleteEdge(sel.id!)
-                store.clearSelection()
+                if (sel.id && sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id })
+                if (sel.id && sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id })
               }}
               onLayout={handleAutoLayout}
-              onRelinkTimeline={handleRelinkTimeline}
-              relinking={relinking}
             />
           ) : null}
         >
@@ -703,7 +710,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }
   return (
     <div className="h-screen flex bg-gray-950 text-gray-100 overflow-hidden select-none">
-      {/* Icon-only left side nav: views, content management, save status, outline, settings */}
+      {/* Icon-only left side nav: views, content management, save status, outline, setups, settings */}
       <SideNav
         activeViewId={views.activeViewId}
         onSwitchView={handleSwitchView}
@@ -711,6 +718,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         onExport={handleExport}
         finalOnly={finalOnly}
         onGlobalSetting={openGlobalSettings}
+        onSetups={openSetups}
+        setupsOpen={setupsMode}
+        onDetail={handleDetailNav}
+        detailOpen={detailOpen && detailMode === null}
         outlineOpen={outlineOpen}
         onOutline={() => setOutlineOpen(v => !v)}
         dirty={store.dirty}
@@ -741,20 +752,15 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
       <ConfirmDialog
         open={confirmDelete !== null}
-        title={confirmDelete?.type === 'act' ? '删除幕' : confirmDelete?.type === 'scene' ? '删除场景' : '删除章'}
+        title={confirmDelete?.type === 'act' ? '删除幕' : '删除章'}
         message={
           confirmDelete?.type === 'act'
-            ? "确定要删除「" + (data.acts.find(a => a.id === confirmDelete.id)?.name ?? '') + "」吗？该幕下的所有章节和连线将一并删除。"
-            : confirmDelete?.type === 'scene'
-            ? "确定要删除该场景吗？"
+            ? "确定要删除「" + (data.acts.find(a => a.id === confirmDelete.id)?.name ?? '') + "」吗？该幕下的所有章节将一并删除。"
             : "确定要删除「" + (data.chapters.find(c => c.id === confirmDelete?.id)?.title ?? '') + "」吗？"
         }
         onConfirm={() => {
           if (!confirmDelete) return
           if (confirmDelete.type === 'act') { store.deleteAct(confirmDelete.id); setSelectedActId(null); setSelectedChapter(null) }
-          else if (confirmDelete.type === 'scene') {
-            store.deleteScene(confirmDelete.chapterId!, confirmDelete.id)
-          }
           else { store.deleteChapter(confirmDelete.id); setSelectedChapter(null) }
           setConfirmDelete(null)
         }}

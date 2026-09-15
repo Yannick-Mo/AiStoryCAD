@@ -11,7 +11,7 @@ but adapted for DeepSeek's 400K context window without auto-continue.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.agent.context_compressor import estimate_tokens, estimate_text_tokens
@@ -58,7 +58,7 @@ class TurnBudget:
 
 
 def compute_budget(
-    messages: list["Message"],
+    messages: list[Message],
     tool_results: list[dict],
     model_limit: int = _DEFAULT_MODEL_LIMIT,
     extra_tokens: int = 0,

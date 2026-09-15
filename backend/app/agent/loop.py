@@ -20,7 +20,7 @@ import asyncio
 import json
 import re
 import time
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,16 +75,6 @@ async def _tool_message_content(result: dict, llm: LLMClient) -> str:
     """
     tool_name = result.get("tool", "")
     return await middle_process_tool_result(tool_name, result, llm.chat)
-
-
-def _markdown_to_plain(md: str, max_len: int = 120) -> str:
-    """Strip markdown formatting for tool result summaries."""
-    md = re.sub(r"#{1,6}\s+", "", md)
-    md = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", md)
-    md = re.sub(r"`{1,3}[^`]+`{1,3}", "", md)
-    md = re.sub(r">\s+", "", md)
-    md = re.sub(r"\s+", " ", md).strip()
-    return md[:max_len] + ("..." if len(md) > max_len else "")
 
 
 def _strip_orphan_tool_messages(messages: list[Message]) -> list[Message]:
@@ -145,7 +135,7 @@ def _invalidate_after_write(
         section = _section_for_tool(tool_name)
         invalidated = set(state._invalidated_sections) | {section}
         # Drop the shared 300s context cache so read tools (read_chapters,
-        # read_scene, read_character) in the SAME turn see fresh data.
+        # read_chapter_package, read_character) in the SAME turn see fresh data.
         try:
             from app.agent.context import ContextBuilder
             ContextBuilder.invalidate_project(state.project_id)
@@ -177,20 +167,17 @@ def _section_for_tool(tool_name: str) -> str:
     """Map a write tool to the context section it modifies."""
     if tool_name in ("update_project", "create_project_from_material"):
         return "project"
-    if tool_name in ("create_act", "update_act", "delete_act",
-                     "create_chapter", "update_chapter", "delete_chapter",
-                     "create_scene", "update_scene", "delete_scene",
-                     "set_chapter_goal"):
+    if tool_name in ("create_act", "update_act", "move_act", "delete_act",
+                     "create_chapter", "update_chapter", "move_chapter",
+                     "delete_chapter"):
         return "structure"
-    if tool_name in ("write_scene_content", "continue_scene", "rewrite_scene",
-                     "expand_selection", "compress_selection",
-                     "call_writer_agent", "sync_scene_blueprint"):
+    if tool_name in ("write_chapter", "continue_chapter", "call_writer_agent"):
         return "content"
     if tool_name in ("create_character", "update_character", "delete_character",
-                     "update_relation", "delete_relation"):
+                     "create_relation", "update_relation", "delete_relation"):
         return "characters"
-    if tool_name in ("create_edge", "update_edge", "delete_edge"):
-        return "edges"
+    if tool_name in ("create_setup", "update_setup", "delete_setup"):
+        return "setups"
     return "project"
 
 
@@ -314,200 +301,185 @@ def _render_cowriter_persona() -> str:
     return result if result else ""
 
 
-_FRAMEWORK_SECTION_MAX = 12000
-_ACT_INDEX_MAX = 3000
-# Characters/relations/edges get their own budget so a long detail tree can
-# never starve the entity rosters entirely out of the prompt (independent of
-# the tree budget above; both are per-component ceilings).
-_ENTITY_SECTION_MAX = 3000
+# ── 常驻地图的预算：按 token 算，不按字符 ──────────────────────────────
+# 为什么不用字符：中文 1 字符 ≈ 1.5 token，ASCII ≈ 0.25 token
+# （见 context_compressor.estimate_text_tokens），同一段字符预算下两者的实际
+# 成本差 6 倍——按字符切会让"一份 UUID 清单"和"一段中文描写"看起来等价。
+_ACT_INDEX_MAX_TOKENS = 1200      # 幕图（全部幕）
+_WINDOW_MAX_TOKENS = 6000         # 你附近那一圈的章目录
+_ENTITY_MAX_TOKENS = 1500         # 侧挂记录总量（三块各自有配额，见下）
 
 
-def _render_framework_section(state: "LoopState") -> str:
-    """Render the loaded project framework into a compact, bounded text section.
+def _render_framework_section(state: LoopState) -> str:
+    """常驻地图：幕图 + 侧挂记录 + 你在哪 + 你附近那一圈的章目录。
 
-    Fixes H2: the framework was loaded into ``state.project_context`` but the
-    system prompt only *claimed* it was provided ("已在上下文中提供") without
-    ever including it — so the model had no structure/character data to
-    reference and had to discover everything via tools.
+    与旧版的两处根本不同：
 
-    Truncation is structural, not a raw byte cut: lines are appended while
-    they fit, and the cut always lands on a complete act/chapter/list boundary
-    (never mid-line).  When something is omitted, an accurate note lists the
-    remaining counts so the model knows exactly what to fetch via
-    ``read_chapters`` / ``read_chapter``.
+    1. **章目录以「你当前在看的那一章」为中心**（没有焦点就用正文断点），不是从
+       第 1 章往下截。旧版在 3000 章的书里只看得见第 1–79 章——你正在写第 2000 章
+       时身边一个字都没有，而那 10K tokens 花在与你无关的旧章节上。现在覆盖率
+       只与「离你多远」有关，**与全书多长无关**。
+    2. **预算按 token 算**，不按字符。
 
-    An **act index** (every act with its chapter/scene counts) is emitted
-    first under a small dedicated budget: even when the detail tree is cut
-    off, the model still sees the full act map — chapter counts let it
-    convert story order to global chapter numbers and jump straight to any
-    act with ``read_chapters``.
+    截断仍然是**结构性**的（整行放得下才追加），并且如实标注省略了什么、
+    该用哪个工具去取。
     """
     ctx = state.project_context or {}
     acts = ctx.get("acts", [])
     if not acts:
         return ""
-    budget = _FRAMEWORK_SECTION_MAX
-    lines = ["# --- 项目框架 ---"]
-    used = len(lines[0])
-    truncated = False
 
-    def fits(text: str) -> bool:
-        return used + 1 + len(text) <= budget
+    tok = estimate_text_tokens
+    lines: list[str] = ["# --- 项目框架 ---"]
+    used = tok(lines[0])
 
-    def emit(text: str) -> None:
+    def emit(text: str) -> int:
         nonlocal used
         lines.append(text)
-        used += 1 + len(text)
+        cost = tok(text) + 1
+        used += cost
+        return cost
 
-    # ── Act index (all acts, small dedicated budget) ────────────────
-    index_used = 0
-    index_emitted = 0
+    # ── 1. 幕图（全部幕；幕只有几个到几十个，一次全给）──
+    lines.append("## 幕")
+    act_used = 0
+    listed_acts = 0
     for act in acts:
-        chs = act.get("chapters", [])
-        n_ch = len(chs)
-        n_sc = sum(len(ch.get("scenes", [])) for ch in chs)
-        index_line = (
-            f"- 幕 {act.get('sort_order')}. {act.get('name') or '未命名'} "
-            f"(act_id={act.get('id')}): {n_ch}章/{n_sc}场"
-        )
-        if index_used + 1 + len(index_line) > _ACT_INDEX_MAX:
-            rest = f"- ... 另有 {len(acts) - index_emitted} 幕索引未列出"
-            lines.append(rest)
-            used += 1 + len(rest)
+        n = int(act.get("chapter_count") or len(act.get("chapters", [])))
+        lo_a, hi_a = act.get("first_chapter_order"), act.get("last_chapter_order")
+        rng = f"全书第{lo_a}-{hi_a}章" if lo_a else "暂无章"
+        line = (f"- 幕 {act.get('sort_order')}. {act.get('name') or '未命名'}"
+                f" (act_id={act.get('id')}): {n}章（{rng}）")
+        purpose = (act.get("purpose") or "").strip()
+        if purpose:
+            line += f" —— {purpose[:60]}"
+        if act_used + tok(line) + 1 > _ACT_INDEX_MAX_TOKENS:
+            emit(f"- ... [另有 {len(acts) - listed_acts} 幕未列出，用 read_acts 取]")
             break
-        lines.append(index_line)
-        index_used += 1 + len(index_line)
-        used += 1 + len(index_line)
-        index_emitted += 1
+        act_used += emit(line)
+        listed_acts += 1
 
-    total_chapters = sum(len(a.get("chapters", [])) for a in acts)
-    total_scenes = sum(
-        sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
-        for a in acts
-    )
-    shown_chapters = 0
-    shown_scenes = 0
-
-    for act in acts:
-        act_line = (
-            f"## {act.get('sort_order')}. {act.get('name') or '未命名幕'} "
-            f"(act_id={act.get('id')})"
-        )
-        if not fits(act_line):
-            truncated = True
-            break
-        emit(act_line)
-        for ch in act.get("chapters", []):
-            scenes = ch.get("scenes", [])
-            ch_line = (
-                f"- 章 {ch.get('sort_order')}《{ch.get('title') or '未命名'}》"
-                f"(chapter_id={ch.get('id')})"
-            )
-            if scenes:
-                scenes_txt = "；".join(
-                    f"{s.get('sort_order')}. {s.get('title') or '未命名'}"
-                    f"(scene_id={s.get('id')}, "
-                    f"{'已写' if (s.get('word_count') or 0) > 0 else '未写'})"
-                    for s in scenes
-                )
-                ch_line += f" 场次: {scenes_txt}"
-            if not fits(ch_line):
-                truncated = True
-                break
-            emit(ch_line)
-            shown_chapters += 1
-            shown_scenes += len(scenes)
-        if truncated:
-            break
-
-    # Entity lists — each appended whole or not at all
-    omitted_labels: list[str] = []
-    entity_blocks: list[tuple[str, str]] = []
+    # ── 2. 侧挂记录：伏笔优先，三块各有配额 ──
+    # 顺序是有意的：写长篇时「还没收的伏笔」比「人物全名单」更常被用到。
+    # 旧顺序是 人物→关系→伏笔 且三块共享一个预算，结果是伏笔永远第一个被挤掉
+    # ——对跨章连续性最要紧的那一类反而最先丢。
     characters = ctx.get("characters", [])
-    if characters:
-        char_txt = "；".join(
-            f"{c.get('name') or '?'}({c.get('role') or '角色'}, character_id={c.get('id')})"
-            for c in characters[:60]
-        )
-        if len(characters) > 60:
-            char_txt += f"；…（还有 {len(characters) - 60} 个角色未列出，用 list_characters 获取）"
-        entity_blocks.append(("角色", f"## 角色\n{char_txt}"))
     relations = ctx.get("relations", [])
-    if relations:
-        rel_lines = []
-        for r in relations[:40]:
-            src = r.get("character_name") or r.get("character_id") or "?"
-            tgt = r.get("target_name") or r.get("target_id") or "?"
-            rel_lines.append(f"- {src} → {r.get('label') or r.get('rel_type')} → {tgt}")
-        if len(relations) > 40:
-            rel_lines.append(f"- ...（还有 {len(relations) - 40} 条关系未列出，用 list_relations / list_character_relations 获取）")
-        entity_blocks.append(("关系", "## 关系\n" + "\n".join(rel_lines)))
-    edges = ctx.get("edges", [])
-    if edges:
-        edge_lines = []
-        for e in edges[:40]:
-            src = e.get("source_title") or e.get("source_id") or "?"
-            tgt = e.get("target_title") or e.get("target_id") or "?"
-            edge_lines.append(f"- {src} -[{e.get('edge_type')}]-> {tgt}")
-        if len(edges) > 40:
-            edge_lines.append(f"- ...（还有 {len(edges) - 40} 条连线未列出，用 list_edges 获取）")
-        entity_blocks.append(("连线", "## 连线\n" + "\n".join(edge_lines)))
+    open_setups = [s for s in ctx.get("setups", [])
+                   if (s.get("status") or "open") == "open"]
 
-    # Entity blocks get their own budget (independent of the tree budget above):
-    # a long detail tree must never starve the character/relation/edge rosters
-    # out of the prompt entirely.  The three blocks share one cap; a single
-    # oversized block is trimmed per-row with an honest note.
+    setup_rows = []
+    for s in open_setups:
+        planted, pay_off = s.get("planted_in_order"), s.get("pay_off_in_order")
+        where = f"第{planted}章埋" if planted else "未记埋在哪"
+        target = f"打算第{pay_off}章收" if pay_off else "还没定在哪收"
+        setup_rows.append(f"- {s.get('note') or '（未描述）'}（{where}，{target}）")
+    char_rows = [
+        f"- {c.get('name') or '?'}（{c.get('role') or '人物'}，"
+        f"character_id={c.get('id')}）"
+        for c in characters
+    ]
+    rel_rows = [
+        f"- {r.get('character_name') or r.get('character_id') or '?'} → "
+        f"{r.get('label') or r.get('rel_type') or '关联'} → "
+        f"{r.get('target_name') or r.get('target_id') or '?'}"
+        for r in relations
+    ]
+
+    # 三块**各自有配额**，不是先到先得。理由：一本 3000 章的书可能有几十条未收
+    # 伏笔，共享预算会让伏笔把「人物」整块挤掉——模型就不知道书里有谁了。
+    # 现在每块的头（含总数）一定出现，行数按各自配额给，超出部分如实标注。
     entity_used = 0
-    for label, block in entity_blocks:
-        if entity_used + 1 + len(block) <= _ENTITY_SECTION_MAX:
-            emit(block)
-            entity_used += 1 + len(block)
-            continue
-        # Block too big for the remaining entity budget: keep the header plus
-        # as many rows as fit, then note the omission honestly.
-        head, _, body = block.partition("\n")
-        remaining = _ENTITY_SECTION_MAX - entity_used - 1 - len(head)
-        if remaining > 40:
-            kept = []
-            used_rows = 0
-            for row in body.split("\n"):
-                if used_rows + 1 + len(row) > remaining:
-                    kept.append(f"- ...（{label}清单较长，其余行未列出，用对应 list_* 工具获取完整清单）")
-                    break
-                kept.append(row)
-                used_rows += 1 + len(row)
-            emit(head + "\n" + "\n".join(kept))
-        else:
-            omitted_labels.append(label)
 
-    # Accurate structural truncation note
-    if truncated:
-        parts: list[str] = []
-        # Count acts whose header line was actually emitted
-        shown_acts = sum(1 for ln in lines if ln.startswith("## "))
-        remaining_acts = len(acts) - shown_acts
-        if remaining_acts:
-            parts.append(f"{remaining_acts}幕")
-        remaining_ch = total_chapters - shown_chapters
-        if remaining_ch:
-            parts.append(f"{remaining_ch}章")
-        remaining_sc = total_scenes - shown_scenes
-        if remaining_sc:
-            parts.append(f"{remaining_sc}场")
-        if omitted_labels:
-            parts.append("、".join(omitted_labels) + "未列出")
-        note = f"... [项目框架较长，以下未完整列出: {'、'.join(parts) if parts else '部分章节'}。未列出的章节可用 read_chapters 按全局章号范围读取]"
-        lines.append(note)
+    def emit_block(header: str, rows: list[str], tool: str, share: float) -> None:
+        nonlocal entity_used
+        if not rows:
+            return
+        quota = int(_ENTITY_MAX_TOKENS * share)
+        entity_used += emit(header)
+        block_used = 0
+        shown = 0
+        for row in rows:
+            if block_used + tok(row) + 1 > quota:
+                break
+            block_used += emit(row)
+            shown += 1
+        if shown < len(rows):
+            entity_used += emit(
+                f"- ... [还有 {len(rows) - shown} 条未列出，用 {tool} 取]"
+            )
+
+    emit_block(f"## 未回收的伏笔（{len(open_setups)} 条）", setup_rows,
+               "list_setups", 0.40)
+    emit_block(f"## 人物（{len(characters)} 人）", char_rows, "list_characters", 0.35)
+    emit_block(f"## 关系（{len(relations)} 条）", rel_rows, "list_relations", 0.25)
+
+    # ── 3. 你在哪（先定位，再给身边那一圈）──
+    win = ctx.get("chapter_window") or {}
+    focus = win.get("focus") or {}
+    brk = win.get("content_break") or {}
+    total = int(ctx.get("chapter_count") or 0)
+
+    if focus:
+        label = {"view": "用户当前查看", "content_break": "正文断点",
+                 "start": "起始处"}.get(focus.get("source"), "位置")
+        emit(f"- {label}：第 {focus.get('global_order')} 章"
+             f"《{focus.get('title') or '未命名'}》"
+             f"(chapter_id={focus.get('id')}, "
+             f"{'已写' if focus.get('is_written') else '未写'})")
+    if brk and focus.get("source") != "content_break":
+        emit(f"- 正文断点：第 {brk.get('global_order')} 章"
+             f"《{brk.get('title') or '未命名'}》(chapter_id={brk.get('id')})"
+             " —— 下一章该写的就是它")
+
+    # ── 4. 你附近那一圈的章目录 ──
+    lo_w, hi_w = win.get("lo"), win.get("hi")
+    window_rows: list[tuple[int, str]] = []
+    for act in acts:
+        for ch in act.get("chapters", []):
+            g = int(ch.get("global_order") or 0)
+            window_rows.append((
+                g,
+                f"- 第{g}章《{ch.get('title') or '未命名'}》"
+                f"(chapter_id={ch.get('id')}, {ch.get('status') or 'draft'}, "
+                f"{'已写' if (ch.get('body_chars') or 0) > 0 else '未写'})",
+            ))
+    if window_rows:
+        # **先按"离焦点多远"挑，再按全局章号打印**：
+        # 直接从头往下发，预算用完时被砍掉的永远是后半段——焦点章可能整条不见
+        # （实测 3000 章场景：窗口 241 章只发出去 193 章，焦点靠运气才在里面）。
+        # 按距离挑保证 1) 焦点一定在，2) 前后大致对称，3) 越近的先拿到预算；
+        # 打印时仍按章号排，模型读到的是一段连续的目录。
+        emit(f"## 附近的章（第 {lo_w}-{hi_w} 章）")
+        center = int((focus or {}).get("global_order") or lo_w or 0)
+        window_used = 0
+        chosen: list[tuple[int, str]] = []
+        for row in sorted(window_rows, key=lambda r: (abs(r[0] - center), r[0])):
+            cost = tok(row[1]) + 1
+            if window_used + cost > _WINDOW_MAX_TOKENS:
+                break
+            window_used += cost
+            chosen.append(row)
+        for _, row in sorted(chosen):
+            emit(row)
+        shown = len(chosen)
+        if shown < len(window_rows):
+            emit(f"- ... [这一圈还有 {len(window_rows) - shown} 章未列出]")
+        if total and int(win.get("listed") or 0) < total:
+            rest = total - int(win.get("listed") or 0)
+            emit(f"- ... [全书 {total} 章，其余 {rest} 章未列出：常驻里只给了你所在位置"
+                 f"附近的第 {lo_w}-{hi_w} 章。其他章用 read_chapters(章号范围) 取；"
+                 "只扫目录时把 detail 传 index]")
 
     truncated_note = ctx.get("truncated_note", "")
     if truncated_note:
-        lines.append(truncated_note)
+        emit(truncated_note)
 
     return "\n".join(lines)
 
 
 async def _build_turn_sections(
-    state: "LoopState",
+    state: LoopState,
     cowriter_persona: str,
     dynamic_sections: dict[str, str],
     budget_check: dict | None = None,
@@ -537,14 +509,15 @@ async def _build_turn_sections(
             "- 仅在用户明确请求或确认计划后调用写作工具\n"
             "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
             "- 你可以根据用户的思路提供完整段落草稿作为示范或起点\n"
-            "- 蓝图先行：创建/规划幕、章、场景时，先按《创作蓝图规范》写好完整蓝图"
-            "（章 goal 与场景 summary 的字段见规范），不要留空、不要只写一句话\n"
-            "- 写完正文后必须调用 sync_scene_blueprint 同步场景蓝图并做自评；整章完成后 update_chapter(status=final)"
+            "- 建章时顺手把「本章要写什么」写了：一段话说清这一章从哪走到哪、章末停在什么处境\n"
+            "- **一章写完就把「本章要写成了什么」写回章上**（update_chapter）——"
+            "它是下一章唯一的起点，不能省\n"
+            "- 这一章算不算过，用 update_chapter(status=...) 标出来"
         )
     else:
         sections.append(
             "# --- 写作行为规则 ---\n"
-            "- Do NOT write scene content on behalf of the user unless explicitly asked\n"
+            "- Do NOT write chapter prose on behalf of the user unless explicitly asked\n"
             "- 在对话模式下，如果不确定用户意图，先反问澄清"
         )
 
@@ -563,10 +536,19 @@ async def _build_turn_sections(
     gs_total = proj.get("global_settings_chars") or len(proj_global_settings)
     if proj_global_settings:
         if gs_total > 2000:
-            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {gs_total} 字，已截断。可用 read_global_settings 读取完整设定]"
+            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {gs_total} 字，已截断。可用 read_project 读取完整设定]"
         else:
             gs_snippet = proj_global_settings
         ctx_parts.append(f"全局设定:\n{gs_snippet}")
+    # 终局与主线骨架常驻：它们是每一章判断「该往哪使劲、离结局还有多远」的依据。
+    for key, label in (("spine", "主线骨架"), ("ending", "终局")):
+        value = proj.get(key) or ""
+        if not value:
+            continue
+        total = proj.get(f"{key}_chars") or len(value)
+        if total > 1200:
+            value = value[:1200] + f"\n... [全文共 {total} 字，已截断。可用 read_project 读取完整内容]"
+        ctx_parts.append(f"{label}:\n{value}")
     ctx_parts.append(f"Project ID: {proj_id}")
     sections.append("\n".join(ctx_parts))
 
@@ -574,26 +556,27 @@ async def _build_turn_sections(
     acts_data = state.project_context.get("acts", [])
     characters_data = state.project_context.get("characters", [])
     relations_data = state.project_context.get("relations", [])
-    edges_data = state.project_context.get("edges", [])
-    total_ch = sum(len(a.get("chapters", [])) for a in acts_data)
-    total_sc = sum(
-        sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
-        for a in acts_data
+    setups_data = state.project_context.get("setups", [])
+    # 章数走 chapter_count：framework 深度下 acts[*]["chapters"] 只含"你附近那一圈"，
+    # 拿它求和会把 3000 章的书显示成两百多章。
+    ctx_all = state.project_context
+    total_ch = int(ctx_all.get("chapter_count") or 0) or sum(
+        int(a.get("chapter_count") or len(a.get("chapters", []))) for a in acts_data
     )
-    written_sc = sum(
+    written_ch = int(ctx_all.get("written_chapters") or 0) or sum(
         1
         for a in acts_data
         for ch in a.get("chapters", [])
-        for s in ch.get("scenes", [])
-        if (s.get("word_count") or 0) > 0
+        if (ch.get("body_chars") or 0) > 0
     )
-    stats_parts = [f"项目规模：{len(acts_data)}幕/{total_ch}章/{total_sc}场(已写{written_sc}场)"]
+    stats_parts = [f"项目规模：{len(acts_data)}幕/{total_ch}章(已写{written_ch}章)"]
     if characters_data:
-        stats_parts.append(f"{len(characters_data)}角色")
+        stats_parts.append(f"{len(characters_data)}个人物")
     if relations_data:
         stats_parts.append(f"{len(relations_data)}条关系")
-    if edges_data:
-        stats_parts.append(f"{len(edges_data)}条连线")
+    open_setups = sum(1 for s_ in setups_data if (s_.get("status") or "open") == "open")
+    if setups_data:
+        stats_parts.append(f"{open_setups}条未收伏笔")
     sections.append(" | ".join(stats_parts))
 
     # 5. Project framework (actually injected — fixes H2)
@@ -601,19 +584,19 @@ async def _build_turn_sections(
     if framework:
         sections.append(framework)
     sections.append(
-        "场景蓝图用 read_scene 读取，正文用 read_scene_content 读取（一次返回完整正文）。\n"
-        "# --- 获取实体 ID 指南 ---\n"
-        "框架树与幕索引已直接给出部分 act/chapter/scene 的 ID；系统提示中「已知实体 ID」段的 ID 可直接引用。\n"
-        "未在树中列出的实体按以下方式获取 ID：\n"
-        "- 章节 ID 与章目标：read_chapters(chapter_from, chapter_to)（全局章号 = 前面各幕章数之和 + 幕内序号，幕索引每幕标了章数）。"
-        "按当前创作实际依赖取离散区间，例如依赖第1-3章与第15-20章就分别调 read_chapters(1,3) 与 read_chapters(15,20)；"
-        "不要一次读很长的连续范围——单次窗口过大后半会被截断，且大半内容与当前写作无关会浪费上下文\n"
-        "- 场景 ID：read_chapter_scenes(chapter_id)（该章全部场景的 ID/标题清单，轻量）\n"
-        "- 「写到哪了」：read_completed_tail(n)——自开头连续写完部分的尾部快照（跳过未写断点之后的孤立已写场景），"
-        "含下一个未写位置；续写/核对进度首选\n"
-        "- 「最近在改什么」：read_recent_scenes(n) 场景级 / read_recent_chapters(n) 章级——按正文修改时间倒序\n"
-        "- 关键词定位（忘了在哪）：search_nodes(keyword)\n"
-        "- 角色 / 关系 / 连线 ID：list_characters / list_character_relations / list_relations / list_edges"
+        "# --- 怎么取到需要的东西 ---\n"
+        "**需要什么信息就调对应的工具**（工具名即用途）。常驻上下文只给幕图和你附近那一圈，"
+        "其余都按需读：\n"
+        "- 幕：read_acts()\n"
+        "- 章（含计划与结果）：read_chapters(chapter_from, chapter_to)"
+        "——全局章号 = 前面各幕章数之和 + 幕内序号，幕图标了每幕的章号范围。"
+        "按实际依赖取离散区间（例如第1-3章与第15-20章就分两次调），不要一次读很长的连续范围；"
+        "**要粗扫长范围（例如全书目录）用 detail=index**，同样预算能多读三倍多的章\n"
+        "- 动某一章之前的全部输入：read_chapter_package(chapter_id)\n"
+        "- 章正文：read_chapter_content(chapter_id)（要改它或接续它时才读）\n"
+        "- 人物 / 关系 / 伏笔：list_characters / read_character / list_relations / read_relation / list_setups\n"
+        "- 「写到哪了 / 下一步做什么」：read_progress()（服务端算出来的，长书也一次给全）\n"
+        "- 忘了在哪写过：search(keyword)（含正文）"
     )
 
     # 6. Available skills
@@ -698,29 +681,30 @@ async def autonomous_loop(
 
     # ── Build static system prompt (once, outside loop) ─────────────
     base_sections = ["identity", "output_style", "tool_usage",
-                     "writing_advice", "blueprint_discipline",
+                     "writing_advice",
                      "prohibited_behaviors", "style_guide"]
     if state.mode == "chat":
         base_sections.append("chat_mode_restrictions")
 
     base_system = _build_chat_system_prompt(base_sections)
-    # 蓝图规范：写章蓝图 / 场景蓝图时看的就是这一份。放在应用参考之前——它是
-    # 「怎么建」的规则，比工具清单更贴近写入动作本身。
-    from app.agent.blueprint import render_spec
-    base_system += "\n\n" + render_spec("all")
+    # 章蓝图规范：写「本章要写什么」时看的就是这一份。放在应用参考之前——它是
+    # 「怎么写」的规则，比工具清单更贴近写入动作本身。
+    from app.agent.blueprint import render_guide
+    base_system += "\n\n" + render_guide()
     from app.agent.knowledge import APP_GUIDE
     base_system += "\n\n# --- 应用参考 ---\n" + APP_GUIDE
     base_system += """
 # --- 项目数据访问规则（必须遵守） ---
-- 项目框架数据（幕/章/场景结构、角色、关系）已在上下文中提供，可直接引用（含 ID）。
-- 场景蓝图（Scene.summary）是每场戏的创作计划与事实档案，是续写、分析与规划的优先依据；
-  蓝图用 read_scene 读取（单场）。
-- 场景正文内容不包含在上下文中——需要正文做文字级编辑时用 read_scene_content 读取（默认一次返回完整正文）。
-- 章内场景导航（拿场景 ID）用 read_chapter_scenes；章目标用 read_chapter 或 read_chapters。
-- 写入正文后必须同步场景蓝图：call_writer_agent 会自动同步；直接写正文的工具
-  （write_scene_content 等）之后请调用 sync_scene_blueprint。
+- 常驻上下文里有：**全部幕**（含 act_id 与起止全局章号）+ **你所在位置附近的章目录** +
+  人物 / 关系 / 未收伏笔清单。这些 ID 可以直接引用。
+- **不在常驻里的章**（离你所在位置较远的那些）：用 read_chapters(章号范围) 取；
+  只想粗扫目录、一次看很多章，用 read_chapters 的 detail=index。
+- **章是最底层，也是正文层**：一章 = 本章要写什么（计划）+ 正文 + 本章写成了什么（结果）。
+- 章正文**不包含在上下文中**——要改它或接续它时用 read_chapter_content 读取（默认返回完整正文）。
+- 动某一章之前用 read_chapter_package 一次拿齐（本章计划、上一章结果、幕要干什么、主线骨架与终局、人物动机、未收伏笔）。
+- **一章写完就把「本章写成了什么」写回章上**（update_chapter）——它是下一章唯一的起点。
 - 在进行写入操作之前，先通过读取工具获取最新数据。
-- 不要编造角色、章节、场景或关系数据。
+- 不要编造幕、章、人物、关系或伏笔数据。
 """
     cowriter_persona = _render_cowriter_persona() if state.mode == "cowriter" else ""
 
@@ -754,16 +738,28 @@ async def autonomous_loop(
 
                 skip_ctx_cache = len(state._invalidated_sections) > 0
 
+                # 「用户正在看哪一章」由编辑器传进来（前端 context_id → super_agent
+                # 存进 project_context）。常驻地图的章目录以它为中心开窗——这是
+                # "写到第 2000 章时不会加载第 20 章细节"的关键一环。
+                focus_raw = state.project_context.get("current_view_id")
+                focus_id = None
+                if focus_raw:
+                    try:
+                        focus_id = _uuid.UUID(str(focus_raw))
+                    except (ValueError, TypeError):
+                        focus_id = None
+
                 ctx = await builder.build_summary(
                     _uuid.UUID(state.project_id),
                     query_hint=query_hint,
                     depth="framework",
                     skip_cache=skip_ctx_cache,
+                    focus_chapter_id=focus_id,
                 )
 
                 state = state.replace(project_context=ctx, _context_loaded=True,
                                       _invalidated_sections=set(),
-                                      transition=f"context_loaded_framework")
+                                      transition="context_loaded_framework")
 
                 # ── Auto-activate skills by genre/title keyword ──
                 try:
@@ -927,7 +923,6 @@ async def autonomous_loop(
                                 filtered_tools, db,
                                 project_id=state.project_id,
                                 user_id=state.user_id,
-                                active_skills=state.active_skills,
                             ).execute_tool(tool_name, args, tool_use_id)
                         except Exception as exc:
                             result = {"tool": tool_name, "success": False, "error": str(exc)}
@@ -1022,7 +1017,6 @@ async def autonomous_loop(
             filtered_tools, db,
             project_id=state.project_id,
             user_id=state.user_id,
-            active_skills=state.active_skills,
         )
         tool_blocks: list[tuple[str, dict, str]] = []
         # Preserve the original ToolCall objects so the assistant message
@@ -1217,19 +1211,19 @@ async def autonomous_loop(
             # 6a: Mode-gated blocks — feed back as tool errors, continue loop
             if intercept.blocked:
                 streaming_executor.clear_queued()
-                for tool_name, args, tool_use_id in tool_blocks:
+                for tool_name, _args, tool_use_id in tool_blocks:
                     if tool_name in intercept.blocked_tools:
                         logger.warning("Tool '{}' blocked in chat mode", tool_name)
                         result = {
                             "tool": tool_name,
                             "success": False,
-                            "error": f"对话模式禁止写入操作，工具已被拦截",
+                            "error": "对话模式禁止写入操作，工具已被拦截",
                         }
                         new_tool_results.append(result)
                         yield _event_tool_done(result)
                         content = (
-                            f"[操作被拦截]\n"
-                            f"对话模式禁止写入操作。请向用户说明需要切换到协作模式来完成写入操作。"
+                            "[操作被拦截]\n"
+                            "对话模式禁止写入操作。请向用户说明需要切换到协作模式来完成写入操作。"
                         )
                         state = state.replace(
                             messages=state.messages
@@ -1258,7 +1252,7 @@ async def autonomous_loop(
                 # response or the next API call is rejected (orphan tool_call).
                 # The confirmed tools are NOT executed yet, so insert honest
                 # placeholders explaining they await confirmation.
-                for tool_name, args, tool_use_id in intercept.pending_tools:
+                for tool_name, _args, tool_use_id in intercept.pending_tools:
                     state = state.replace(
                         messages=state.messages
                         + [Message(
@@ -1282,7 +1276,7 @@ async def autonomous_loop(
                         content = await _tool_message_content(existing, llm)
                     else:
                         content = (
-                            f"[本轮未执行]\n本轮正在等待用户确认其它操作，"
+                            "[本轮未执行]\n本轮正在等待用户确认其它操作，"
                             f"工具 {tool_name} 未执行。确认后请重新调用。"
                         )
                     state = state.replace(
@@ -1377,12 +1371,12 @@ async def autonomous_loop(
                 missing_param_failures += 1
         if missing_param_failures >= 3:
             reminder = (
-                "⚠️ 本轮有 {} 个工具因为缺少必要参数或使用了无效/过期 ID 而调用失败。\n"
+                f"⚠️ 本轮有 {missing_param_failures} 个工具因为缺少必要参数或使用了无效/过期 ID 而调用失败。\n"
                 "请停止逐一尝试每个工具！先调用 ID 来源工具（read_chapters、"
-                "read_chapter_scenes、list_characters、list_relations、list_edges）获取有效的 ID，然后再用这些 ID "
+                "read_chapters、read_acts、list_characters、list_relations、list_setups）获取有效的 ID，然后再用这些 ID "
                 "调用需要它们的工具。\n"
                 "工具列表中每个工具后标注了 (必须: ...) —— 这表示该参数必须提供。"
-            ).format(missing_param_failures)
+            )
             state = state.replace(
                 messages=state.messages + [Message(role="system", content=reminder)],
                 transition="param_missing_warning",
@@ -1457,10 +1451,10 @@ async def autonomous_loop(
             from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
             mode_decl = MODE_DECLARATION_COWRITER if gen_state.get("mode") == "cowriter" else MODE_DECLARATION_CHAT
             sys_content = (
-                f"你是 AiStoryCAD AI，一位经验丰富的中文小说编辑和创作助手。\n"
+                "你是 AiStoryCAD AI，一位经验丰富的中文小说编辑和创作助手。\n"
                 f"当前项目：{proj_name or '未命名'}\n"
                 f"{mode_decl}\n"
-                f"请根据对话历史，用中文回复用户。"
+                "请根据对话历史，用中文回复用户。"
             )
 
         # Strip orphaned tool messages that lack a preceding assistant

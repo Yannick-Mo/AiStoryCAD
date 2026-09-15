@@ -2,7 +2,6 @@
 
 import uuid
 
-from httpx import AsyncClient
 
 
 class TestUsageScoping:

@@ -2,3 +2,6 @@
 # 生产镜像只安装 requirements.txt（backend/Dockerfile）。
 pytest>=8.2.0,<9.0.0
 pytest-asyncio>=0.23.0,<0.26.0
+# 代码门禁。上限锁到 minor：ruff 在 minor 版本里才会把新规则从 preview 稳定下来，
+# 锁住才不会出现「某天 CI 突然多出 50 条」。规则集与取舍理由见 backend/ruff.toml。
+ruff>=0.16.7,<0.17.0

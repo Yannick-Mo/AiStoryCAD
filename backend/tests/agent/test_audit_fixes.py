@@ -1,7 +1,7 @@
 """Tests for token estimation unification, context limits, and history summary persistence."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from app.agent.context_compressor import (
     estimate_tokens,
     estimate_text_tokens,
@@ -101,7 +101,7 @@ class TestHistorySummaryPersistence:
             conversation_id="test-conv-123",
             conv_memory=conv_memory,
         )
-        result = await hm.maybe_summarize(msgs)
+        await hm.maybe_summarize(msgs)
 
         # conv_memory.replace_history should have been called
         conv_memory.replace_history.assert_awaited_once()
@@ -119,7 +119,7 @@ class TestHistorySummaryPersistence:
             conversation_id="test-conv-123",
             conv_memory=conv_memory,
         )
-        result = await hm.maybe_summarize(msgs)
+        await hm.maybe_summarize(msgs)
 
         conv_memory.replace_history.assert_not_called()
 
@@ -152,7 +152,7 @@ class TestSummaryThrottling:
             conversation_id="test-throttle-conv",
             conv_memory=conv_memory,
         )
-        result1 = await hm1.maybe_summarize(msgs1)
+        await hm1.maybe_summarize(msgs1)
         assert conv_memory.replace_history.await_count >= 1
         first_call_count = fake_llm.chat.call_count
 
@@ -199,7 +199,7 @@ class TestSummaryThrottling:
             ))
 
         hm = HistoryManager(llm_client=fake_llm, conv_memory=conv_memory)
-        result = await hm.maybe_summarize(msgs)
+        await hm.maybe_summarize(msgs)
 
         # Without conversation_id and redis, summary runs
         # but replace_history won't be called (no conv_memory + conversation_id combo)

@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from app.llm.client import (
     LLMClient,
     LLMError,
-    LLMNonRetryableError,
-    LLMRetryExhaustedError,
 )
 from app.llm.registry import register, _registry as _model_registry
 from app.llm.types import Message, ModelDef, ToolCall, ToolDef
@@ -354,9 +352,15 @@ class TestLLMClientStreamChat:
         client._client.stream = MagicMock(return_value=cm)
 
         chunks = []
-        with pytest.raises(LLMError, match="partial output"):
+
+        async def _drain():
             async for chunk in client._stream_chat("url", {}, {"model": "test"}):
                 chunks.append(chunk)
+
+        # 收拢成一个语句：pytest.raises 块里放了循环，断言失败时看不出是哪一步挂的。
+        # chunks 仍然是被逐个追加的，所以下面「只产出到一半」的断言依旧成立。
+        with pytest.raises(LLMError, match="partial output"):
+            await _drain()
 
         assert len(chunks) == 1
         assert chunks[0]["delta"].get("content") == "Hello"

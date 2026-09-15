@@ -1,9 +1,8 @@
 from contextlib import asynccontextmanager
-import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.database import async_session, init_db
+from app.database import init_db
 from app.llm import configure_from_settings
 
 

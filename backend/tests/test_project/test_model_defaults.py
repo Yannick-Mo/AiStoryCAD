@@ -29,9 +29,9 @@ def test_all_timestamp_column_defaults_are_callable():
     callable default/onupdate, so timestamps are computed per-row at insert/update
     time instead of once at module import."""
     # Import all model modules so their mappers register on Base.
-    import app.project.models  # noqa: F401
-    import app.storycad.models  # noqa: F401
-    import app.knowledge.models  # noqa: F401
+    import app.project.models
+    import app.storycad.models
+    import app.knowledge.models
     import app.settings.models  # noqa: F401
 
     offenders = []

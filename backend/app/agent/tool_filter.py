@@ -7,42 +7,30 @@
 from app.agent.tools.base import BaseTool
 
 READ_ONLY_TOOLS: set[str] = {
-    "read_project", "read_global_settings",
-    "read_chapter", "read_scene", "read_scene_content", "read_character",
-    "search_knowledge",
-    "analyze_chapter", "analyze_character_arc", "project_health",
-    "suggest_next",
-    "read_chapters", "read_recent_scenes", "read_recent_chapters",
-    "read_completed_tail", "read_chapter_scenes", "read_relation",
-    "list_characters", "list_character_relations",
-    "list_relations", "list_edges", "search_nodes",
-    "web_search", "web_fetch",
-    "invoke_skill",
+    # ── 读（12）──
+    "read_project", "read_acts", "read_chapters", "read_chapter_content",
+    "read_chapter_package", "list_characters", "read_character",
+    "list_relations", "read_relation", "list_setups", "read_progress", "search",
+    # ── 范围外（4）──
+    "search_knowledge", "web_search", "web_fetch", "invoke_skill",
 }
 
 COWRITER_TOOLS: set[str] = {
-    # CRUD — project
+    # CRUD — 作品层
     "update_project", "create_project_from_material",
-    # CRUD — act
-    "create_act", "update_act", "delete_act",
-    # CRUD — chapter
+    # CRUD — 幕
+    "create_act", "update_act", "move_act", "delete_act",
+    # CRUD — 章
     "create_chapter", "update_chapter", "move_chapter", "delete_chapter",
-    "set_chapter_goal",
-    # CRUD — scene
-    "create_scene", "update_scene", "delete_scene",
-    # CRUD — character
+    # 内容 — 章就是正文层
+    "write_chapter", "continue_chapter",
+    # CRUD — 人物
     "create_character", "update_character", "delete_character",
+    # CRUD — 角色关系
     "create_relation", "update_relation", "delete_relation",
-    # CRUD — edge
-    "create_edge", "update_edge", "delete_edge",
-    "relink_timeline",
-    # Writing
-    "write_scene_content", "continue_scene", "rewrite_scene",
-    "expand_selection", "compress_selection",
-    "sync_scene_blueprint",
-    # Word count
-    "recalc_word_counts",
-    # Agents
+    # CRUD — 伏笔
+    "create_setup", "update_setup", "delete_setup",
+    # 写作侧（待写手设计时定）
     "call_writer_agent",
 }
 

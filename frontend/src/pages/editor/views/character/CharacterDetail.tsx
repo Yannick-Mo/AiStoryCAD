@@ -2,18 +2,14 @@ import type { Character } from '../../types'
 
 interface CharacterDetailProps {
   character: Character
-  onUpdateCharacter: (id: string, updates: Partial<Pick<Character, 'name' | 'role' | 'personality' | 'appearance' | 'background' | 'motivation'>>) => void
+  onUpdateCharacter: (id: string, updates: Partial<Pick<Character, 'name' | 'role' | 'personality' | 'appearance' | 'background' | 'motivation' | 'arc'>>) => void
 }
 
+/** 定位只有三档（规格第 3 节）：主角 / 配角 / 龙套。 */
 const ROLE_OPTIONS = [
-  { value: 'protagonist', label: '主角' },
-  { value: 'ally', label: '盟友' },
-  { value: 'antagonist', label: '对手' },
+  { value: 'main', label: '主角' },
   { value: 'supporting', label: '配角' },
-  { value: 'mentor', label: '导师' },
-  { value: 'love_interest', label: '恋人' },
-  { value: 'comic_relief', label: '搞笑' },
-  { value: 'other', label: '其他' },
+  { value: 'minor', label: '龙套' },
 ]
 
 export default function CharacterDetail({ character, onUpdateCharacter }: CharacterDetailProps) {
@@ -80,6 +76,17 @@ export default function CharacterDetail({ character, onUpdateCharacter }: Charac
             value={character.motivation}
             onChange={e => onUpdateCharacter(character.id, { motivation: e.target.value })}
             placeholder="角色的目标和动力..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+            rows={3}
+          />
+        </section>
+
+        <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
+          <div className="text-[10px] text-gray-500 mb-1">他从哪到哪</div>
+          <textarea
+            value={character.arc}
+            onChange={e => onUpdateCharacter(character.id, { arc: e.target.value })}
+            placeholder="设计意图（起点 → 终点）：一开始他是什么样、最后变成什么样..."
             className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
             rows={3}
           />

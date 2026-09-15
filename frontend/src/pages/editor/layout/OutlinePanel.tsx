@@ -5,11 +5,14 @@ import { useFloatingWindow } from '../../../hooks/useFloatingWindow'
 import { useSessionState } from '../../../hooks/useSessionState'
 import WindowControls from '../components/WindowControls'
 import { orderActChapters } from '../data/orderUtils'
+import { countWords } from '../data/wordCount'
 import type { Chapter, Act } from '../types'
 
 interface OutlinePanelProps {
   acts: Act[]
   chapters: Chapter[]
+  /** 章的正文（可能还没加载完），只用于显示字数。 */
+  contents: Record<string, string>
   selectedActId?: string | null
   selectedChapterId?: string | null
   /** grip handle that starts a dock reorder / split drag */
@@ -32,6 +35,7 @@ interface OutlinePanelProps {
 export default function OutlinePanel({
   acts,
   chapters,
+  contents,
   selectedActId,
   selectedChapterId,
   grip,
@@ -115,7 +119,7 @@ export default function OutlinePanel({
           const isActSelected = act.id === selectedActId
           const collapsed = collapsedActs.has(act.id)
           const canCollapse = actChs.length > 0
-          const actWordCount = actChs.reduce((sum, c) => sum + c.wordCount, 0)
+          const actWordCount = actChs.reduce((sum, c) => sum + countWords(contents[c.id]), 0)
           return (
             <div key={act.id}>
               <div
@@ -184,8 +188,7 @@ export default function OutlinePanel({
                             {ch.title}
                           </div>
                           <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5">
-                            <span>{ch.scenes.length} 场</span>
-                            <span>{ch.wordCount > 0 ? `${ch.wordCount} 字` : '空'}</span>
+                            <span>{countWords(contents[ch.id]) > 0 ? `${countWords(contents[ch.id])} 字` : '空'}</span>
                             <span className={`px-1 rounded ${
                               ch.status === 'final' ? 'bg-green-900/30 text-green-500' :
                               ch.status === 'revising' ? 'bg-amber-900/30 text-amber-500' :

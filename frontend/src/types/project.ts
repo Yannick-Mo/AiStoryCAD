@@ -3,10 +3,11 @@ export interface ProjectListItem {
   title: string
   genre?: string
   status: string
-  template_type?: string
-  total_words?: number
+  /** 目标字数（设定值，= projects.total_words）。 */
+  target_words?: number
+  /** 已写字数，由服务端对全部章正文实时算出来。 */
+  written_words?: number
   total_chapters?: number
-  total_scenes?: number
   created_at: string
   updated_at?: string
 }

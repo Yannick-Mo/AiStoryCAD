@@ -22,9 +22,9 @@ const RELATION_TYPE_OPTIONS = [
 ]
 
 const ROLE_LABELS: Record<string, string> = {
-  protagonist: '主角',
-  ally: '盟友',
-  antagonist: '对手',
+  main: '主角',
+  supporting: '配角',
+  minor: '龙套',
 }
 
 export default function CharacterEdgeDetail({ source, target, relation, onDelete, onUpdateRelation }: CharacterEdgeDetailProps) {

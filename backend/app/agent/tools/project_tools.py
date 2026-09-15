@@ -1,536 +1,159 @@
+"""作品层写入工具——规格第 9 节。
+
+``update_project`` 里的**终局**和**主线骨架**是这次重构新增的两个字段：
+章蓝图答不出「结局是什么」、也答不出「我离结局还有多远」。没有这两个字段，
+每一章都在盲写，模型也没有判断"这一章该往哪使劲"的依据。
+"""
 from __future__ import annotations
 
+import logging
 import uuid
-from sqlalchemy import select
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.blueprint import chapter_hint, lint_note, scene_hint
-from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
-from app.project.models import Project, ProjectConfig
-from app.storycad.models import Act, Chapter, Scene, SceneContent
-from app.storycad.order import order_by_sequence
-from app.storycad.repository import AiStoryCADRepository
-from app.storycad.timeline import reconcile_timeline_chain
-from app.project.repository import ProjectRepository
-from app.utils import row_to_dict
+
+from app.agent.tools.base import BaseTool, ConcurrencyMode, ToolMeta, ToolResult, verify_project_owner
+from app.project.models import Project
+
+logger = logging.getLogger(__name__)
 
 
-class ReadProjectTool(BaseTool):
+class UpdateProjectTool(BaseTool):
     meta = ToolMeta(
-        name="read_project",
-        description="加载项目元数据：标题/类型/一句话梗概/描述/状态/目标字数/模板/目标读者 及配置，"
-                    "并给出全局设定的总字数提示。不包含幕/章/场景（用 read_chapters / read_chapter / read_scene）。"
-                    "注意：本工具不含全局设定全文——需要完整世界观设定请用 read_global_settings 读取",
-        concurrency=ConcurrencyMode.SAFE,
-        parameters={
-            "type": "object",
-            "properties": {},
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            pid_raw = self._require_param(kwargs, "project_id")
-            if pid_raw is None:
-                return self._missing_param("project_id")
-            pid = uuid.UUID(pid_raw)
-            await verify_project_owner(db, pid, kwargs.get("user_id"))
-            proj_repo = ProjectRepository(db)
-            project = await proj_repo.get(pid)
-            if not project:
-                return self._not_found("Project")
-            config = await proj_repo.get_config(pid)
-            data = row_to_dict(project)
-            gs = data.pop("global_settings", "") or ""
-            data["global_settings_chars"] = len(gs)
-            if config:
-                data["config"] = row_to_dict(config)
-            return ToolResult(success=True, data=data)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class ReadGlobalSettingsTool(BaseTool):
-    meta = ToolMeta(
-        name="read_global_settings",
-        description="读取项目全局设定（世界观/背景设定全文，常驻上下文中只给前2000字，这里是完整版）。"
-                    "默认一次返回完整设定——创作所需的设定最终都要进上下文，不必分页搬。"
-                    "仅当设定超过单次上限（约10万字符，罕见）或你只想看设定中的某一段时，"
-                    "才用 content_offset/content_limit 定位读取；content_has_more=true 表示还有后续",
-        concurrency=ConcurrencyMode.SAFE,
-        timeout=30,
-        max_result_chars=100000,
+        name="update_project",
+        description="改作品层：书名 / 类型 / 一句话梗概 / 终局 / 主线骨架 / 全局设定 / 目标字数，"
+                    "只传要改的字段。**终局** = 故事结束时局面变成什么样、主角变成什么样；**主线骨架** = 从开局到终局的因果主链——写章节之前这两个必须已经存在",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
             "properties": {
-                "content_offset": {"type": "integer", "description": "设定文本读取起点（字符偏移，默认0=从头）"},
-                "content_limit": {"type": "integer", "description": "最多读取长度（字符数）；不传或0=读到末尾/单次上限"},
+                "title": {"type": "string", "description": "书名"},
+                "genre": {"type": "string", "description": "类型，例如：悬疑、奇幻、科幻"},
+                "logline": {"type": "string", "description": "一句话梗概：这个故事是什么、开局的钩子"},
+                "ending": {"type": "string", "description": "终局：故事结束时局面变成什么样、主角变成什么样"},
+                "spine": {"type": "string", "description": "主线骨架：从开局到终局的因果主链，例如「奔丧 → 发现账本缺页 → 姑妈改口 → 旧债浮出 → 陈默留下」"},
+                "global_settings": {"type": "string", "description": "全局设定：世界观与背景（地名、习俗、规则、来龙去脉）"},
+                "total_words": {"type": "integer", "description": "目标字数"},
             },
         },
     )
 
+    # flash 模型偶尔会把 global_settings 写成单数或 world_setting 之类的名字。
+    PARAM_ALIASES = {
+        "global_setting": "global_settings",
+        "world_setting": "global_settings",
+        "world_settings": "global_settings",
+        "summary": "logline",
+    }
+
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             pid_raw = self._require_param(kwargs, "project_id")
             if pid_raw is None:
                 return self._missing_param("project_id")
-            pid = uuid.UUID(pid_raw)
-            await verify_project_owner(db, pid, kwargs.get("user_id"))
-            proj_repo = ProjectRepository(db)
-            project = await proj_repo.get(pid)
+            project_id = uuid.UUID(pid_raw)
+            await verify_project_owner(db, project_id, kwargs.get("user_id"))
+
+            for wrong, correct in self.PARAM_ALIASES.items():
+                if wrong in kwargs and correct not in kwargs:
+                    kwargs[correct] = kwargs[wrong]
+                    logger.warning("update_project: aliased param '%s' -> '%s'", wrong, correct)
+
+            updatable = {"title", "genre", "logline", "ending", "spine", "global_settings", "total_words"}
+            given = set(kwargs) & updatable
+            if not given:
+                return ToolResult(
+                    success=False,
+                    error="未传入任何要更新的字段，请在调用时至少提供 "
+                          "title / genre / logline / ending / spine / global_settings / total_words 中的一个",
+                    correction_hint="请传入要修改的字段及其新值",
+                )
+
+            project = await db.get(Project, project_id)
             if not project:
                 return self._not_found("Project")
-            body = project.global_settings or ""
-            try:
-                offset = int(kwargs.get("content_offset") or 0)
-            except (TypeError, ValueError):
-                offset = 0
-            if offset < 0:
-                offset = 0
-            try:
-                limit = int(kwargs.get("content_limit") or 0)
-            except (TypeError, ValueError):
-                limit = 0
-            max_page = self._effective_max_result_chars - 1000
-            if limit <= 0:
-                limit = max_page
-            limit = min(limit, max_page)
-            page = body[offset:offset + limit]
+
+            for field in updatable - {"total_words"}:
+                if field in kwargs and kwargs[field] is not None:
+                    setattr(project, field, kwargs[field])
+            if kwargs.get("total_words") is not None:
+                try:
+                    project.total_words = int(kwargs["total_words"])
+                except (TypeError, ValueError):
+                    return ToolResult(success=False, error="total_words 必须是整数")
+
+            await db.commit()
+            settings = project.global_settings or ""
             return ToolResult(success=True, data={
                 "project_id": str(project.id),
-                "project_title": project.title or "",
-                "settings_chars": len(body),
-                "content_offset": offset,
-                "content": page,
-                "content_has_more": (offset + len(page)) < len(body),
+                "title": project.title or "",
+                "genre": project.genre or "",
+                "logline": project.logline or "",
+                "ending": project.ending or "",
+                "ending_chars": len(project.ending or ""),
+                "spine": project.spine or "",
+                "global_settings_chars": len(settings),
+                "total_words": int(project.total_words or 0),
+                "updated_fields": sorted(given),
             })
         except Exception as e:
             await db.rollback()
             return self._err(e)
 
 
-class ReadChapterTool(BaseTool):
+class CreateProjectFromMaterialTool(BaseTool):
     meta = ToolMeta(
-        name="read_chapter",
-        description="读取整章创作包：章目标全文 + 该章全部场景的蓝图与元数据（写/分析这章时的完整规划依据）。"
-                    "场景很多时各场蓝图字段会被压缩（含省略标记），可对个别场用 read_scene 精读蓝图。"
-                    "chapter_id 来自 read_chapters（范围）或项目框架结构概览。"
-                    "只想快速拿章内场景 ID/标题清单时请用 read_chapter_scenes（更轻量）",
-        concurrency=ConcurrencyMode.SAFE,
-        max_result_chars=16000,
-        parameters={
-            "type": "object",
-            "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或项目框架结构概览"},
-            },
-            "required": ["chapter_id"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            ch_raw = self._require_param(kwargs, "chapter_id")
-            if ch_raw is None:
-                return self._missing_param("chapter_id")
-            ch_id = uuid.UUID(ch_raw)
-            result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
-            chapter = result.scalar_one_or_none()
-            if not chapter:
-                return self._not_found("Chapter")
-            await verify_project_owner(db, chapter.project_id, kwargs.get("user_id"))
-            scenes_result = await db.execute(
-                select(Scene).where(Scene.chapter_id == ch_id).order_by(*order_by_sequence(Scene))
-            )
-            scenes = [row_to_dict(s) for s in scenes_result.scalars().all()]
-            data = row_to_dict(chapter)
-            data["scenes"] = scenes
-            return ToolResult(success=True, data=data)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class ReadSceneTool(BaseTool):
-    meta = ToolMeta(
-        name="read_scene",
-        description="读取单个场景：蓝图全文（summary，字段见《创作蓝图规范》）+ POV/地点/时间/字数/是否已写/正文长度。"
-                    "注意 word_count 为字数、body_chars 为字符数（含标点），口径不同。"
-                    "scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes。"
-                    "注意：本工具不含正文——需要正文请用 read_scene_content 读取（一次返回完整正文）",
-        concurrency=ConcurrencyMode.SAFE,
-        parameters={
-            "type": "object",
-            "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes、read_recent_scenes 或 search_nodes"},
-            },
-            "required": ["scene_id"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            sc_raw = self._require_param(kwargs, "scene_id")
-            if sc_raw is None:
-                return self._missing_param("scene_id")
-            sc_id = uuid.UUID(sc_raw)
-            result = await db.execute(select(Scene).where(Scene.id == sc_id))
-            scene = result.scalar_one_or_none()
-            if not scene:
-                return self._not_found("Scene")
-            await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
-            data = row_to_dict(scene)
-            content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
-            sc_content = content_result.scalar_one_or_none()
-            body = (sc_content.content if sc_content else "") or ""
-            data["written"] = (scene.word_count or 0) > 0
-            data["body_chars"] = len(body)
-            return ToolResult(success=True, data=data)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class ReadSceneContentTool(BaseTool):
-    meta = ToolMeta(
-        name="read_scene_content",
-        description="读取场景正文（唯一的正文读取工具）。默认一次返回完整正文——写作时正文最终都要进上下文，"
-                    "不必分页搬。仅当正文超过单次上限（约10万字符，罕见）或你只想看正文某一段时，"
-                    "才用 content_offset/content_limit 定位读取；content_has_more=true 表示还有后续。"
-                    "注意 body_chars 为字符数（含标点），与 word_count（字数）口径不同。"
-                    "scene_id 来自 read_chapter_scenes、read_recent_scenes 或 search_nodes。"
-                    "蓝图（创作计划）请用 read_scene",
-        concurrency=ConcurrencyMode.SAFE,
-        max_result_chars=100000,
-        parameters={
-            "type": "object",
-            "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes、read_recent_scenes 或 search_nodes"},
-                "content_offset": {"type": "integer", "description": "正文读取起点（字符偏移，默认0=从头）"},
-                "content_limit": {"type": "integer", "description": "最多读取长度（字符数）；不传或0=读到末尾/单次上限"},
-            },
-            "required": ["scene_id"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            sc_raw = self._require_param(kwargs, "scene_id")
-            if sc_raw is None:
-                return self._missing_param("scene_id")
-            sc_id = uuid.UUID(sc_raw)
-            result = await db.execute(select(Scene).where(Scene.id == sc_id))
-            scene = result.scalar_one_or_none()
-            if not scene:
-                return self._not_found("Scene")
-            await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
-            content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
-            sc_content = content_result.scalar_one_or_none()
-            body = (sc_content.content if sc_content else "") or ""
-            try:
-                offset = int(kwargs.get("content_offset") or 0)
-            except (TypeError, ValueError):
-                offset = 0
-            if offset < 0:
-                offset = 0
-            try:
-                limit = int(kwargs.get("content_limit") or 0)
-            except (TypeError, ValueError):
-                limit = 0
-            max_page = self._effective_max_result_chars - 1000
-            if limit <= 0:
-                limit = max_page
-            limit = min(limit, max_page)
-            page = body[offset:offset + limit]
-            return ToolResult(success=True, data={
-                "scene_id": str(scene.id),
-                "scene_title": scene.title or "",
-                "body_chars": len(body),
-                "content_offset": offset,
-                "content": page,
-                "content_has_more": (offset + len(page)) < len(body),
-            })
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class CreateSceneTool(BaseTool):
-    meta = ToolMeta(
-        name="create_scene",
-        description="在指定章节中创建新场景，需提供章节ID和标题。chapter_id 来自 read_chapters（范围读取）或 read_chapter",
+        name="create_project_from_material",
+        description="从素材一次生成完整项目：幕（含每一幕要干什么）/ 章（含每一章要写什么）/ 人物（含他想要什么、他从哪到哪）"
+                    "/ 角色关系 / 终局与主线骨架 / 全局设定。**不生成正文**。素材撑不起完整结构时，"
+                    "返回值里的 truncated 会如实列出被削减了什么。素材至少 10 个字",
         concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        needs_confirmation=True,
+        timeout=120,
         parameters={
             "type": "object",
             "properties": {
-                "chapter_id": {"type": "string", "description": "所属章节ID，来自 read_chapters（范围读取）或 read_chapter"},
-                "title": {"type": "string", "description": "场景标题"},
-                "sort_order": {"type": "integer", "description": "章内排序序号（省略时接在该章末尾）"},
-                "summary": {"type": "string", "description": scene_hint()},
-                "content": {"type": "string", "description": "场景正文"},
-                "pov_character": {"type": "string", "description": "POV角色"},
-                "setting": {"type": "string", "description": "场景地点"},
-                "scene_time": {"type": "string", "description": "场景时间"},
+                "material": {"type": "string", "description": "创作素材：想要创作的故事内容，至少10个字"},
+                "project_title": {"type": "string", "description": "书名"},
             },
-            "required": ["chapter_id", "title"],
+            "required": ["material", "project_title"],
         },
     )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            pid = uuid.UUID(kwargs["project_id"])
-            await verify_project_owner(db, pid, kwargs.get("user_id"))
-            ch_id = uuid.UUID(kwargs["chapter_id"])
-            # 安全：校验章节属于当前项目，防止跨项目创建场景（IDOR 写入）
-            chapter = await db.get(Chapter, ch_id)
-            if chapter is None or chapter.project_id != pid:
-                return ToolResult(success=False, error="章节不存在或不属于该项目")
-            repo = AiStoryCADRepository(db)
-            # 未指定序号时接在该章末尾：章内顺序由 sort_order 决定，默认 0 会
-            # 让同一章里所有新建场景并列，章内顺序变得不确定。
-            sort_order = kwargs.get("sort_order")
-            if sort_order is None:
-                sort_order = await repo.next_sort_order(Scene, pid, "chapter_id", ch_id)
-            scene_data = {
-                "project_id": str(pid),
-                "chapter_id": str(ch_id),
-                "title": kwargs.get("title", "新场景"),
-                "sort_order": sort_order,
-                "summary": kwargs.get("summary", ""),
-                "pov_character": kwargs.get("pov_character", ""),
-                "setting": kwargs.get("setting", ""),
-                "scene_time": kwargs.get("scene_time", ""),
+            material = (kwargs.get("material") or "").strip()
+            if len(material) < 10:
+                return ToolResult(success=False, error="素材至少需要10个字来表达基本创意")
+            if len(material) > 5000:
+                return ToolResult(success=False, error="素材不能超过5000字")
+
+            user_id = kwargs.get("user_id")
+            if not user_id:
+                return ToolResult(success=False, error="创建项目需要用户登录")
+
+            from app.agent.project_creator.graph import run_pipeline
+            from app.agent.project_creator.writer import write_project_from_state
+
+            state = {
+                "material": material,
+                "project_title": (kwargs.get("project_title") or "未命名项目").strip(),
+                "genre": "", "tone": "",
+                "plot_summary": "", "world_elements": "", "global_settings": "",
+                "ending": "", "spine": "", "logline": "",
+                "acts": [], "chapters": [], "characters": [], "relations": [],
+                "errors": [],
             }
-            content = kwargs.get("content")
-            created = await repo.create_entity(Scene, scene_data)
-            wc = None
-            if content:
-                sc_id = uuid.UUID(created["id"])
-                db.add(SceneContent(scene_id=sc_id, project_id=pid, content=content))
-                from app.agent.utils import count_words
-                word_count = count_words(content)
-                wc = word_count
-                scene_obj = await db.get(Scene, sc_id)
-                if scene_obj:
-                    scene_obj.word_count = word_count
-                    await repo.recalc_chapter(scene_obj.chapter_id)
+            try:
+                async for _ in run_pipeline(state):
+                    pass
+            except Exception as e:
+                return ToolResult(success=False, error=f"项目生成失败: {e}")
+
+            result = await write_project_from_state(db, state, uuid.UUID(user_id))
             await db.commit()
-            data = dict(created)
-            if wc is not None:
-                data["word_count"] = wc
-                data["content_preview"] = content[:200]
-            note = lint_note(scene_data["summary"])
-            if note:
-                data["blueprint_note"] = note
-            return ToolResult(success=True, data=data)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class UpdateSceneTool(BaseTool):
-    meta = ToolMeta(
-        name="update_scene",
-        description="更新场景的标题/蓝图/正文等。scene_id 来自 read_chapter_scenes（章内场景清单）、read_recent_scenes 或 search_nodes。"
-                    "⚠️ 传 content 是整体替换正文（会覆盖旧文）：先 read_scene_content 读完再改；只续写请用 continue_scene",
-        concurrency=ConcurrencyMode.EXCLUSIVE,
-        parameters={
-            "type": "object",
-            "properties": {
-                "scene_id": {"type": "string", "description": "场景ID，来自 read_chapter_scenes / read_recent_scenes 或 search_nodes"},
-                "title": {"type": "string", "description": "场景标题"},
-                "summary": {"type": "string", "description": scene_hint()},
-                "content": {"type": "string", "description": "场景完整正文（整体替换，会覆盖旧文）"},
-                "pov_character": {"type": "string", "description": "POV角色"},
-                "setting": {"type": "string", "description": "场景地点"},
-                "scene_time": {"type": "string", "description": "场景时间"},
-                "sort_order": {"type": "integer", "description": "章内排序序号（越小越靠前）"},
-            },
-            "required": ["scene_id"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            sc_id = uuid.UUID(kwargs["scene_id"])
-            scene_result = await db.get(Scene, sc_id)
-            if scene_result:
-                await verify_project_owner(db, scene_result.project_id, kwargs.get("user_id"))
-            repo = AiStoryCADRepository(db)
-            update_data = {"id": str(sc_id)}
-            for field in ("title", "summary", "pov_character", "setting", "scene_time", "sort_order"):
-                if field in kwargs:
-                    update_data[field] = kwargs[field]
-            updated = await repo.update_entity(Scene, update_data)
-            if not updated:
-                return self._not_found("Scene")
-            if "summary" in kwargs and isinstance(updated, dict):
-                note = lint_note(str(kwargs["summary"]))
-                if note:
-                    updated["blueprint_note"] = note
-            if "content" in kwargs:
-                content = kwargs["content"]
-                result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
-                sc = result.scalar_one_or_none()
-                scene_obj = await db.get(Scene, sc_id)
-                if sc:
-                    sc.content = content
-                elif scene_obj:
-                    db.add(SceneContent(scene_id=sc_id, project_id=scene_obj.project_id, content=content))
-                wc = None
-                if scene_obj:
-                    from app.agent.utils import count_words
-                    wc = count_words(content)
-                    scene_obj.word_count = wc
-                    await repo.recalc_chapter(scene_obj.chapter_id)
-            await db.commit()
-            data = dict(updated)
-            if "content" in kwargs and wc is not None:
-                data["word_count"] = wc
-                data["content_preview"] = kwargs["content"][:200]
-            return ToolResult(success=True, data=data)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class SetChapterGoalTool(BaseTool):
-    meta = ToolMeta(
-        name="set_chapter_goal",
-        description="设置章节的创作蓝图（章级创作目标）",
-        concurrency=ConcurrencyMode.EXCLUSIVE,
-        parameters={
-            "type": "object",
-            "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
-                "goal": {"type": "string", "description": chapter_hint()},
-            },
-            "required": ["chapter_id", "goal"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            ch_raw = self._require_param(kwargs, "chapter_id")
-            if ch_raw is None:
-                return self._missing_param("chapter_id")
-            goal_raw = self._require_param(kwargs, "goal")
-            if goal_raw is None:
-                return self._missing_param("goal")
-            ch_id = uuid.UUID(ch_raw)
-            result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
-            ch = result.scalar_one_or_none()
-            if ch:
-                await verify_project_owner(db, ch.project_id, kwargs.get("user_id"))
-            if not ch:
-                return self._not_found("Chapter")
-            ch.goal = goal_raw
-            await db.commit()
-            data: dict = {"chapter_id": str(ch_id), "goal": goal_raw}
-            note = lint_note(goal_raw)
-            if note:
-                data["blueprint_note"] = note
-            return ToolResult(success=True, data=data)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class UpdateChapterTool(BaseTool):
-    meta = ToolMeta(
-        name="update_chapter",
-        description="更新章节信息（标题、状态、目标、幕内序号）。章节ID来自 read_chapters（范围读取）或项目框架结构概览",
-        concurrency=ConcurrencyMode.EXCLUSIVE,
-        parameters={
-            "type": "object",
-            "properties": {
-                "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters（范围读取）或 read_chapter"},
-                "title": {"type": "string", "description": "章节标题"},
-                "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
-                "goal": {"type": "string", "description": chapter_hint()},
-                "sort_order": {"type": "integer", "description": "幕内排序序号（越小越靠前）"},
-            },
-            "required": ["chapter_id"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            ch_raw = self._require_param(kwargs, "chapter_id")
-            if ch_raw is None:
-                return self._missing_param("chapter_id")
-            ch_id = uuid.UUID(ch_raw)
-            result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
-            ch = result.scalar_one_or_none()
-            if not ch:
-                return self._not_found("Chapter")
-            await verify_project_owner(db, ch.project_id, kwargs.get("user_id"))
-            if "title" in kwargs:
-                ch.title = kwargs["title"]
-            if "status" in kwargs:
-                valid_statuses = {"draft", "revising", "final"}
-                if kwargs["status"] not in valid_statuses:
-                    return ToolResult(
-                        success=False,
-                        error=f"无效状态 '{kwargs['status']}'，有效值为：{', '.join(sorted(valid_statuses))}",
-                        correction_hint=f"请将 status 设为 draft（草稿）、revising（修订中）或 final（终稿）之一",
-                    )
-                ch.status = kwargs["status"]
-            if "goal" in kwargs:
-                ch.goal = kwargs["goal"]
-            if "sort_order" in kwargs:
-                ch.sort_order = int(kwargs["sort_order"])
-                await db.flush()
-                await reconcile_timeline_chain(db, ch.project_id)
-            await db.commit()
-            data_ch: dict = {
-                "chapter_id": str(ch_id),
-                "title": ch.title,
-                "status": ch.status,
-                "sort_order": ch.sort_order,
-            }
-            if "goal" in kwargs:
-                note = lint_note(str(kwargs["goal"]))
-                if note:
-                    data_ch["blueprint_note"] = note
-            return ToolResult(success=True, data=data_ch)
-        except Exception as e:
-            await db.rollback()
-            return self._err(e)
-
-
-class UpdateActTool(BaseTool):
-    meta = ToolMeta(
-        name="update_act",
-        description="更新幕信息（名称、颜色）",
-        concurrency=ConcurrencyMode.EXCLUSIVE,
-        parameters={
-            "type": "object",
-            "properties": {
-                "act_id": {"type": "string", "description": "幕ID，来自项目框架结构概览或 read_chapters 返回的 act_id"},
-                "name": {"type": "string", "description": "幕名称"},
-                "color": {"type": "string", "description": "颜色代码"},
-            },
-            "required": ["act_id"],
-        },
-    )
-
-    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
-        try:
-            act_raw = self._require_param(kwargs, "act_id")
-            if act_raw is None:
-                return self._missing_param("act_id")
-            act_id = uuid.UUID(act_raw)
-            result = await db.execute(select(Act).where(Act.id == act_id))
-            act = result.scalar_one_or_none()
-            if not act:
-                return self._not_found("Act in project")
-            await verify_project_owner(db, act.project_id, kwargs.get("user_id"))
-            if "name" in kwargs:
-                act.name = kwargs["name"]
-            if "color" in kwargs:
-                act.color = kwargs["color"]
-            await db.commit()
-            return ToolResult(success=True, data={"act_id": str(act_id), "name": act.name})
+            result["project_title"] = state.get("project_title", "")
+            return ToolResult(success=True, data=result)
         except Exception as e:
             await db.rollback()
             return self._err(e)

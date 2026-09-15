@@ -1,8 +1,7 @@
 """Tests for VectorStore: search, add_chunk, delete_chunk."""
 import uuid
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from sqlalchemy import text
+from unittest.mock import AsyncMock, MagicMock
 from app.knowledge.vector_store import VectorStore
 
 
@@ -84,7 +83,7 @@ class TestAddChunk:
         db = AsyncMock()
         store = VectorStore(db)
 
-        result = await store.add_chunk({
+        await store.add_chunk({
             "content": "Test content",
             "source_type": "guide",
             "genre": "fantasy",
@@ -99,7 +98,7 @@ class TestAddChunk:
         db = AsyncMock()
         store = VectorStore(db)
 
-        result = await store.add_chunk({
+        await store.add_chunk({
             "content": "Vectorized content",
             "embedding": [0.1, 0.2, 0.3],
             "source_type": "reference",
@@ -116,7 +115,7 @@ class TestAddChunk:
         db = AsyncMock()
         store = VectorStore(db)
 
-        result = await store.add_chunk({
+        await store.add_chunk({
             "content": "No embedding",
             "source_type": "note",
         })
@@ -158,5 +157,5 @@ class TestDeleteChunk:
         db.execute.side_effect = ValueError("invalid uuid")
         store = VectorStore(db)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="invalid uuid"):
             await store.delete_chunk("not-a-uuid")

@@ -8,7 +8,7 @@ class TestWriteTools:
 
     def test_known_write_tools(self):
         assert "update_chapter" in COWRITER_TOOLS
-        assert "write_scene_content" in COWRITER_TOOLS
+        assert "write_chapter" in COWRITER_TOOLS
         assert "create_character" in COWRITER_TOOLS
 
     def test_read_tools_not_in_write(self):

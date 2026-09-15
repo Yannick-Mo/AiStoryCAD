@@ -51,7 +51,7 @@ async def story_starter(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"生成故事起点失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"生成故事起点失败: {str(e)}") from e
 
 
 @router.post("/batch")
@@ -65,7 +65,7 @@ async def batch_starters(
         gen = InspirationGenerator()
         return await gen.batch_generate(req.genres, req.count)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"批量生成失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量生成失败: {str(e)}") from e
 
 
 @router.get("/challenges")
@@ -77,7 +77,7 @@ async def list_challenges(
     try:
         return get_challenges(difficulty, genre)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取挑战列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取挑战列表失败: {str(e)}") from e
 
 
 @router.get("/challenges/random")
@@ -87,4 +87,4 @@ async def random_challenge(
     try:
         return get_random_challenge()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取随机挑战失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取随机挑战失败: {str(e)}") from e

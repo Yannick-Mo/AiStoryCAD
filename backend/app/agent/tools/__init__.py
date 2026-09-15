@@ -14,63 +14,61 @@ def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) 
 
 
 def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
-    from .list_tools import (
-        ListRelationsTool, ListEdgesTool, SearchNodesTool,
-        ListCharacterRelationsTool, ReadRelationTool, ReadChapterScenesTool,
+    """全部工具注册表。
+
+    规格第 9 节的数量账：本范围内 33 个 = 读 12 + 写 21（幕 4 + 章 4 + 内容 2 +
+    人物 3 + 关系 3 + 伏笔 3 + 作品层 2）。规格原本给伏笔的只有 create / update 两个，
+    delete_setup 是补上的那一个（理由见 setup_tools 模块说明与规格第 13.5 节）。
+    **修复类 0 个**——字数实时算、顺序由实现归一化、不变式由结构保证，所以没有
+    "重算"和"重建"这回事。另有 4 个属于范围外（知识库 / 联网 / 技能），
+    1 个属于写作侧待定（call_writer_agent）。
+    """
+    from .read_tools import (
+        ReadProjectTool, ReadActsTool, ReadChaptersTool, ReadChapterContentTool,
+        ReadChapterPackageTool, ReadCharacterTool, ReadRelationTool,
+        ListCharactersTool, ListRelationsTool, ListSetupsTool, ReadProgressTool,
+        SearchTool,
     )
-    from .range_tools import (
-        ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool,
-        ReadCompletedTailTool,
+    from .structure_tools import (
+        CreateActTool, UpdateActTool, MoveActTool, DeleteActTool,
+        CreateChapterTool, UpdateChapterTool, MoveChapterTool, DeleteChapterTool,
     )
-    from .project_tools import (
-        ReadProjectTool, ReadChapterTool, ReadSceneTool, ReadSceneContentTool,
-        ReadGlobalSettingsTool,
-        CreateSceneTool, UpdateSceneTool,
-        SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
-    )
+    from .content_tools import WriteChapterTool, ContinueChapterTool
+    from .setup_tools import CreateSetupTool, UpdateSetupTool, DeleteSetupTool
     from .character_tools import (
-        ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
-        CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
+        CreateCharacterTool, UpdateCharacterTool, DeleteCharacterTool,
+        CreateRelationTool, UpdateRelationTool, DeleteRelationTool,
     )
-    from .analysis_v2_tools import AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool
-    from .writing_tools import WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool
+    from .project_tools import UpdateProjectTool, CreateProjectFromMaterialTool
     from .knowledge_tools import SearchKnowledgeTool
     from .web_search import WebSearchTool
     from .web_fetch import WebFetchTool
-    from .project_admin_tools import (
-        CreateActTool, CreateChapterTool, MoveChapterTool, UpdateProjectTool,
-        RelinkTimelineTool,
-        DeleteSceneTool, DeleteChapterTool, DeleteActTool,
-        CreateProjectFromMaterialTool,
-        CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
-    )
     from .skill_tool import InvokeSkillTool
-    from .writer_tool import CallWriterAgentTool, SyncSceneBlueprintTool
-    from .word_count_tools import RecalcWordCountsTool
+    from .writer_tool import CallWriterAgentTool
+
     classes = [
-        ListRelationsTool, ListEdgesTool, SearchNodesTool,
-        ListCharacterRelationsTool, ReadRelationTool, ReadChapterScenesTool,
-        ReadChaptersTool, ReadRecentScenesTool, ReadRecentChaptersTool,
-        ReadCompletedTailTool,
-        ReadProjectTool, ReadChapterTool, ReadSceneTool, ReadSceneContentTool,
-        ReadGlobalSettingsTool,
-        CreateSceneTool, UpdateSceneTool,
-        SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
-        ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
-        CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
-        AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
-        WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool,
+        # ── 读（12）──
+        ReadProjectTool, ReadActsTool, ReadChaptersTool, ReadChapterContentTool,
+        ReadChapterPackageTool, ReadCharacterTool, ReadRelationTool,
+        ListCharactersTool, ListRelationsTool, ListSetupsTool, ReadProgressTool,
+        SearchTool,
+        # ── 写：结构（8）──
+        CreateActTool, UpdateActTool, MoveActTool, DeleteActTool,
+        CreateChapterTool, UpdateChapterTool, MoveChapterTool, DeleteChapterTool,
+        # ── 写：内容（2）──
+        WriteChapterTool, ContinueChapterTool,
+        # ── 写：伏笔（3）──
+        CreateSetupTool, UpdateSetupTool, DeleteSetupTool,
+        # ── 写：人物与关系（6）──
+        CreateCharacterTool, UpdateCharacterTool, DeleteCharacterTool,
+        CreateRelationTool, UpdateRelationTool, DeleteRelationTool,
+        # ── 写：作品层（2）──
+        UpdateProjectTool, CreateProjectFromMaterialTool,
+        # ── 范围外（4 + 1）──
         SearchKnowledgeTool,
         WebSearchTool, WebFetchTool,
-        CreateActTool, CreateChapterTool, MoveChapterTool, UpdateProjectTool,
-        RelinkTimelineTool,
-        DeleteSceneTool, DeleteChapterTool, DeleteActTool,
-        CreateProjectFromMaterialTool,
-        CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
         InvokeSkillTool,
         CallWriterAgentTool,
-        SyncSceneBlueprintTool,
-        RecalcWordCountsTool,
     ]
     registry: dict[str, BaseTool] = {}
     for cls in classes:

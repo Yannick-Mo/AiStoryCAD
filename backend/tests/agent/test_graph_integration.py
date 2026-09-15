@@ -4,8 +4,6 @@ Tests verify state transitions, confirm/reject detection, and token
 streaming without making real LLM API calls.
 """
 
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

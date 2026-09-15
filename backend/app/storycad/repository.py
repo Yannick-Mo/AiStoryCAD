@@ -1,56 +1,72 @@
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
 from typing import Any
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 from app.project.models import Project
-from app.project.repository import ProjectRepository
-from app.storycad.models import (
-    Act, Chapter, Scene, SceneContent, ChapterEdge,
-    Character, CharacterRelation,
-)
+from app.storycad.models import Act, Chapter, Character, CharacterRelation, Setup
 from app.storycad.entity_map import ENTITY_MAP
 from app.storycad.order import order_by_sequence
-from app.storycad.timeline import reconcile_timeline_chain
+from app.storycad.sequence import renumber_container
 from app.utils import row_to_dict
 
 logger = logging.getLogger(__name__)
 
-# Editor autosaves are throttled to at most one version row per window, so
-# keystroke-level syncs stop flooding project_versions with empty snapshots.
-EDITOR_VERSION_THROTTLE_S = 300
-
-
-# Fields that clients must never be able to set via update_entity.
-# - id: lookup key only, never writable
-# - project_id: prevents cross-project injection after ownership check
-# - created_at / updated_at: server-managed timestamps
-# - word_count (Scene), scene_count / total_words (Chapter): server-computed statistics
+# 客户端永远不能通过 update_entity 设置的字段。
+#
+# 注意：``word_count`` / ``scene_count`` / ``total_words`` 曾经在这里是因为
+# 它们是派生统计值；现在这些列已经删掉，字数一律实时算。
+#
+# ``sort_order`` 也是受保护的：规格第 5 节要求**移动只用「插到谁之后」表达**，
+# 序号由实现归一化成连续整数——客户端自己算序号必然算错（历史上就是这么撞出
+# 重复序号的）。要移动请走 ``POST …/{entity_type}/{id}/move``，它内部用
+# ``storycad/sequence.move_item``。
 PROTECTED_FIELDS = frozenset({
     "id",
     "project_id",
     "created_at",
     "updated_at",
-    "word_count",
-    "scene_count",
-    "total_words",
+    "sort_order",
 })
 
-# Subset for create_entity – id and project_id are legitimate at creation
-# time, but stats and timestamps must remain server-managed.
-CREATE_PROTECTED = PROTECTED_FIELDS - {"id", "project_id"}
+# create_entity 时 id 与 project_id 是合法的（由服务端填），其余仍受保护。
+# ``sort_order`` 也要放行：**两条创建路径都必须先调 assign_initial_sort_order
+# 把服务端算好的序号写进 data**，再由 create_entity 落库；若在这里把它过滤掉，
+# 新行就会全落到模型默认值 0 上并列成一团（客户端传的值仍然无效——会被
+# assign_initial_sort_order 覆盖）。
+CREATE_PROTECTED = PROTECTED_FIELDS - {"id", "project_id", "sort_order"}
+
+
+def with_chapter_content(statement):
+    """给"要读正文"的章节查询加上显式 undefer。
+
+    ``chapters.content`` 是 **deferred 列**。在 async 会话里**直接读这个属性**
+    会触发懒加载，而懒加载要发 IO 却不能 await，SQLAlchemy 于是抛
+    ``MissingGreenlet: greenlet_spawn has not been called``。
+    所以凡是要读正文的地方，都必须在查询里显式 undefer——**不能靠 getattr**。
+
+    反过来，列出章节的查询**故意不加**它：正文就不会被拖出来。这就是
+    "结构性保证"落地的方式。
+    """
+    return statement.options(undefer(Chapter.content))
 
 
 # 外键列 → 目标模型映射：写入时必须校验目标行属于同一项目，
-# 否则可把场景/边/关系挂到他人项目下的章节/角色上。
+# 否则可把章/关系/伏笔挂到他人项目下的行上。
+# 这是唯一一份：API 路由与仓储共用它，避免两边各写一份而漂移。
 ENTITY_FK_MAP = {
     Chapter: {"act_id": Act},
-    Scene: {"chapter_id": Chapter},
-    ChapterEdge: {"source_id": Chapter, "target_id": Chapter},
     CharacterRelation: {"character_id": Character, "target_id": Character},
+    Setup: {"planted_in": Chapter, "pay_off_in": Chapter},
 }
+
+# 编辑器增量同步接受的实体类型。没有 scenes / edges——两层的表都已删除。
+SYNC_ENTITY_TYPES = ("acts", "chapters", "characters", "character_relations", "setups")
+
+# 顺序由服务端归一化的实体类型（见 storycad/sequence.py）。
+SEQUENCED_ENTITY_TYPES = ("acts", "chapters")
 
 
 class AiStoryCADRepository:
@@ -65,66 +81,94 @@ class AiStoryCADRepository:
         result = {"project_id": str(project_id)}
 
         async def _fetch(model):
-            # 顺序只有一个真相：sort_order。该列没有唯一约束，历史数据可能有
-            # 重复值，所以每次排序都必须追加确定性 tie-break，否则并列行的顺序
-            # 由 PG 自由决定，同一项目两次加载可能不一致。
-            q = select(model).where(model.project_id == project_id)
-            q = q.order_by(*order_by_sequence(model))
-            r = await self.db.execute(q)
-            return [self._row(o) for o in r.scalars().all()]
+            # 顺序只有一个真相：sort_order。该列没有唯一约束，所以每次排序
+            # 都必须追加确定性 tie-break，否则并列行的顺序由 PG 自由决定，
+            # 同一项目两次加载可能不一致。
+            query = (
+                select(model)
+                .where(model.project_id == project_id)
+                .order_by(*order_by_sequence(model))
+            )
+            rows = (await self.db.execute(query)).scalars().all()
+            return [self._row(obj) for obj in rows]
 
-        # Queries run sequentially on purpose: AsyncSession is not safe for
-        # concurrent use (asyncpg allows only one operation per connection),
-        # so asyncio.gather here raised InterfaceError under load.
+        # 查询串行执行：AsyncSession 不能并发使用（asyncpg 每个连接只允许
+        # 一个操作），asyncio.gather 在这里会抛 InterfaceError。
         result["acts"] = await _fetch(Act)
         # 章节按叙事顺序返回（幕序 → 幕内序号），各视图直接沿用该顺序。
-        chapters_q = (
+        # 正文列是 deferred 的，所以这里不会把全文拖出来。
+        chapters_query = (
             select(Chapter)
             .outerjoin(Act, Act.id == Chapter.act_id)
             .where(Chapter.project_id == project_id)
             .order_by(*order_by_sequence(Act), *order_by_sequence(Chapter))
         )
-        chapters_r = await self.db.execute(chapters_q)
-        result["chapters"] = [self._row(o) for o in chapters_r.scalars().all()]
-        result["scenes"] = await _fetch(Scene)
-        result["edges"] = await _fetch(ChapterEdge)
+        chapters = (await self.db.execute(chapters_query)).scalars().all()
+        result["chapters"] = [self._row(obj) for obj in chapters]
         result["characters"] = await _fetch(Character)
         result["character_relations"] = await _fetch(CharacterRelation)
+        result["setups"] = await _fetch(Setup)
 
-        proj_result = await self.db.execute(
+        project = (await self.db.execute(
             select(Project).where(Project.id == project_id)
-        )
-        proj = proj_result.scalar_one_or_none()
-        if proj:
-            result["project_title"] = proj.title or ""
-            result["global_settings"] = proj.global_settings or ""
+        )).scalar_one_or_none()
+        if project:
+            result["project_title"] = project.title or ""
+            result["global_settings"] = project.global_settings or ""
 
         return result
 
-    async def list_timeline_edges(self, project_id: uuid.UUID) -> list[dict]:
-        """The main timeline after a sync — the client replaces its own copy."""
-        result = await self.db.execute(
-            select(ChapterEdge).where(
-                ChapterEdge.project_id == project_id,
-                ChapterEdge.edge_type == "timeline",
+    # ============================================================
+    # Chapter content (deferred column, loaded on demand)
+    # ============================================================
+
+    async def _owned_chapter(self, chapter_id: uuid.UUID, project_id: uuid.UUID) -> Chapter | None:
+        return (await self.db.execute(
+            select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id)
+        )).scalar_one_or_none()
+
+    async def get_chapter_content(self, chapter_id: uuid.UUID, project_id: uuid.UUID) -> str | None:
+        """取一章正文；章不存在返回 None。
+
+        用 ``first()`` 而不是 ``scalar_one_or_none()``：后者分不清"章不存在"和
+        "章存在但正文是 NULL"，而调用方要据此返回 404。
+        """
+        row = (await self.db.execute(
+            select(Chapter.content).where(
+                Chapter.id == chapter_id, Chapter.project_id == project_id
             )
-        )
-        return [self._row(e) for e in result.scalars().all()]
+        )).first()
+        if row is None:
+            return None
+        return row[0] or ""
+
+    async def get_all_chapter_contents(self, project_id: uuid.UUID) -> dict[str, str]:
+        rows = (await self.db.execute(
+            select(Chapter.id, Chapter.content).where(Chapter.project_id == project_id)
+        )).all()
+        return {str(cid): (content or "") for cid, content in rows}
+
+    async def save_chapter_content(
+        self, chapter_id: uuid.UUID, project_id: uuid.UUID, content: str
+    ) -> bool | None:
+        chapter = await self._owned_chapter(chapter_id, project_id)
+        if chapter is None:
+            return None
+        chapter.content = content
+        await self.db.flush()
+        return True
 
     # ============================================================
     # Editor data: incremental sync
     # ============================================================
 
-    async def sync_editor_data(self, project_id: uuid.UUID, changes: dict) -> int:
-        has_changes = False
+    async def sync_editor_data(self, project_id: uuid.UUID, changes: dict) -> dict:
         touched: set[str] = set()
-        for entity_type in ["acts", "chapters", "scenes", "edges", "characters",
-                            "character_relations"]:
+        for entity_type in SYNC_ENTITY_TYPES:
             ops = changes.get(entity_type, {})
             if not ops:
                 continue
-            if any(ops.get(k) for k in ("created", "updated", "deleted")):
-                has_changes = True
+            if any(ops.get(key) for key in ("created", "updated", "deleted")):
                 touched.add(entity_type)
             for delete_id in ops.get("deleted", []):
                 await self._delete_entity(entity_type, delete_id, project_id)
@@ -134,118 +178,39 @@ class AiStoryCADRepository:
             for item in ops.get("updated", []):
                 await self._update_entity(entity_type, item, project_id)
 
-        # Handle global_settings separately (only field allowed on Project)
-        projects_ops = changes.get("projects", {})
-        for item in projects_ops.get("updated", []):
+        # global_settings 是唯一允许在项目上直接改的字段。
+        for item in changes.get("projects", {}).get("updated", []):
             if "global_settings" in item:
-                result = await self.db.execute(select(Project).where(Project.id == project_id))
-                proj = result.scalar_one_or_none()
-                if proj:
-                    proj.global_settings = item["global_settings"]
-                    has_changes = True
+                project = (await self.db.execute(
+                    select(Project).where(Project.id == project_id)
+                )).scalar_one_or_none()
+                if project:
+                    project.global_settings = item["global_settings"]
+                    touched.add("projects")
 
-        if not has_changes:
-            return 0
+        if not touched:
+            return {"applied": 0, "renumbered": {}}
 
-        # 章节顺序变了就把主时序线重新投影成一条直链（只动 timeline 边）。
-        # 只有边的改动不触发——用户手画的时序边要留到他下次调顺序为止。
-        if touched & {"acts", "chapters"}:
-            await reconcile_timeline_chain(self.db, project_id)
+        # 顺序变了就归一化成连续 1..N。这是实现的责任：客户端各自算
+        # max+1 会撞出重复序号，而顺序就是结构本身（规格第 5 节）。
+        renumbered: dict[str, int] = {}
+        if touched & set(SEQUENCED_ENTITY_TYPES):
+            acts_changed = await renumber_container(self.db, Act, project_id)
+            if acts_changed:
+                renumbered["acts"] = acts_changed
+            act_ids = (await self.db.execute(
+                select(Act.id).where(Act.project_id == project_id)
+            )).scalars().all()
+            chapters_changed = 0
+            for act_id in act_ids:
+                chapters_changed += await renumber_container(
+                    self.db, Chapter, project_id, "act_id", act_id
+                )
+            if chapters_changed:
+                renumbered["chapters"] = chapters_changed
 
-        # 编辑器变更 + 版本行在一个事务里提交:flush → recalc → version row →
-        # 统一 commit,失败统一回滚。
-        await self.db.flush()
-        await self._recalc_chapter_counts(project_id)
-
-        project_repo = ProjectRepository(self.db)
-        latest = await project_repo.latest_version(project_id)
-        now = datetime.now(timezone.utc)
-        if latest is None or (now - latest.created_at) > timedelta(seconds=EDITOR_VERSION_THROTTLE_S):
-            pv = await project_repo.append_version(
-                project_id, {"type": "editor_sync", "updated_at": now.isoformat()}
-            )
-            version = pv.version
-        else:
-            version = latest.version
         await self.db.commit()
-        return version
-
-    async def _recalc_chapter_counts(self, project_id: uuid.UUID):
-        counts = await self.db.execute(
-            select(Scene.chapter_id, func.count(Scene.id), func.coalesce(func.sum(Scene.word_count), 0))
-            .where(Scene.project_id == project_id)
-            .group_by(Scene.chapter_id)
-        )
-        for row in counts.all():
-            await self.db.execute(
-                Chapter.__table__.update().where(Chapter.id == row[0])
-                .values(scene_count=row[1], total_words=row[2])
-            )
-        chapters_without_scenes = await self.db.execute(
-            select(Chapter.id).where(Chapter.project_id == project_id)
-            .where(~Chapter.id.in_(select(Scene.chapter_id).where(Scene.project_id == project_id)))
-        )
-        for (cid,) in chapters_without_scenes.all():
-            await self.db.execute(
-                Chapter.__table__.update().where(Chapter.id == cid)
-                .values(scene_count=0, total_words=0)
-            )
-
-    async def recalc_chapter(self, chapter_id: uuid.UUID):
-        """Refresh one chapter's scene_count/total_words from its scenes.
-
-        Cheap single-chapter variant of ``_recalc_chapter_counts`` for the
-        agent write path (a body write only affects its own chapter).
-        """
-        counts = await self.db.execute(
-            select(func.count(Scene.id), func.coalesce(func.sum(Scene.word_count), 0))
-            .where(Scene.chapter_id == chapter_id)
-        )
-        row = counts.one()
-        await self.db.execute(
-            Chapter.__table__.update().where(Chapter.id == chapter_id)
-            .values(scene_count=row[0], total_words=row[1])
-        )
-
-    # ============================================================
-    # Scene content (separate, lazy-loaded)
-    # ============================================================
-
-    async def get_scene_content(self, scene_id: uuid.UUID, project_id: uuid.UUID) -> str | None:
-        scene = await self.db.execute(
-            select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id)
-        )
-        if not scene.scalar_one_or_none():
-            return None
-        result = await self.db.execute(
-            select(SceneContent).where(SceneContent.scene_id == scene_id)
-        )
-        sc = result.scalar_one_or_none()
-        return sc.content if sc else None
-
-    async def get_all_scene_contents(self, project_id: uuid.UUID) -> dict[str, str]:
-        result = await self.db.execute(
-            select(SceneContent).where(SceneContent.project_id == project_id)
-        )
-        return {str(sc.scene_id): sc.content for sc in result.scalars().all()}
-
-    async def save_scene_content(self, scene_id: uuid.UUID, project_id: uuid.UUID, content: str):
-        # Verify scene belongs to project
-        scene = await self.db.execute(
-            select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id)
-        )
-        if not scene.scalar_one_or_none():
-            return None
-        result = await self.db.execute(
-            select(SceneContent).where(SceneContent.scene_id == scene_id)
-        )
-        sc = result.scalar_one_or_none()
-        if sc:
-            sc.content = content
-        else:
-            self.db.add(SceneContent(scene_id=scene_id, project_id=project_id, content=content))
-        await self.db.flush()
-        return True
+        return {"applied": len(touched), "renumbered": renumbered}
 
     # ============================================================
     # Per-entity CRUD
@@ -256,7 +221,7 @@ class AiStoryCADRepository:
             select(model_class).where(model_class.project_id == project_id)
             .order_by(*order_by_sequence(model_class))
         )
-        return [self._row(r) for r in result.scalars().all()]
+        return [self._row(row) for row in result.scalars().all()]
 
     async def next_sort_order(
         self,
@@ -265,23 +230,40 @@ class AiStoryCADRepository:
         parent_column: str | None = None,
         parent_id: uuid.UUID | None = None,
     ) -> int:
-        """New row's ``sort_order`` = max within its container + 1.
+        """新行的 ``sort_order`` = 同级容器内最大值 + 1。
 
-        Chapters are numbered project-wide (the value stays unique across acts)
-        and scenes are numbered per chapter.  Centralising the rule here keeps
-        the agent tools, the editor sync path and the migration script in
-        agreement.
+        幕按项目编号，章按幕编号。把规则集中在这里，工具层、编辑器同步路径
+        和迁移脚本才会一致。
         """
-        q = select(func.coalesce(func.max(model_class.sort_order), -1)).where(
+        from sqlalchemy import func
+
+        query = select(func.coalesce(func.max(model_class.sort_order), 0)).where(
             model_class.project_id == project_id
         )
         if parent_column and parent_id is not None:
-            q = q.where(getattr(model_class, parent_column) == parent_id)
-        result = await self.db.execute(q)
-        max_order = result.scalar()
-        # 1-based: an empty container starts at 1, which is also what the
-        # editor's optimistic insert assumes.
-        return (max_order if max_order is not None and max_order >= 0 else 0) + 1
+            query = query.where(getattr(model_class, parent_column) == parent_id)
+        max_order = (await self.db.execute(query)).scalar()
+        # 1-based：空容器从 1 开始，这也是编辑器乐观插入所假设的。
+        return (max_order or 0) + 1
+
+    async def assign_initial_sort_order(
+        self, model_class: type, project_id: uuid.UUID, data: dict
+    ) -> None:
+        """给**新行**定位置：接在所在容器末尾。
+
+        位置是服务端的责任：``sort_order`` 在 ``PROTECTED_FIELDS`` 里，客户端
+        传的裸序号一律被丢弃（规格第 5 节），所以两条创建路径——Agent 工具/
+        编辑器同步（``_create_entity``）与直接 ``POST /{entity_type}``——都必须
+        先调这里，否则新行会全落到模型默认值 0 上、并列成一团。
+        """
+        if model_class is Chapter:
+            act_id = data.get("act_id")
+            if act_id:
+                data["sort_order"] = await self.next_sort_order(
+                    Chapter, project_id, "act_id", uuid.UUID(str(act_id))
+                )
+        elif model_class is Act:
+            data["sort_order"] = await self.next_sort_order(Act, project_id)
 
     async def get_entity(self, model_class: type, entity_id: uuid.UUID) -> dict | None:
         result = await self.db.execute(select(model_class).where(model_class.id == entity_id))
@@ -298,8 +280,8 @@ class AiStoryCADRepository:
         self.db.add(obj)
         await self.db.flush()
         if extra_attrs:
-            for k, v in extra_attrs.items():
-                setattr(obj, k, v)
+            for key, value in extra_attrs.items():
+                setattr(obj, key, value)
         return self._row(obj)
 
     async def update_entity(self, model_class: type, data: dict) -> dict | None:
@@ -315,10 +297,14 @@ class AiStoryCADRepository:
         obj = result.scalar_one_or_none()
         if not obj:
             return None
+        # 用**列名**判断可写性，不用 hasattr：延迟列（chapters.content）在 async
+        # 会话里被 hasattr 探测会触发懒加载，抛的是 InvalidRequestError 而不是
+        # AttributeError——hasattr 吞不掉它，于是整个请求 500，而这一列本该可写。
+        column_names = {col.name for col in model_class.__table__.columns}
         for key, value in data.items():
             if key in PROTECTED_FIELDS:
                 continue
-            if hasattr(obj, key):
+            if key in column_names:
                 setattr(obj, key, value)
         await self.db.flush()
         return self._row(obj)
@@ -371,26 +357,9 @@ class AiStoryCADRepository:
                 entity_type, data.get("project_id"),
             )
             return
-        # 顺序只有一个真相：新行的位置由服务端决定（章节接在幕末尾、场景接在
-        # 章末尾），否则每个客户端各自算 max+1 会撞出重复的 sort_order。
-        if entity_type == "chapters":
-            act_id = data.get("act_id")
-            if act_id:
-                data["sort_order"] = await self.next_sort_order(
-                    Chapter, project_uuid, "act_id", uuid.UUID(str(act_id))
-                )
-        elif entity_type == "scenes":
-            chapter_id = data.get("chapter_id")
-            if chapter_id:
-                data["sort_order"] = await self.next_sort_order(
-                    Scene, project_uuid, "chapter_id", uuid.UUID(str(chapter_id))
-                )
-        extra = {}
-        if entity_type == "scenes" and "content" in data:
-            content = data.pop("content")
-            from app.agent.utils import count_words
-            extra["word_count"] = count_words(content)
-        await self.create_entity(model_class, data, extra_attrs=extra or None)
+        # 顺序只有一个真相：新行的位置由服务端决定，与直接 POST 路径共用同一条规则。
+        await self.assign_initial_sort_order(model_class, project_uuid, data)
+        await self.create_entity(model_class, data)
 
     async def _update_entity(self, entity_type: str, data: dict, project_id: uuid.UUID):
         model_class = ENTITY_MAP.get(entity_type)
@@ -398,12 +367,10 @@ class AiStoryCADRepository:
             return
         entity_id = data.get("id")
         if entity_id:
-            if isinstance(entity_id, str):
-                eid = uuid.UUID(entity_id)
-            else:
-                eid = entity_id
-            result = await self.db.execute(select(model_class).where(model_class.id == eid))
-            existing = result.scalar_one_or_none()
+            eid = uuid.UUID(entity_id) if isinstance(entity_id, str) else entity_id
+            existing = (await self.db.execute(
+                select(model_class).where(model_class.id == eid)
+            )).scalar_one_or_none()
             if existing is None or existing.project_id != project_id:
                 logger.warning(
                     "Skipping update of %s %s: not found or not in project %s",
@@ -419,39 +386,21 @@ class AiStoryCADRepository:
             )
             return
 
-        scene_content = None
-        if entity_type == "scenes" and "content" in data:
-            scene_content = data.pop("content")
+        # 章正文现在就是 chapters.content 这一列，所以不再需要任何特殊分支：
+        # update_entity 直接写它，也不会触发一次多余的正文加载。
         await self.update_entity(model_class, data)
-        if entity_type == "scenes" and scene_content is not None and entity_id:
-            if isinstance(entity_id, str):
-                entity_id = uuid.UUID(entity_id)
-            result = await self.db.execute(select(Scene).where(Scene.id == entity_id))
-            obj = result.scalar_one_or_none()
-            if obj:
-                from app.agent.utils import count_words
-                obj.word_count = count_words(scene_content)
-                sc_result = await self.db.execute(select(SceneContent).where(SceneContent.scene_id == entity_id))
-                sc = sc_result.scalar_one_or_none()
-                if sc:
-                    sc.content = scene_content
-                else:
-                    self.db.add(SceneContent(scene_id=entity_id, project_id=obj.project_id, content=scene_content))
 
     async def _delete_entity(self, entity_type: str, entity_id_str: str, project_id: uuid.UUID):
         model_class = ENTITY_MAP.get(entity_type)
         if not model_class:
             return
         try:
-            if isinstance(entity_id_str, str):
-                entity_id = uuid.UUID(entity_id_str)
-            else:
-                entity_id = entity_id_str
+            entity_id = uuid.UUID(entity_id_str) if isinstance(entity_id_str, str) else entity_id_str
         except (ValueError, AttributeError):
             return
-        # Verify the entity belongs to the requesting project
-        result = await self.db.execute(select(model_class).where(model_class.id == entity_id))
-        existing = result.scalar_one_or_none()
+        existing = (await self.db.execute(
+            select(model_class).where(model_class.id == entity_id)
+        )).scalar_one_or_none()
         if existing is None or existing.project_id != project_id:
             logger.warning(
                 "Skipping delete of %s %s: not found or not in project %s",

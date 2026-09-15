@@ -1,15 +1,20 @@
-"""Ordering rules — ``sort_order`` is the single source of truth.
+"""顺序规则 —— ``sort_order`` 是位置的唯一真相。
 
-Chapters are numbered per act and scenes per chapter; new rows are appended
-inside their own container, and the editor sync path owns the position so two
-clients cannot invent the same number.
+章按**幕**编号（幕内 1..N），幕按项目编号；新行由服务端追加进自己的容器，
+位置由服务端决定。客户端传进来的裸序号一律被忽略，也不会被工具层接受：
+**移动只能用「插到谁之后 / 插到开头 / 接在末尾」表达**（规格第 5 节）。
+
+场景层已删除：原来的「场按章编号」没有对应物了。移动语义与密集归一化的完整
+覆盖在 ``test_sequence.py``。
 """
 import uuid
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.project.repository import ProjectRepository
+from app.storycad.models import Chapter
 from app.storycad.repository import AiStoryCADRepository
 
 
@@ -21,7 +26,7 @@ async def _project(db_session: AsyncSession, test_user: dict, acts: int = 2):
     project = await ProjectRepository(db_session).create("Ordering", "", test_user["id"])
     act_ids = [str(uuid.uuid4()) for _ in range(acts)]
     await repo.sync_editor_data(project.id, {"acts": {"created": [
-        {"id": act_id, "name": f"第 {i + 1} 幕", "sort_order": i + 1}
+        {"id": act_id, "name": f"第 {i + 1} 幕", "purpose": f"第 {i + 1} 幕要干什么"}
         for i, act_id in enumerate(act_ids)
     ]}})
     return project, repo, act_ids
@@ -33,6 +38,13 @@ async def _add_chapter(repo: AiStoryCADRepository, project_id, act_id: str, titl
         {"id": chapter_id, "act_id": act_id, "title": title, **extra}
     ]}})
     return chapter_id
+
+
+async def _titles_in_act(db_session: AsyncSession, act_id: str) -> list[str]:
+    rows = (await db_session.execute(
+        select(Chapter).where(Chapter.act_id == uuid.UUID(act_id))
+    )).scalars().all()
+    return [row.title for row in sorted(rows, key=lambda r: r.sort_order)]
 
 
 async def test_new_chapter_appends_within_its_own_act(db_session: AsyncSession, test_user: dict):
@@ -60,20 +72,16 @@ async def test_client_supplied_sort_order_is_ignored_on_create(db_session: Async
     assert [c["sort_order"] for c in data["chapters"]] == [1, 2]
 
 
-async def test_new_scene_appends_within_its_chapter(db_session: AsyncSession, test_user: dict):
-    """Scenes are numbered per chapter; two chapters never share the count."""
-    project, repo, (act1,) = await _project(db_session, test_user, acts=1)
-    ch1 = await _add_chapter(repo, project.id, act1, "C1")
-    ch2 = await _add_chapter(repo, project.id, act1, "C2")
-    for chapter_id, title in ((ch1, "s1"), (ch1, "s2"), (ch2, "s3")):
-        await repo.sync_editor_data(project.id, {"scenes": {"created": [
-            {"id": str(uuid.uuid4()), "chapter_id": chapter_id, "title": title}
-        ]}})
+async def test_client_supplied_act_sort_order_is_ignored(db_session: AsyncSession, test_user: dict):
+    repo = AiStoryCADRepository(db_session)
+    project = await ProjectRepository(db_session).create("Acts", "", test_user["id"])
+    await repo.sync_editor_data(project.id, {"acts": {"created": [
+        {"id": str(uuid.uuid4()), "name": "第一幕", "purpose": "甲", "sort_order": 9},
+        {"id": str(uuid.uuid4()), "name": "第二幕", "purpose": "乙", "sort_order": 9},
+    ]}})
 
     data = await repo.get_editor_data(project.id)
-    assert {s["title"]: s["sort_order"] for s in data["scenes"]} == {
-        "s1": 1, "s2": 2, "s3": 1,
-    }
+    assert [a["sort_order"] for a in data["acts"]] == [1, 2]
 
 
 async def test_editor_data_returns_chapters_in_narrative_order(db_session: AsyncSession, test_user: dict):
@@ -87,57 +95,91 @@ async def test_editor_data_returns_chapters_in_narrative_order(db_session: Async
     assert [c["title"] for c in data["chapters"]] == ["A1", "A2", "B1"]
 
 
-async def test_update_chapter_accepts_sort_order(db_session: AsyncSession, test_user: dict):
-    """update_chapter is the single-row way to move a chapter inside its act."""
-    from app.agent.tools.project_tools import UpdateChapterTool
+async def test_editor_data_never_carries_the_body(db_session: AsyncSession, test_user: dict):
+    """编辑器全量加载不带正文：``chapters.content`` 是延迟列。"""
+    project, repo, (act1,) = await _project(db_session, test_user, acts=1)
+    await _add_chapter(repo, project.id, act1, "A1")
+
+    data = await repo.get_editor_data(project.id)
+    assert "content" not in data["chapters"][0]
+    # 派生统计也不再落库
+    for gone in ("word_count", "scene_count", "total_words"):
+        assert gone not in data["chapters"][0], gone
+
+
+async def test_update_chapter_does_not_take_a_raw_sort_order(db_session: AsyncSession, test_user: dict):
+    """位置不在 update_chapter 里改：裸序号已从工具层彻底移除。"""
+    from app.agent.tools.structure_tools import UpdateChapterTool
+
+    props = UpdateChapterTool.meta.parameters["properties"]
+    assert "sort_order" not in props
+    assert set(props) == {"chapter_id", "title", "goal", "result", "status"}
 
     project, repo, (act1,) = await _project(db_session, test_user, acts=1)
     first = await _add_chapter(repo, project.id, act1, "first")
     second = await _add_chapter(repo, project.id, act1, "second")
 
-    tool = UpdateChapterTool()
-    result = await tool.run(
+    result = await UpdateChapterTool().run(
         db=db_session, project_id=str(project.id), user_id=str(test_user["id"]),
         chapter_id=second, sort_order=1,
     )
     assert result.success, result.error
-    assert result.data["sort_order"] == 1
+    assert "sort_order" not in result.data
+    assert await _titles_in_act(db_session, act1) == ["first", "second"], \
+        "update_chapter 不该改动位置"
     assert first
 
 
 async def test_move_chapter_places_chapter_after_target(db_session: AsyncSession, test_user: dict):
-    """move_chapter renumbers 1..N so the new position is unambiguous."""
-    from app.agent.tools.project_admin_tools import MoveChapterTool
+    """move_chapter 只接受「插到谁之后」，序号由实现归一化。"""
+    from app.agent.tools.structure_tools import MoveChapterTool
 
     project, repo, (act1,) = await _project(db_session, test_user, acts=1)
     a = await _add_chapter(repo, project.id, act1, "A")
     b = await _add_chapter(repo, project.id, act1, "B")
     c = await _add_chapter(repo, project.id, act1, "C")
 
-    tool = MoveChapterTool()
-    result = await tool.run(
+    result = await MoveChapterTool().run(
         db=db_session, project_id=str(project.id), user_id=str(test_user["id"]),
-        chapter_id=c, after_chapter_id=a,
+        chapter_id=c, after_id=a,
     )
     assert result.success, result.error
-    assert [(row["title"], row["sort_order"]) for row in result.data["order"]] == [
-        ("A", 1), ("C", 2), ("B", 3),
-    ]
+    assert await _titles_in_act(db_session, act1) == ["A", "C", "B"]
+    assert result.data["sort_order"] == 2
+    assert result.data["global_order"] == 2
     assert b
 
 
-async def test_move_chapter_rejects_other_act_target(db_session: AsyncSession, test_user: dict):
-    """A chapter may only move inside its own act."""
-    from app.agent.tools.project_admin_tools import MoveChapterTool
+async def test_move_chapter_to_another_act_changes_ownership(db_session: AsyncSession, test_user: dict):
+    """章能换幕——归属是可以改的（旧版里这是被拒绝的）。"""
+    from app.agent.tools.structure_tools import MoveChapterTool
+
+    project, repo, (act1, act2) = await _project(db_session, test_user)
+    a = await _add_chapter(repo, project.id, act1, "A")
+    await _add_chapter(repo, project.id, act1, "B")
+    await _add_chapter(repo, project.id, act2, "X")
+
+    result = await MoveChapterTool().run(
+        db=db_session, project_id=str(project.id), user_id=str(test_user["id"]),
+        chapter_id=a, act_id=act2,
+    )
+    assert result.success, result.error
+    assert await _titles_in_act(db_session, act1) == ["B"]
+    assert await _titles_in_act(db_session, act2) == ["X", "A"]
+
+
+async def test_move_chapter_rejects_after_id_from_another_act(db_session: AsyncSession, test_user: dict):
+    """after_id 必须在目标幕里，否则插到哪儿是不确定的。"""
+    from app.agent.tools.structure_tools import MoveChapterTool
 
     project, repo, (act1, act2) = await _project(db_session, test_user)
     a = await _add_chapter(repo, project.id, act1, "A")
     other = await _add_chapter(repo, project.id, act2, "B")
 
-    tool = MoveChapterTool()
-    result = await tool.run(
+    result = await MoveChapterTool().run(
         db=db_session, project_id=str(project.id), user_id=str(test_user["id"]),
-        chapter_id=a, after_chapter_id=other,
+        chapter_id=a, after_id=other,
     )
     assert not result.success
-    assert "同一幕" in (result.error or "")
+    assert "不在目标容器" in (result.error or "")
+    assert result.correction_hint

@@ -315,12 +315,19 @@ class ConversationMemory:
         if str(conv.project_id) != str(_to_uuid(project_id)) or str(conv.user_id) != str(_to_uuid(user_id)):
             return None
         messages = await self.get_history(cid)
+        # 这个会话上次是"对话"还是"协作"。模式本来就存在 agent_state 里（每次回合结束
+        # 由 save_agent_state 写入），只是从来没露给前端——于是前端重新加载、或者切回
+        # 这个会话时，只能退回默认的对话模式。这里把它一起返回。
+        mode = (conv.agent_state or {}).get("mode")
+        if mode not in ("chat", "cowriter"):
+            mode = "chat"
         return {
             "id": str(conv.id),
             "project_id": str(conv.project_id),
             "user_id": str(conv.user_id),
             "title": conv.title or "",
             "created_at": self._iso(conv.created_at),
+            "mode": mode,
             "messages": [
                 {
                     "id": f"{cid}-{i}",

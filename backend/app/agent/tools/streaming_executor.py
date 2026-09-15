@@ -24,34 +24,33 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Tools whose output is typically very long and should be summarized.
+# 结果长、需要摘要输出的工具。原来的 analyze_* / project_health / suggest_next
+# 已经合并成 read_progress 一个工具。
 _ANALYSIS_TOOL_NAMES: set[str] = {
-    "analyze_chapter", "project_health",
-    "suggest_next",
+    "read_progress", "search",
 }
 
 # List/structural tools whose output the LLM uses for ID lookup.
 # The LLM needs ALL items (not just first N) to match user intent to IDs.
 # Per-item long text fields will be truncated to keep total size down.
 _LIST_TOOL_NAMES: set[str] = {
-    "list_characters", "list_character_relations", "list_relations", "list_edges",
-    "read_chapters", "read_chapter_scenes", "read_recent_scenes", "read_recent_chapters",
-    "read_completed_tail",
-    "read_chapter",
+    "list_characters", "list_relations", "list_setups",
+    "read_acts", "read_chapters", "search",
 }
 
 # Generic list/structural tools — the LLM mostly needs IDs and names,
 # not the full content of each entity.
 _STRUCTURAL_TOOL_NAMES: set[str] = {
-    "list_characters", "list_relations", "list_edges", "search_nodes",
+    "list_characters", "list_relations", "list_setups", "read_acts", "search",
 }
 
 # Keys whose value is the *payload itself* (scene body, blueprint, goal...).
 # For these, blind head-only truncation would hide the ending state the LLM
 # needs for continuity writing — keep head AND tail with an omission marker.
 _LONG_TEXT_KEYS: frozenset[str] = frozenset({
-    "content", "body", "summary", "goal", "description", "global_settings",
-    "setting", "notes", "motivation", "background", "personality",
-    "appearance", "outline", "previous_summary",
+    "content", "body", "goal", "result", "description", "global_settings",
+    "ending", "spine", "purpose", "arc", "notes", "note", "motivation",
+    "background", "personality", "appearance", "outline",
 })
 
 _LONG_TEXT_HEAD = 300
@@ -274,12 +273,11 @@ class StreamingToolExecutor:
     """
 
     def __init__(self, tools: dict[str, BaseTool], db: Any = None,
-                 project_id: str = "", user_id: str = "", active_skills: list | None = None) -> None:
+                 project_id: str = "", user_id: str = "") -> None:
         self._tools = tools
         self._db = db
         self._project_id = project_id
         self._user_id = user_id
-        self._active_skills = list(active_skills) if active_skills else None
 
         # Serialise SAFE tool access — AsyncSession is not coroutine-safe
         self._safe_lock = asyncio.Lock()
@@ -530,8 +528,6 @@ class StreamingToolExecutor:
             merged["project_id"] = str(self._project_id)
         if self._user_id:
             merged["user_id"] = str(self._user_id)
-        if self._active_skills:
-            merged["active_skills"] = list(self._active_skills)
 
         timeout = tool._effective_timeout if tool._effective_timeout else 30
         uses_own_session = bool(getattr(tool, "_uses_own_session", False))
@@ -548,7 +544,7 @@ class StreamingToolExecutor:
                             tool.run(db=self._db, **merged),
                             timeout=timeout,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Roll back INSIDE the lock: a concurrent SAFE tool may
                         # be mid-transaction, and rolling back here (while it
                         # holds the session) would abort its work too.
@@ -577,7 +573,7 @@ class StreamingToolExecutor:
                         tool.run(db=self._db, **merged),
                         timeout=timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Only roll back the shared session if this tool actually
                     # used it; an own-session tool timed out while a *different*
                     # SAFE tool may hold the shared session mid-transaction.

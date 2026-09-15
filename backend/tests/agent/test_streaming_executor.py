@@ -16,7 +16,6 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from app.agent.tools.base import BaseTool, ConcurrencyMode, ToolMeta, ToolResult
 from app.agent.tools.streaming_executor import (
@@ -164,7 +163,7 @@ class TestSummariseJsonList:
 
     def test_dict_output_unchanged(self):
         data = json.dumps({"key": "v" * 900}, ensure_ascii=False)
-        out = _smart_summarise(data, max_chars=300, tool_name="read_scene")
+        out = _smart_summarise(data, max_chars=300, tool_name="read_chapter_content")
         assert isinstance(out, str)
 
 
@@ -353,7 +352,7 @@ class TestAnalysisCategoryLimitApplies:
         tool = SimpleNamespace(_effective_max_result_chars=8000)
         long = "长" * 5000
         out = _summarise_tool_output(
-            "project_health", ToolResult(success=True, data=long), tool
+            "read_progress", ToolResult(success=True, data=long), tool
         )
         assert len(out["data"]) < 5000, (
             "analysis tool output was not capped at the 2000-char category limit"
@@ -367,7 +366,7 @@ class TestAnalysisCategoryLimitApplies:
         tool = SimpleNamespace(_effective_max_result_chars=8000)
         data = "x" * 5000
         out = _summarise_tool_output(
-            "read_scene", ToolResult(success=True, data=data), tool
+            "read_chapter_content", ToolResult(success=True, data=data), tool
         )
         assert out["data"] == data, (
             "5000 chars fits under the 8000 default — must not be truncated"

@@ -26,16 +26,22 @@ MAX_HISTORY_MESSAGES = 60
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 30
 
-# Unicode confusables mapping for injection obfuscation
-# (Cyrillic homoglyphs, Roman numeral look-alikes, dotless i, Latin
-# extensions that render identically to ASCII letters in many fonts)
+# 易混淆字符映射：西里尔同形字、无点 i、以及 Latin 扩展里那些在多数字体下与 ASCII
+# 一模一样的字母——用来把「іgnore」这类伪装还原成 ASCII 再匹配。
+#
+# **表的形状受链路顺序约束**：``_strip_obfuscation`` 是「先 NFKC 归一化、再
+# translate」，所以 NFKC 自己就会改写的字符（罗马数字 Ⅰ/ⅰ/Ⅴ/ⅴ/ⅼ）永远轮不到这张
+# 表——那 5 条是**死条目**，已删。加新键时必须满足
+# ``unicodedata.normalize("NFKC", key) == key``，否则它永远不会命中；
+# ``tests/agent/test_guard.py::TestConfusableTable`` 守着这条不变式。
+# （这张表原先还有两条重复键——`у` 与 `ѕ` 各写了两次，被字典字面量静默吞掉。
+#   同一个用例也管这个。）
 _CONFUSABLE_CHARS = str.maketrans({
-    'і': 'i', 'Ⅰ': 'I', 'ⅰ': 'i', 'ɑ': 'a', 'е': 'e', 'о': 'o',
-    'с': 'c', 'р': 'p', 'а': 'a', 'х': 'x', 'у': 'y', 'ӏ': 'l',
-    'ı': 'i', 'Ⅴ': 'V', 'ⅴ': 'v', 'ⅼ': 'l', 'Ɩ': 'l', 'ɡ': 'g',
-    'ǭ': 'o', 'ǫ': 'o', 'ʀ': 'r', 'ᴛ': 't', 'ʜ': 'h', 'ʙ': 'b',
-    'ᴇ': 'e', 'Ʒ': 'z', 'ѕ': 's', 'ᴍ': 'm', 'ᴜ': 'u', 'ᴡ': 'w',
-    'у': 'y', 'ѕ': 's', 'ӕ': 'ae',
+    'і': 'i', 'ɑ': 'a', 'е': 'e', 'о': 'o', 'с': 'c', 'р': 'p',
+    'а': 'a', 'х': 'x', 'у': 'y', 'ӏ': 'l', 'ı': 'i', 'Ɩ': 'l',
+    'ɡ': 'g', 'ǭ': 'o', 'ǫ': 'o', 'ʀ': 'r', 'ᴛ': 't', 'ʜ': 'h',
+    'ʙ': 'b', 'ᴇ': 'e', 'Ʒ': 'z', 'ѕ': 's', 'ᴍ': 'm', 'ᴜ': 'u',
+    'ᴡ': 'w', 'ӕ': 'ae',
 })
 
 

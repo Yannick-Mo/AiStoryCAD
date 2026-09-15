@@ -1,0 +1,56 @@
+# ruff 配置 —— 后端代码门禁（CI 与本地同一套，见 .github/workflows/ci.yml）
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps backend ruff check .
+#
+# ## 为什么是 ruff 而不是 pyflakes
+#
+# **ruff 认 `# noqa`。** 这个仓库有几处「导入即注册」的副作用导入——`app/database.py`
+# 把模型注册进 `Base.metadata`、`app/mcp/server.py` 靠导入触发 `@mcp.tool()` 注册、
+# `alembic/env.py` 给 autogenerate 注册模型。它们必须被显式豁免，而裸 pyflakes 不认
+# 注释，只能把它们变成永远的 15 条噪音；噪音一多，门禁就没人看了。
+#
+# ## 选规则的原则
+#
+# 只收两类：**真的会出错**（F/B/E4-E9）和**真的是死代码**（F401/F841/RUF100）。
+# 纯风格（SIM/C4/RET/PIE）、行宽（E501）、文档字符串（D）、类型注解（ANN）、
+# 复杂度（C901）一律不开——这个仓库的注释是中文、行是长的、中文全角标点是有意的
+# （RUF001-003 会把每一个全角括号报成"易混淆字符"），翻译成 ASCII 风格规则只会
+# 逼人写一片 `# noqa`，最后谁都不看。
+#
+# 开着的规则集：
+#   E4/E7/E9  pycodestyle 错误（重复定义、import 位置、语句级错误）
+#   F         pyflakes —— 未用导入 / 未用变量 / 未定义名字 / 重复定义（门禁主角）
+#   B         flake8-bugbear —— 真实的 bug 模式（循环变量没用上、zip 没写 strict、
+#                                except 里 raise 丢掉原始异常……）
+#   UP        pyupgrade —— 过时写法，可自动修
+#   PT        flake8-pytest-style —— 测试断言质量。`assert a and b` 挂了不告诉你是哪一半，
+#                                    而"测试就是证据"是这个项目的基本要求
+#   RUF100    没用的 `# noqa`（死注释——和死代码一样会误导人）
+
+target-version = "py311"
+
+# 只为 E501 / formatter 服务；本仓库**不采用 ruff format**（中文排版是手写的），
+# 这里写下来是为了避免将来有人跑 `ruff format` 时按 88 列把全文重排。
+line-length = 120
+
+[lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "B",
+    "UP",
+    "PT",
+    "RUF100",
+]
+
+[lint.flake8-bugbear]
+# B008 说"别把函数调用写在参数默认值里"，但 FastAPI 的依赖注入**就是**这么用的
+# （`user = Depends(current_user)`）。这里点名豁免 Depends，而不是整体关掉 B008——
+# 别的可变/昂贵默认值仍然会被抓。
+extend-immutable-calls = ["fastapi.Depends"]
+
+# 注：这里**故意没有** per-file-ignores。测试里的 assert 与脚本里的 print 之所以不用豁免，
+# 是因为 S（bandit）与 T20（print）两个规则集本来就没开；写在这里的豁免如果指向一个
+# 没启用的规则，那就是一条死配置——和死代码一样会误导人。

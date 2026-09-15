@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
 from app.project.service import ProjectService
-from app.utils import row_to_dict
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -41,7 +40,14 @@ async def get_project(project_id: uuid.UUID, current_user: dict = Depends(get_cu
     return result
 
 
-ALLOWED_PROJECT_FIELDS = {"title", "description", "status"}
+# 作品层的可写字段（规格第 3 节总表）：书名 / 类型 / 一句话梗概 / 终局 /
+# 主线骨架 / 全局设定 / 目标字数。description 与 status 是规格未表态的两个
+# 历史字段，暂留。
+ALLOWED_PROJECT_FIELDS = {
+    "title", "genre", "logline", "ending", "spine", "global_settings", "total_words",
+    "description", "status",
+}
+
 
 @router.patch("/{project_id}")
 async def update_project(project_id: uuid.UUID, payload: dict, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -60,76 +66,3 @@ async def delete_project(project_id: uuid.UUID, current_user: dict = Depends(get
     if not ok:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
-
-
-@router.get("/{project_id}/versions")
-async def get_versions(project_id: uuid.UUID, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    service = ProjectService(db)
-    project = await service.get_project(project_id, uuid.UUID(current_user["id"]))
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    versions = await service.repo.get_versions(project_id)
-    return [{"version": v.version, "created_at": v.created_at.isoformat()} for v in versions]
-
-
-@router.post("/{project_id}/versions")
-async def save_version(project_id: uuid.UUID, payload: dict, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    service = ProjectService(db)
-    project = await service.get_project(project_id, uuid.UUID(current_user["id"]))
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    pv = await service.repo.save_version(project_id, payload.get("snapshot", {}))
-    return {"version": pv.version, "created_at": pv.created_at.isoformat()}
-
-
-@router.get("/{project_id}/versions/latest")
-async def get_latest_version(project_id: uuid.UUID, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    service = ProjectService(db)
-    project = await service.get_project(project_id, uuid.UUID(current_user["id"]))
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    versions = await service.repo.get_versions(project_id)
-    if not versions:
-        raise HTTPException(status_code=404, detail="No versions found")
-    latest = versions[0]
-    return {"version": latest.version, "snapshot": latest.snapshot, "created_at": latest.created_at.isoformat()}
-
-
-@router.get("/{project_id}/versions/{version}")
-async def get_version(project_id: uuid.UUID, version: int, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    service = ProjectService(db)
-    project = await service.get_project(project_id, uuid.UUID(current_user["id"]))
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    versions = await service.repo.get_versions(project_id)
-    target = next((v for v in versions if v.version == version), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Version not found")
-    return {"version": target.version, "snapshot": target.snapshot, "created_at": target.created_at.isoformat()}
-
-
-@router.get("/{project_id}/config")
-async def get_project_config(
-    project_id: uuid.UUID,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    service = ProjectService(db)
-    config = await service.get_config(uuid.UUID(current_user["id"]), project_id)
-    if not config:
-        raise HTTPException(status_code=404, detail="Config not found")
-    return row_to_dict(config)
-
-
-@router.put("/{project_id}/config")
-async def update_project_config(
-    project_id: uuid.UUID,
-    payload: dict,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    service = ProjectService(db)
-    config = await service.update_config(uuid.UUID(current_user["id"]), project_id, payload)
-    if not config:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"success": True}

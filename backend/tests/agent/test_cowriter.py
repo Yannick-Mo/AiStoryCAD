@@ -1,6 +1,4 @@
 """Tests for system prompt building via SystemPromptBuilder (replaces CoWriterMode)."""
-import json
-import pytest
 from app.agent.prompts.builder import get_prompt_builder
 
 

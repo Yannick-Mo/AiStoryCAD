@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from app.agent.privacy import sanitise_error_text_for_client
 from app.config import settings
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Recovery action enum
 # ---------------------------------------------------------------------------
 
-class RecoveryAction(str, Enum):
+class RecoveryAction(StrEnum):
     """Recovery strategies, tried in order of escalating cost."""
     RETRY = "retry"                             # Exponential backoff retry
     RETRY_WITH_ERROR_CONTEXT = "retry_with_error_context"  # Give LLM the error to self-correct
@@ -246,7 +246,7 @@ class RecoveryExecutor:
             recovery_state["self_correction_applied"] = True
 
         elif decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
-            from app.agent.context_compressor import compress_history  # noqa: F811
+            from app.agent.context_compressor import compress_history
             from app.config import settings
             compressed = compress_history(
                 state.get("messages", []),

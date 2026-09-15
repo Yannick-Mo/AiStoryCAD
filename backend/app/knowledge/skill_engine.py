@@ -73,7 +73,7 @@ class SkillEngine:
         except OSError:
             pass
 
-        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+        async with aiofiles.open(path, encoding="utf-8") as f:
             content = await f.read()
         data = await asyncio.to_thread(yaml.safe_load, content)
         if not isinstance(data, dict):

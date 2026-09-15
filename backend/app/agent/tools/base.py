@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import select
@@ -15,7 +15,9 @@ from app.llm.client import LLMClient
 # New types for the Tool Factory Pattern + Concurrency Safety
 # ---------------------------------------------------------------------------
 
-class ConcurrencyMode(str, Enum):
+# StrEnum 而不是 (str, Enum)：后者 str() 出来是 "ConcurrencyMode.SAFE"（3.11 的著名坑），
+# 前者才是 "safe"——这个枚举是作为字符串参与比较与记录的，理应用前者。
+class ConcurrencyMode(StrEnum):
     """Controls how a tool interacts with concurrent executions."""
     SAFE = "safe"          # Can run in parallel with other SAFE tools
     EXCLUSIVE = "exclusive"  # Must run alone (write operations)
@@ -144,20 +146,17 @@ class BaseTool(ABC):
     # Centralised entity-not-found messages so every tool returns
     # consistent Chinese-language errors with self-correction guidance.
     ENTITY_NOT_FOUND = {
-        "Act": "幕（Act）不存在，请先调用 read_chapters 或查看项目框架结构概览确认幕ID",
-        "Chapter": "章节（Chapter）不存在，请先调用 read_chapters（范围读取）或 read_chapter 获取可用的章节ID",
-        "Scene": "场景（Scene）不存在，请先调用 read_chapter_scenes（章内场景清单）或 read_recent_scenes 获取可用的场景ID",
-        "SceneContent": "场景正文（SceneContent）不存在，请先调用 write_scene_content 写入内容",
-        "Character": "角色（Character）不存在，请先调用 list_characters 获取可用的角色ID",
+        "Act": "幕（Act）不存在，请先调用 read_acts 获取可用的幕ID",
+        "Chapter": "章节（Chapter）不存在，请先调用 read_chapters（范围读取）或 read_acts 获取可用的章节ID",
+        "Character": "人物（Character）不存在，请先调用 list_characters 获取可用的人物ID",
         "CharacterRelation": "角色关系（Relation）不存在，请先调用 list_relations 获取可用的关系ID",
-        "ChapterEdge": "章节连线（Edge）不存在，请先调用 list_edges 获取可用的连线ID",
+        "Setup": "伏笔（Setup）不存在，请先调用 list_setups 获取可用的伏笔ID",
         "Project": "项目（Project）不存在，请检查项目ID是否正确",
-        "Act in project": "该项目中不存在此幕ID，请查看项目框架结构概览确认",
-        "Chapter in project": "该项目中不存在此章节ID，请调用 read_chapters 或 read_chapter 确认",
-        "Scene in project": "该项目中不存在此场景ID，请调用 read_chapter_scenes 或 read_recent_scenes 确认",
-        "Character in project": "该项目中不存在此角色ID，请调用 list_characters 确认",
-        "Edge in project": "该项目中不存在此连线ID，请调用 list_edges 确认",
-        "Relation in project": "该项目中不存在此关系ID，请调用 list_relations 确认",
+        "Act in project": "该项目中不存在此幕ID，请用 read_acts 确认",
+        "Chapter in project": "该项目中不存在此章节ID，请用 read_chapters 确认",
+        "Character in project": "该项目中不存在此人物ID，请用 list_characters 确认",
+        "Relation in project": "该项目中不存在此关系ID，请用 list_relations 确认",
+        "Setup in project": "该项目中不存在此伏笔ID，请用 list_setups 确认",
     }
 
     # ── Structured error helpers for common failure modes ──────────
@@ -204,9 +203,9 @@ class BaseTool(ABC):
             return ToolResult(
                 success=False,
                 error=f"传入的 ID「{msg.split(chr(39))[1] if chr(39) in msg else msg}」不是合法的 UUID——通常是 ID 拼写错误或已过期。"
-                      "请先用对应的读取工具取最新 ID：场景→read_chapter_scenes / read_recent_scenes；"
-                      "章节→read_chapters / read_recent_chapters；角色→list_characters；"
-                      "关系→list_relations；连线→list_edges。不要原样重试本工具。",
+                      "请先用对应的读取工具取最新 ID：幕→read_acts；章→read_chapters / read_acts；"
+                      "人物→list_characters；关系→list_relations；伏笔→list_setups。"
+                      "不要原样重试本工具。",
                 correction_hint="下一步：运行对应读取工具获取真实 ID 后再调用本工具",
             )
         if context:
@@ -237,48 +236,43 @@ class BaseTool(ABC):
         failure mode with DeepSeek flash models.
         """
         hints = {
-            "chapter_id": "必须！请先调用 read_chapters（按章号范围）或 read_chapter 获取章节ID，然后立即用该ID调用本工具",
-            "scene_id": "必须！请先调用 read_chapter_scenes（章内场景清单）或 read_recent_scenes 获取场景ID，然后立即用该ID调用本工具",
-            "character_id": "必须！请先调用 list_characters 获取角色ID，然后立即用该ID调用本工具",
-            "act_id": "必须！请先调用 read_chapters 或查看项目框架结构概览获取幕ID",
+            "chapter_id": "必须！请先调用 read_chapters（按章号范围）或 read_acts 获取章节ID，然后立即用该ID调用本工具",
+            "act_id": "必须！请先调用 read_acts 获取幕ID",
+            "character_id": "必须！请先调用 list_characters 获取人物ID，然后立即用该ID调用本工具",
+            "relation_id": "必须！请先调用 list_relations 获取关系ID",
+            "setup_id": "必须！请先调用 list_setups 获取伏笔ID",
             "keyword": "必须提供搜索关键词（不能为空字符串）",
             "project_id": "项目ID由系统自动注入，通常无需显式传入",
-            "edge_id": "必须！请先调用 list_edges 获取连线ID",
-            "relation_id": "必须！请先调用 list_relations 获取关系ID",
-            "source_id": "必须！请先调用 read_chapters（范围读取）或 read_chapter 获取源章节ID",
-            "target_id": "必须！请先调用 read_chapters（范围读取）或 read_chapter 获取目标章节ID",
-            "content": "必须提供场景正文内容",
-            "additional_content": "必须提供续写的内容",
+            "content": "必须提供这一章的完整正文",
+            "additional_content": "必须提供要接在章末的后续正文",
             "name": "必须提供名称",
             "title": "必须提供标题",
+            "note": "必须提供这一条伏笔埋的是什么",
+            "planted_in": "必须提供埋在哪一章（章ID，来自 read_chapters）",
             "material": "必须提供创作素材（至少10个字）",
-            "project_title": "必须提供项目标题",
+            "project_title": "必须提供书名",
             "url": "必须提供要抓取的URL地址",
             "query": "必须提供搜索关键词或查询内容",
             "skill_name": "必须提供要启用的技能名称，见可用技能列表",
-            "goal": "必须提供章节蓝图",
-            "original_text": "必须提供原始文本（用于定位要替换的段落）",
-            "expanded_text": "必须提供扩写后的完整段落",
-            "compressed_text": "必须提供压缩后的文本",
-            "style": "必须提供重写风格说明",
-            "edge_type": "必须提供连线类型（timeline/causal/foreshadow/character）",
+            "goal": "必须提供这一章要写什么（章蓝图）",
+            "result": "必须提供这一章写成了什么",
         }
         correction_tools = {
             "chapter_id": "read_chapters",
-            "scene_id": "read_chapter_scenes",
+            "act_id": "read_acts",
             "character_id": "list_characters",
-            "act_id": "read_chapters",
-            "edge_id": "list_edges",
             "relation_id": "list_relations",
-            "source_id": "read_chapters",
-            "target_id": "read_chapters",
+            "setup_id": "list_setups",
+            "planted_in": "read_chapters",
         }
         hint = hints.get(key, f"请在调用工具前检查参数说明，确保提供了 {key} 参数")
+        # 点名具体工具，而不是泛泛说"先使用读取工具"——模型会去猜；
+        # 告诉它调哪一个，它就直接调。
         source_tool = correction_tools.get(key, "list_* 系列")
         return ToolResult(
             success=False,
             error=f"参数缺失: 工具需要 {key} 参数但未提供。{hint}。不要重复调用本工具——先执行获取 {key} 的步骤。",
-            correction_hint=f"下一步：先使用读取工具获取 {key}，拿到后再重新调用本工具",
+            correction_hint=f"下一步：先调用 {source_tool} 获取 {key}，拿到真实 ID 后再重新调用本工具",
         )
 
     # ------------------------------------------------------------------
@@ -302,14 +296,17 @@ class BaseTool(ABC):
         """
         return True, ""
 
-    async def on_before_run(self, args: dict, db: AsyncSession) -> None:
+    async def on_before_run(self, args: dict, db: AsyncSession) -> None:  # noqa: B027
         """Called immediately before ``run()``.
 
         Can be used for logging, audit trails, or short-lived locks.
+
+        这两个钩子是**可选**的：默认 no-op 是设计，不是漏写 @abstractmethod，
+        所以带 ``# noqa: B027``（B027 的默认假设在这里不成立）。
         """
         pass
 
-    async def on_after_run(
+    async def on_after_run(  # noqa: B027
         self, result: ToolResult, args: dict, db: AsyncSession
     ) -> None:
         """Called immediately after ``run()`` (even on failure).

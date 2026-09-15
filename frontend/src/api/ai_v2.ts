@@ -9,11 +9,6 @@ export interface Conversation {
   message_count?: number
 }
 
-export interface ChatEvent {
-  type: 'conv_id' | 'step' | 'token' | 'done' | 'tool_done' | 'plan' | 'project_updated'
-  data: string
-}
-
 export interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -25,6 +20,8 @@ export interface ConversationDetail {
   id: string
   title: string
   created_at: string
+  /** 这个会话上次是"对话"还是"协作"（后端 agent_state 里存着） */
+  mode?: 'chat' | 'cowriter'
   messages: Message[]
 }
 
@@ -253,24 +250,6 @@ export async function deleteConversation(projectId: string, convId: string): Pro
     headers: await authHeaders(),
   })
   if (!resp.ok) throw new Error(await parseError(resp))
-}
-
-export async function createConversation(projectId: string): Promise<{ conversation_id: string }> {
-  const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      ...(await authHeaders()),
-      'Content-Type': 'application/json',
-    },
-  })
-  if (!resp.ok) {
-    const text = await resp.text()
-    let detail = `Failed to create conversation: ${resp.status}`
-    try { detail = JSON.parse(text).detail || detail } catch {}
-    throw new Error(detail)
-  }
-  return resp.json()
 }
 
 export interface CompressResult {

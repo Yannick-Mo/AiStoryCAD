@@ -1,7 +1,9 @@
-"""Tests for context builder — LRU cache, _is_meaningful_query."""
+"""Tests for context builder — LRU cache, _is_meaningful_query,
+以及常驻上下文的「截断了就必须说」。"""
 
-import time
-from app.agent.context import _LRUCache, _is_meaningful_query
+from app.agent.context import ContextBuilder, _LRUCache, _is_meaningful_query
+from app.agent.loop import _build_turn_sections
+from app.agent.loop_state import LoopState
 
 
 class TestLRUCache:
@@ -167,3 +169,51 @@ class TestTrimContextPreservesTier0InsertionOrder:
             "alphabetical tiebreak reversed tier-0 precedence"
         )
         assert out.index("MODE_DECL") < out.index("COWRITER_PERSONA")
+
+
+class TestResidentContextTruncation:
+    """常驻上下文里的「主线骨架 / 终局」：**截断了就必须说**。
+
+    这两块是判断"这一章该往哪使劲、离结局还有多远"的唯一依据（规格第 6 节第 3 步）。
+    少了却不说，模型会以为自己看到的是全文——而"静默截断"正是规格第 11 节列为
+    最该根除的坏习惯。
+
+    这条链路确实坏过：``ContextBuilder.build_summary`` 把 spine/ending 截到 800 字，
+    而提示词层的「已截断」标记只在超过 1200 字时才出现——**800~1200 字之间截了却不说**。
+
+    用例故意走**真实链路**（真实库 → build_summary → 提示词组装）：要验的正是这两层
+    之间的耦合。在测试里自己捏一个 project_context 就绕过了真正会截断的那一层，
+    那样的用例即使把上限改回去也照样绿——这一条是踩过的坑，所以写成端到端的。
+    不锁具体数字，只验"要么给全文、要么给标记"。
+    """
+
+    @staticmethod
+    async def _prompt_text(db_session, project, spine: str = "", ending: str = "") -> str:
+        project.spine = spine
+        project.ending = ending
+        await db_session.flush()
+        ctx = await ContextBuilder(db_session).build_summary(
+            project.id, depth="framework", skip_cache=True)
+        state = LoopState.from_initial({"project_context": ctx, "mode": "chat"})
+        return "\n\n".join(await _build_turn_sections(state, "", {}))
+
+    async def test_spine_is_either_complete_or_marked(self, db_session, test_user):
+        from app.project.repository import ProjectRepository
+
+        project = await ProjectRepository(db_session).create("截断", "", test_user["id"])
+        for length in (10, 799, 800, 801, 900, 1000, 1199, 1200, 1201, 2000):
+            spine = "骨" * length
+            text = await self._prompt_text(db_session, project, spine=spine)
+            assert spine in text or "已截断" in text, (
+                f"{length} 字的「主线骨架」被截断了却没打标记——模型会以为看到的是全文")
+
+    async def test_ending_is_either_complete_or_marked(self, db_session, test_user):
+        from app.project.repository import ProjectRepository
+
+        project = await ProjectRepository(db_session).create("截断2", "", test_user["id"])
+        for length in (799, 800, 801, 900, 1200, 1201, 2000):
+            ending = "局" * length
+            text = await self._prompt_text(db_session, project, ending=ending)
+            assert ending in text or "已截断" in text, (
+                f"{length} 字的「终局」被截断了却没打标记——模型会以为看到的是全文")
+

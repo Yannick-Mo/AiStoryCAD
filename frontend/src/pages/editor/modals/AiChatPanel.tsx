@@ -68,6 +68,55 @@ interface ToolResult {
   error?: string
 }
 
+export type AiMode = 'chat' | 'cowriter'
+
+/**
+ * 模式记在浏览器里（按项目一份）：「协作」是一次明确的选择，不该每次刷新页面就
+ * 被重置回「对话」。后端也记着每个会话的 mode（agent_state），切回旧会话时以那个
+ * 为准——两边一起用，才有了"刷新之后还在协作模式"。
+ */
+const MODE_STORAGE_PREFIX = 'aistorycad_ai_mode:'
+
+function readStoredMode(projectId: string): AiMode {
+  try {
+    const raw = localStorage.getItem(MODE_STORAGE_PREFIX + projectId)
+    return raw === 'cowriter' ? 'cowriter' : 'chat'
+  } catch {
+    return 'chat'
+  }
+}
+
+function storeMode(projectId: string, mode: AiMode) {
+  try {
+    localStorage.setItem(MODE_STORAGE_PREFIX + projectId, mode)
+  } catch {
+    // 隐私模式 / 存储被禁用：记不住就算了，不影响这一轮
+  }
+}
+
+/**
+ * 当前会话也记在浏览器里（按项目一份）：刷新页面后回到上次那个会话，
+ * 而不是给一个空对话。会话列表是权威——恢复前先确认那个会话还在（可能已被删掉）。
+ */
+const CONV_STORAGE_PREFIX = 'aistorycad_ai_conv:'
+
+function readStoredConversationId(projectId: string): string | null {
+  try {
+    return localStorage.getItem(CONV_STORAGE_PREFIX + projectId)
+  } catch {
+    return null
+  }
+}
+
+function storeConversationId(projectId: string, conversationId: string | null) {
+  try {
+    if (conversationId) localStorage.setItem(CONV_STORAGE_PREFIX + projectId, conversationId)
+    else localStorage.removeItem(CONV_STORAGE_PREFIX + projectId)
+  } catch {
+    // 同 storeMode：记不住不影响使用
+  }
+}
+
 export function useAiChat(projectId: string, contextView: string, contextId?: string) {
   const [messages, setMessages] = useState<DisplayMessage[]>([])
   const [loading, setLoading] = useState(false)
@@ -75,7 +124,7 @@ export function useAiChat(projectId: string, contextView: string, contextId?: st
   const [error, setError] = useState<string | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
-  const [mode, setMode] = useState<'chat' | 'cowriter'>('chat')
+  const [mode, setModeState] = useState<AiMode>(() => readStoredMode(projectId))
   const [pendingPlan, setPendingPlan] = useState<PlanData | null>(null)
   const [toolResults, setToolResults] = useState<ToolResult[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -86,16 +135,18 @@ export function useAiChat(projectId: string, contextView: string, contextId?: st
 
   useEffect(() => { modeRef.current = mode }, [mode])
 
+  /** 切模式：改 UI 的同时记住它（刷新页面后还是这个模式）。 */
+  const setMode = useCallback((next: AiMode) => {
+    setModeState(next)
+    storeMode(projectId, next)
+  }, [projectId])
+
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
       abortRef.current = null
     }
   }, [])
-
-  useEffect(() => {
-    getConversations(projectId).then(data => setConversations(data.conversations)).catch(() => {})
-  }, [projectId])
 
   const send = useCallback((text: string, onProjectUpdated?: () => void) => {
     if (!text.trim() || loadingRef.current) return
@@ -166,6 +217,7 @@ export function useAiChat(projectId: string, contextView: string, contextId?: st
         if (requestIdRef.current !== currentReqId) return
         convIdRef.current = id
         setConversationId(id)
+        storeConversationId(projectId, id)
         setConversations(prev => {
           if (prev.some(c => c.id === id)) return prev
           return [{ id, title: text.slice(0, 50), created_at: new Date().toISOString() }, ...prev]
@@ -251,10 +303,13 @@ export function useAiChat(projectId: string, contextView: string, contextId?: st
     ++requestIdRef.current
     setConversationId(convId)
     convIdRef.current = convId
+    storeConversationId(projectId, convId)
     setLoading(true)
     setError(null)
     try {
       const detail = await getConversation(projectId, convId)
+      // 会话记着它上次是怎么用的：切回来时连模式一起恢复（旧后端不带这个字段，忽略即可）。
+      if (detail.mode === 'chat' || detail.mode === 'cowriter') setMode(detail.mode)
       setMessages(detail.messages.map(m => ({
         id: m.id,
         role: m.role as 'user' | 'assistant' | 'system',
@@ -265,18 +320,39 @@ export function useAiChat(projectId: string, contextView: string, contextId?: st
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, setMode])
+
+  /**
+   * 会话列表 + 恢复上次打开的会话（刷新页面之后回到现场）。
+   *
+   * 顺序要紧：先拿到列表，确认记着的那条还在（可能已被删掉 / 换了项目），再载入。
+   * 这里同时承担了原来那次"只取列表"的请求。
+   */
+  useEffect(() => {
+    let cancelled = false
+    getConversations(projectId).then(data => {
+      if (cancelled) return
+      setConversations(data.conversations)
+      const last = readStoredConversationId(projectId)
+      if (!last) return
+      if (data.conversations.some(c => c.id === last)) loadConversation(last)
+      else storeConversationId(projectId, null)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [projectId, loadConversation])
 
   const clear = useCallback(() => {
     abortRef.current?.abort()
     ++requestIdRef.current
     setConversationId(null)
     convIdRef.current = null
+    // 明确"新建对话"了：把记住的那条删掉，下次刷新不要再回到旧会话
+    storeConversationId(projectId, null)
     setMessages([])
     setError(null)
     setStep(null)
     setToolResults([])
-  }, [])
+  }, [projectId])
 
   return {
     messages, setMessages,
@@ -499,12 +575,10 @@ export default function AiChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null)
 
 
-  const contextLabel = contextView === 'scene' ? '场景写作'
-    : contextView === 'chapter' ? '章节分析'
-    : contextView === 'plot' ? '结构建议'
-    : contextView === 'character' ? '角色分析'
-    : contextView === 'analysis' ? '综合分析'
-    : 'AI 助手'
+  // 只有 'chapter'（章详情面板）与初始的 'chat' 会被传进来——另外那三个
+  // （plot / character / analysis）从来没有调用点，是死标签，已删除。
+  // 将来真给幕布或人物面板接上入口时，再把对应的名字加回来。
+  const contextLabel = contextView === 'chapter' ? '章节分析' : 'AI 助手'
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -696,8 +770,7 @@ export default function AiChatPanel({
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
         {chat.messages.length === 0 && !chat.loading && (
           <div className="text-center text-gray-500 text-xs mt-8">
-            {contextView === 'scene' ? '询问关于当前场景的写作建议'
-              : contextView === 'chapter' ? '分析当前章节的结构和内容'
+            {contextView === 'chapter' ? '分析当前章节的结构和内容'
               : contextView === 'character' ? '分析角色弧线和一致性'
               : '向 AI 助手提问，获得创作建议和灵感'}
           </div>

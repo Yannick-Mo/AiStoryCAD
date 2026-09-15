@@ -1,30 +1,103 @@
 """Regression tests for low-priority dead-code cleanup and the
-create-from-material scene-drop fix."""
+create-from-material chapter-drop fix."""
 
 import inspect
+import uuid
+
+from sqlalchemy import func, select
+
+from app.storycad.models import Chapter, Act
+from app.agent.project_creator.writer import write_project_from_state
 
 
-class TestSceneDropFix:
-    """create-from-material silently dropped scenes beyond 5 per chapter in
-    both DB writers.  All generated scenes must be persisted."""
+class TestMaterialWriterHasNoChapterCap:
+    """create-from-material 曾经在**两条**写库路径里都悄悄丢掉每章第 5 章之后的章。
 
-    def _read_writer_src(self, module_path: str, func_name: str) -> str:
-        import importlib
+    现在只剩一条写库路径：``app/agent/project_creator/writer.py::write_project_from_state``
+    （``routes_ai`` 与 ``create_project_from_material`` 都调它）。流水线产出的每一章都必须
+    落库；真的丢东西只允许发生在记账里——``write_project_from_state`` 返回的 ``truncated``
+    必须如实列出。
+    """
 
-        mod = importlib.import_module(module_path)
-        return inspect.getsource(getattr(mod, func_name))
-
-    def test_route_writer_has_no_scene_cap(self):
-        src = self._read_writer_src("app.api.routes_ai", "_write_project_to_db")
+    def test_writer_has_no_per_chapter_cap_in_source(self):
+        src = inspect.getsource(write_project_from_state)
         assert "per_chapter_count" not in src
         assert "> 5" not in src
+        assert "chapters[:5]" not in src
 
-    def test_tool_writer_has_no_scene_cap(self):
-        src = self._read_writer_src(
-            "app.agent.tools.project_admin_tools", "_write_new_project"
+    def test_the_two_old_writers_are_gone(self):
+        """旧的两条写库路径已合并删除：一个模块、一个函数。"""
+        import importlib.util
+
+        from app.api import routes_ai
+
+        assert not hasattr(routes_ai, "_write_project_to_db")
+        assert importlib.util.find_spec("app.agent.tools.project_admin_tools") is None
+
+    def test_both_entry_points_use_the_single_writer(self):
+        from app.api import routes_ai
+        from app.agent.tools.project_tools import CreateProjectFromMaterialTool
+
+        assert "write_project_from_state" in inspect.getsource(routes_ai)
+        assert "write_project_from_state" in inspect.getsource(
+            CreateProjectFromMaterialTool.run
         )
-        assert "per_chapter_count" not in src
-        assert "> 5" not in src
+
+    async def test_twelve_chapters_in_one_act_all_persist(self, db_session, test_user):
+        state = {
+            "project_title": "素材项目",
+            "acts": [{"name": "第一幕", "purpose": "这一幕要干什么"}],
+            "chapters": [
+                {"title": f"第{i + 1}章", "goal": f"第{i + 1}章要写什么", "act_index": 0}
+                for i in range(12)
+            ],
+        }
+        result = await write_project_from_state(db_session, state, test_user["id"])
+
+        assert result["chapter_count"] == 12
+        assert result["truncated"] == [], f"没有丢任何数据：{result['truncated']}"
+        stored = (await db_session.execute(
+            select(func.count()).select_from(Chapter)
+            .where(Chapter.project_id == uuid.UUID(result["project_id"]))
+        )).scalar_one()
+        assert stored == 12, "每章第 5 章之后的章又丢了"
+
+    async def test_chapters_are_numbered_densely_inside_their_act(self, db_session, test_user):
+        state = {
+            "project_title": "两幕项目",
+            "acts": [{"name": "第一幕", "purpose": "甲"}, {"name": "第二幕", "purpose": "乙"}],
+            "chapters": [
+                {"title": f"A{i + 1}", "goal": "要写什么", "act_index": 0} for i in range(7)
+            ] + [
+                {"title": f"B{i + 1}", "goal": "要写什么", "act_index": 1} for i in range(7)
+            ],
+        }
+        result = await write_project_from_state(db_session, state, test_user["id"])
+        project_id = uuid.UUID(result["project_id"])
+
+        acts = (await db_session.execute(
+            select(Act).where(Act.project_id == project_id)
+        )).scalars().all()
+        assert [a.sort_order for a in acts] == [1, 2]
+        for act in acts:
+            orders = (await db_session.execute(
+                select(Chapter.sort_order).where(Chapter.act_id == act.id)
+            )).scalars().all()
+            assert sorted(orders) == list(range(1, 8)), "幕内序号必须密集从 1 开始"
+
+    async def test_a_chapter_with_an_out_of_range_act_index_is_reported_not_dropped(self, db_session, test_user):
+        """act_index 越界的章会被跳过——但必须写进 truncated，不能静默丢。"""
+        state = {
+            "project_title": "越界",
+            "acts": [{"name": "第一幕", "purpose": "甲"}],
+            "chapters": [
+                {"title": "好章", "goal": "要写什么", "act_index": 0},
+                {"title": "坏章", "goal": "要写什么", "act_index": 9},
+            ],
+        }
+        result = await write_project_from_state(db_session, state, test_user["id"])
+        assert result["chapter_count"] == 1
+        assert any("坏章" in note for note in result["truncated"]), result["truncated"]
 
 
 class TestDeadCodeRemoved:

@@ -11,6 +11,23 @@ const STAGE_MAP: Record<string, { label: string; type: "progress" | "done" }> = 
   final: { label: "已完成", type: "done" },
 }
 
+/**
+ * 进度 = 已写字数 / 目标字数。
+ *
+ * 以前这里是按 status 猜出来的（final=100 / revising=75 / draft=40 / 其他=10）——
+ * 那是把阶段徽章重复一遍的假数字。written_words 是服务端对全部章正文实时算出来的，
+ * target_words 是用户设的目标，两个真数相除才是这张卡上唯一有信息量的进度。
+ * 阶段徽章和筛选仍然用 status，那才是它该管的事。
+ *
+ * target_words 为 0 / 未设置时比例无从谈起：退回 0，不编一个数。
+ */
+function progressPercent(p: ProjectListItem): number {
+  const target = p.target_words ?? 0
+  if (target <= 0) return 0
+  const written = p.written_words ?? 0
+  return Math.min(100, Math.max(0, Math.round((written / target) * 100)))
+}
+
 function enrichProject(p: ProjectListItem, index: number): HomeProject {
   const stage = STAGE_MAP[p.status] ?? STAGE_MAP.init
   return {
@@ -19,7 +36,7 @@ function enrichProject(p: ProjectListItem, index: number): HomeProject {
     coverChar: p.title.charAt(0),
     stage: stage.label,
     stageType: stage.type,
-    progress: p.status === "final" ? 100 : p.status === "revising" ? 75 : p.status === "draft" ? 40 : 10,
+    progress: progressPercent(p),
     progressClass: PROGRESS_CLASSES[index % PROGRESS_CLASSES.length],
   }
 }
@@ -93,7 +110,10 @@ export default function ProjectGrid({ projects, loading, onDeleteProject, onRena
         </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-4">
-          {filtered.map((proj, i) => (
+          {filtered.map((proj, i) => {
+            const written = proj.written_words ?? 0
+            const target = proj.target_words ?? 0
+            return (
               <div
                 key={proj.id}
                 onClick={() => navigate(`/projects/${proj.id}`)}
@@ -124,10 +144,17 @@ export default function ProjectGrid({ projects, loading, onDeleteProject, onRena
                 </button>
                 <div className="p-4 flex flex-col gap-1.5">
                   <div className="font-bold text-sm text-gray-100">《{proj.title}》</div>
-                  <div className="flex gap-3 text-xs text-gray-500">
-                    <span>{proj.total_words ? `${proj.total_words.toLocaleString()} 字` : '暂无字数'}</span>
-                    <span>{proj.total_chapters ? `${proj.total_chapters} 章` : ''}</span>
-                    {proj.template_type && <span>{proj.template_type}</span>}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500">
+                    <span>{written > 0 ? `已写 ${written.toLocaleString()} 字` : "暂无字数"}</span>
+                    {target > 0 ? (
+                      <>
+                        <span>目标 {target.toLocaleString()} 字</span>
+                        <span className="tabular-nums text-gray-400">{proj.progress}%</span>
+                      </>
+                    ) : (
+                      <span title="在编辑器的「作品设定」里填上目标字数，这里就会显示完成度">未设目标</span>
+                    )}
+                    <span>{proj.total_chapters ? `${proj.total_chapters} 章` : ""}</span>
                     {proj.genre && <span>{proj.genre}</span>}
                   </div>
                   <div className="h-1 bg-gray-800 rounded-full mt-1 overflow-hidden">
@@ -137,7 +164,8 @@ export default function ProjectGrid({ projects, loading, onDeleteProject, onRena
                   </div>
                 </div>
               </div>
-          ))}
+            )
+          })}
         </div>
       )}
       <style>{`

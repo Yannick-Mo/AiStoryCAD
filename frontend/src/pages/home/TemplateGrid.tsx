@@ -29,8 +29,11 @@ export default function TemplateGrid() {
     try {
       const result = await createProject(`未命名 - ${template}`)
       const actCount = ACT_COUNTS[template] ?? 3
+      // 不传 sort_order：位置是服务端的事。通用 POST /{entity_type} 与编辑器增量
+      // 同步两条创建路径都会先调 assign_initial_sort_order，把新幕接在末尾并编号
+      // 1..N；客户端传的裸序号会被丢弃（sort_order 是服务端独占字段）。
       for (let i = 0; i < actCount; i++) {
-        await createEntity(result.id, 'acts', { name: `第 ${i + 1} 幕`, sort_order: i + 1, color: ['#f97316', '#8b5cf6', '#06b6d4', '#ec4899', '#10b981'][i % 5] })
+        await createEntity(result.id, 'acts', { name: `第 ${i + 1} 幕`, color: ['#f97316', '#8b5cf6', '#06b6d4', '#ec4899', '#10b981'][i % 5] })
       }
       navigate(`/projects/${result.id}`)
     } catch {

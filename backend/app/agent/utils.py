@@ -50,7 +50,7 @@ async def parse_json_safe(text: str, client: LLMClient | None = None, messages: 
 def load_project_prompt(name: str) -> str:
     path = PROMPT_DIR / f"{name}.yaml"
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return data.get("system", "") if data else ""
     except (FileNotFoundError, yaml.YAMLError):

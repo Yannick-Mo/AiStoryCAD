@@ -1,14 +1,14 @@
-import type { Chapter, ChapterEdge, Act } from '../types'
+import type { Chapter, Act } from '../types'
 
 /**
  * Chapters in reading order: act order first, then the in-act ``sortOrder``.
  *
  * ``sort_order`` is the single source of truth for order everywhere (outline,
- * canvas, preview, export and the agent's own context).  Timeline edges only
- * describe narrative relations — causal / foreshadow / character arcs — and
- * deliberately do *not* reorder the manuscript, so there is exactly one
- * ordering to reason about.  Ties fall back to the incoming array order, which
- * the API already returns in narrative order.
+ * canvas, preview, export and the agent's own context).  The chapter chain on
+ * the plot canvas is a *rendering* of this order — there is no stored "timeline
+ * line" to keep in sync any more, so there is exactly one ordering to reason
+ * about.  Ties fall back to the incoming array order, which the API already
+ * returns in narrative order.
  */
 export function orderChapters(chapters: Chapter[], acts: Act[]): Chapter[] {
   const actIndex = new Map(
@@ -41,41 +41,11 @@ export function orderActChapters(chapters: Chapter[]): Chapter[] {
     .map(entry => entry.chapter)
 }
 
-export function wouldCreateCycle(edges: ChapterEdge[], sourceId: string, targetId: string): boolean {
-  if (sourceId === targetId) return true
-  const adj = new Map<string, string[]>()
-  const allIds = new Set<string>()
-  for (const e of edges) {
-    if (e.sourceId === sourceId && e.targetId === targetId) continue
-    if (!adj.has(e.sourceId)) adj.set(e.sourceId, [])
-    adj.get(e.sourceId)!.push(e.targetId)
-    allIds.add(e.sourceId)
-    allIds.add(e.targetId)
-  }
-  allIds.add(sourceId)
-  allIds.add(targetId)
-  if (!adj.has(sourceId)) adj.set(sourceId, [])
-  adj.get(sourceId)!.push(targetId)
-
-  const visited = new Set<string>()
-  const stack = [targetId]
-  while (stack.length > 0) {
-    const id = stack.pop()!
-    if (id === sourceId) return true
-    if (visited.has(id)) continue
-    visited.add(id)
-    for (const next of adj.get(id) ?? []) {
-      stack.push(next)
-    }
-  }
-  return false
+/**
+ * 全局章号（算出来的，不存）= 前序各幕的章数之和 + 幕内序号。
+ * 返回 章 id → 全局章号 的映射，供画布徽标和大纲 / 伏笔选择器共用。
+ */
+export function chapterNumbers(chapters: Chapter[], acts: Act[]): Map<string, number> {
+  const ordered = orderChapters(chapters, acts)
+  return new Map(ordered.map((ch, i) => [ch.id, i + 1]))
 }
-
-export function hasIncomingTimeline(edges: ChapterEdge[], nodeId: string): boolean {
-  return edges.some(e => e.type === 'timeline' && e.targetId === nodeId)
-}
-
-export function hasOutgoingTimeline(edges: ChapterEdge[], nodeId: string): boolean {
-  return edges.some(e => e.type === 'timeline' && e.sourceId === nodeId)
-}
-

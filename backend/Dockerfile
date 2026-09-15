@@ -15,6 +15,11 @@ COPY ./app ./app
 COPY ./alembic ./alembic
 COPY ./alembic.ini .
 
+# 验收脚本（scripts/verify_story_model）随镜像一起带上，这样对着**跑着的容器**
+# 就能随时验一遍规格第 7 节那八条问题，不必再挂载源码：
+#   docker compose exec -T backend python /app/scripts/verify_story_model/check_spec_questions.py
+COPY ./scripts ./scripts
+
 EXPOSE 8000
 
 USER appuser
@@ -27,6 +32,6 @@ FROM base AS dev
 USER root
 
 COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
+RUN pip install --no-cache-dir -r requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 USER appuser

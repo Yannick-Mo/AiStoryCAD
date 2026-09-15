@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -13,7 +13,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.context_compressor import async_compress_context, estimate_tokens
+from app.agent.context_compressor import estimate_tokens
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.models import Conversation
 from app.agent.privacy import sanitise_event, sanitise_error_text_for_client
@@ -31,8 +31,8 @@ SSE_PING_INTERVAL = 15
 async def _verify_project_owner(db: AsyncSession, project_id: uuid.UUID, user: dict) -> None:
     try:
         await _verify_tool_owner(db, project_id, user["id"])
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Not authorized to access this project")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Not authorized to access this project") from exc
 
 
 async def _verify_conversation_owner(db: AsyncSession, conversation_id: str, user: dict) -> None:
@@ -99,7 +99,7 @@ async def _stream_chat(
             """客户端断开后队列可能被填满导致 put 永久阻塞,加超时兜底。"""
             try:
                 await asyncio.wait_for(queue.put(item), timeout=10.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("SSE queue full; dropping event")
             except asyncio.CancelledError:
                 raise
@@ -121,7 +121,7 @@ async def _stream_chat(
                     break
                 try:
                     kind, payload = await asyncio.wait_for(queue.get(), timeout=SSE_PING_INTERVAL)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if request is not None and await request.is_disconnected():
                         break
                     yield "event: ping\ndata: {}\n\n"

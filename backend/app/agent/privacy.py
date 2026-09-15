@@ -19,71 +19,54 @@ logger = logging.getLogger(__name__)
 # user-facing Chinese label.  Missing names fall back to a generic label.
 
 TOOL_DISPLAY_NAMES: dict[str, str] = {
-    # Project read
-    "read_project": "读取项目",
-    "read_global_settings": "读取全局设定",
-    "read_chapter": "读取章节",
-    "read_chapter_scenes": "读取章内场景清单",
-    "read_scene": "读取场景蓝图",
-    "read_scene_content": "读取场景正文",
+    # 读（12）
+    "read_project": "读取作品层",
+    "read_acts": "读取幕",
     "read_chapters": "范围读取章节",
-    "read_recent_scenes": "读取最近场景",
-    "read_recent_chapters": "读取最近章节",
-    "read_completed_tail": "读取已完成正文尾部",
-    "read_character": "读取角色",
+    "read_chapter_content": "读取章正文",
+    "read_chapter_package": "读取动笔前的全部输入",
+    "list_characters": "列出人物",
+    "read_character": "读取人物档案",
+    "list_relations": "列出角色关系",
     "read_relation": "精读关系",
-    "list_characters": "列出角色",
-    "list_character_relations": "列出角色关系网",
-    "list_relations": "列出关系",
-    "list_edges": "列出关联",
-    "search_nodes": "搜索节点",
-    # Project write
-    "create_scene": "创建场景",
-    "update_scene": "修改场景",
-    "delete_scene": "删除场景",
-    "create_chapter": "创建章节",
-    "update_chapter": "修改章节",
-    "move_chapter": "调整章节顺序",
-    "delete_chapter": "删除章节",
+    "list_setups": "列出伏笔",
+    "read_progress": "读取进度",
+    "search": "搜索项目内容",
+    # 写：作品层
+    "update_project": "更新作品层",
+    "create_project_from_material": "从素材创建项目",
+    # 写：幕
     "create_act": "创建幕",
     "update_act": "修改幕",
+    "move_act": "调整幕序",
     "delete_act": "删除幕",
-    "update_project": "更新项目",
-    "set_chapter_goal": "设定章节目标",
-    "create_project_from_material": "从素材创建项目",
-    # Character
-    "create_character": "创建角色",
-    "update_character": "修改角色",
-    "delete_character": "删除角色",
+    # 写：章
+    "create_chapter": "创建章节",
+    "update_chapter": "修改章节",
+    "move_chapter": "移动章节",
+    "delete_chapter": "删除章节",
+    # 写：正文
+    "write_chapter": "写入章正文",
+    "continue_chapter": "续写章正文",
+    # 写：人物与关系
+    "create_character": "创建人物",
+    "update_character": "修改人物",
+    "delete_character": "删除人物",
     "create_relation": "创建角色关系",
-    "delete_relation": "删除关系",
     "update_relation": "修改关系",
-    # Edge
-    "create_edge": "创建关联",
-    "update_edge": "修改关联",
-    "delete_edge": "删除关联",
-    "relink_timeline": "重建时序主线",
-    # Agents
+    "delete_relation": "删除关系",
+    # 写：伏笔
+    "create_setup": "新增伏笔",
+    "update_setup": "修改伏笔",
+    "delete_setup": "删除伏笔",
+    # 写作智能体
     "call_writer_agent": "调用写作智能体",
-    # Analysis
-    "analyze_chapter": "分析章节",
-    "analyze_character_arc": "分析角色弧",
-    "suggest_next": "建议下一步",
-    "project_health": "项目健康检查",
-    # Writing
-    "write_scene_content": "写入场景内容",
-    "continue_scene": "续写场景",
-    "rewrite_scene": "重写场景",
-    "expand_selection": "展开选中内容",
-    "compress_selection": "压缩选中内容",
-    "sync_scene_blueprint": "同步场景蓝图",
-    "recalc_word_counts": "重新统计字数",
+    # 范围外
     "invoke_skill": "启用写作技能",
-    # Knowledge / Web
     "search_knowledge": "搜索知识库",
     "web_search": "联网搜索",
     "web_fetch": "读取网页",
-    # Internal / plans
+    # 内部 / 计划
     "cowriter_analysis": "内容分析",
     "plan_tools": "执行计划",
 }

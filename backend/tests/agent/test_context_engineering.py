@@ -14,20 +14,16 @@ from app.agent.context_compressor import (
     compress_history,
     should_compress,
 )
-from app.agent.loop import (
-    _ENTITY_SECTION_MAX,
-    _FRAMEWORK_SECTION_MAX,
-    _render_framework_section,
-)
+from app.agent.loop import _render_framework_section
 from app.agent.loop_state import LoopState
 from app.agent.middle_compress import (
-    COMPRESSIBLE_TOOLS,
     LLM_COMPRESS_MIN_CHARS,
     _fold_fallback,
     _validate,
     should_middle_process,
 )
 from app.llm.types import Message, ToolCall
+from tests.agent._fixtures import framework_context
 from uuid import uuid4
 
 
@@ -36,7 +32,7 @@ def _tool_pair() -> list[Message]:
     assistant = Message(
         role="assistant",
         content="调用工具",
-        tool_calls=[ToolCall(id="tc_1", function={"name": "read_scene", "arguments": "{}"})],
+        tool_calls=[ToolCall(id="tc_1", function={"name": "read_chapters", "arguments": "{}"})],
     )
     tool = Message(role="tool", content="[操作成功]\n工具结果", tool_call_id="tc_1")
     return [assistant, tool]
@@ -75,7 +71,8 @@ class TestPairSafeTail:
         prev_assistant = next(
             (m for m in reversed(out[:tool_idx]) if m.role == "assistant"), None
         )
-        assert prev_assistant is not None and prev_assistant.tool_calls
+        assert prev_assistant is not None
+        assert prev_assistant.tool_calls
 
 
 class TestTokenBasedCompression:
@@ -97,101 +94,52 @@ class TestTokenBasedCompression:
 
 
 class TestFrameworkStructuralTruncation:
+    """常驻地图的截断是**结构性**的：整行放得下才追加，省略了什么必须说清。
+
+    这里用与真实构建器同形的上下文（``tests/agent/_fixtures.py``）——
+    旧版手写的半截 fixture 验的不是真契约。
+    """
+
+    def _render(self, ctx: dict) -> str:
+        return _render_framework_section(
+            LoopState.from_initial({"project_context": ctx})
+        )
+
     def _big_context(self) -> dict:
-        return {
-            "acts": [
-                {
-                    "id": f"a{i}",
-                    "name": f"第{i}幕",
-                    "sort_order": i,
-                    "chapters": [
-                        {
-                            "id": f"c{i}_{j}",
-                            "title": f"第{j}章",
-                            "sort_order": j,
-                            "scenes": [
-                                {"id": f"s{i}_{j}_{k}", "title": f"场景{k}", "sort_order": k}
-                                for k in range(10)
-                            ],
-                        }
-                        for j in range(60)
-                    ],
-                }
-                for i in range(4)
-            ],
-            "characters": [{"id": f"ch{i}", "name": f"角色{i}", "role": "protagonist"} for i in range(50)],
-            "relations": [{"character_name": "a", "target_name": "b", "label": "敌对"} for _ in range(30)],
-            "edges": [{"source_title": "s", "target_title": "t", "edge_type": "causal"} for _ in range(30)],
-        }
+        return framework_context(
+            [{"id": f"a{i}", "name": f"第{i}幕",
+              "chapters": [{"title": f"第{j}章"} for j in range(60)]}
+             for i in range(4)],
+            total_chapter_count=3000,
+            characters=[{"id": f"ch{i}", "name": f"角色{i}", "role": "main"}
+                        for i in range(50)],
+            relations=[{"character_name": "a", "target_name": "b", "label": "敌对"}
+                       for _ in range(30)],
+            setups=[{"id": f"st{i}", "note": f"伏笔{i}", "status": "open",
+                     "planted_in_order": 1, "pay_off_in_order": None}
+                    for i in range(30)],
+        )
 
     def test_truncation_stops_at_complete_line(self):
-        state = LoopState.from_initial({"project_context": self._big_context()})
-        out = _render_framework_section(state)
-        # Tree budget + the independent entity budget, plus the truncation note.
-        assert len(out) <= _FRAMEWORK_SECTION_MAX + _ENTITY_SECTION_MAX + 200
-        # Ends with the structural note, not a half-rendered line
-        assert out.rstrip().endswith("read_chapters 按全局章号范围读取]")
-        assert "项目框架较长" in out
-        assert "以下未完整列出" in out
+        out = self._render(self._big_context())
+        # 每个可见的行都必须完整（没有半截行）
+        for line in out.splitlines():
+            assert line == line.rstrip(), "行尾有多余空白，说明切在了行中间"
+        assert "未列出" in out, "省略了什么必须说"
+        assert "全书 3000 章" in out
 
-    def test_entities_still_rendered_when_tree_truncated(self):
-        # A tree that exhausts the detail budget must NOT hide the
-        # character/relation/edge rosters (independent budgets).
-        state = LoopState.from_initial({"project_context": self._big_context()})
-        out = _render_framework_section(state)
-        assert "项目框架较长" in out  # tree was truncated...
-        assert "## 角色" in out       # ...but the rosters still appear
+    def test_rosters_survive_window_truncation(self):
+        """窗口被截断不能把侧挂记录一起挤掉——它们各有各的预算。"""
+        out = self._render(self._big_context())
+        assert "## 人物" in out
         assert "## 关系" in out
-        assert "## 连线" in out
+        assert "## 未回收的伏笔" in out
 
-    def test_act_index_lists_all_acts_even_when_details_truncated(self):
-        # Detail tree only fits the first acts, but the act index must still
-        # name EVERY act with its chapter/scene counts (so the model can
-        # compute global chapter numbers and jump with read_chapters).
-        state = LoopState.from_initial({"project_context": self._big_context()})
-        out = _render_framework_section(state)
-        assert "幕" in out
+    def test_every_act_stays_in_the_map(self):
+        out = self._render(self._big_context())
         for i in range(4):
-            act_name = f"第{i}幕"
-            assert act_name in out, f"act index lost act: {act_name}"
-            assert f"(act_id=a{i}): 60章/600场" in out, f"counts missing for {act_name}"
-
-    def test_act_index_counts_scenes_per_chapter(self):
-        ctx = {
-            "acts": [
-                {
-                    "id": "a1", "name": "第一幕", "sort_order": 1,
-                    "chapters": [
-                        {"id": "c1", "title": "第一章", "sort_order": 1,
-                         "scenes": [{"id": "s1", "title": "开场", "sort_order": 1},
-                                    {"id": "s2", "title": "冲突", "sort_order": 2}]},
-                        {"id": "c2", "title": "第二章", "sort_order": 2,
-                         "scenes": [{"id": "s3", "title": "高潮", "sort_order": 1}]},
-                    ],
-                }
-            ],
-        }
-        state = LoopState.from_initial({"project_context": ctx})
-        out = _render_framework_section(state)
-        assert "(act_id=a1): 2章/3场" in out
-
-    def test_small_context_untruncated(self):
-        ctx = {
-            "acts": [
-                {
-                    "id": "a1", "name": "第一幕", "sort_order": 1,
-                    "chapters": [{"id": "c1", "title": "第一章", "sort_order": 1,
-                                  "scenes": [{"id": "s1", "title": "开场", "sort_order": 1}]}],
-                }
-            ],
-            "characters": [{"id": "ch1", "name": "主角", "role": "protagonist"}],
-        }
-        state = LoopState.from_initial({"project_context": ctx})
-        out = _render_framework_section(state)
-        assert "项目框架较长" not in out
-        assert "第一幕" in out and "主角" in out
-        assert "(act_id=a1): 1章/1场" in out
-
+            assert f"第{i}幕" in out, f"幕图漏了第{i}幕"
+            assert f"(act_id=a{i}): 60章" in out
 
 class TestMiddleCompressWhitelist:
     def test_whitelisted_small_result_verbatim_no_llm(self):
@@ -206,7 +154,8 @@ class TestMiddleCompressWhitelist:
     def test_project_query_tools_never_compress(self):
         # DB project-query results (outline/framework + scene/character data)
         # are always injected verbatim — the loop LLM needs exact structure.
-        for tool in ("read_scene", "read_chapters", "read_chapter"):
+        for tool in ("read_chapters", "read_chapter_content",
+                     "read_chapter_package", "read_acts"):
             result = {"tool": tool, "success": True, "data": "数据" * (LLM_COMPRESS_MIN_CHARS + 100)}
             assert not should_middle_process(tool, result), tool
 
@@ -331,7 +280,7 @@ class TestMiddleCompressEndToEnd:
             called["flag"] = True
             return type("R", (), {"content": "nope"})
 
-        for tool in ("read_scene", "read_chapters", "read_chapter"):
+        for tool in ("read_chapters", "read_chapter_content", "read_chapter_package"):
             result = {"tool": tool, "success": True, "data": "数据" * (LLM_COMPRESS_MIN_CHARS + 100)}
             out = await middle_process_tool_result(tool, result, fake_chat)
             assert not called["flag"], tool

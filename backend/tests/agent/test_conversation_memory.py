@@ -10,7 +10,7 @@ from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.models import Conversation, ConversationMessage
 from app.llm.types import Message
 from app.project.models import Project
-import app.storycad.models  # noqa: F401  (register tables for db_session fixture)
+import app.storycad.models
 import app.knowledge.models  # noqa: F401
 
 
@@ -88,6 +88,31 @@ class TestConversationPersistence:
         assert registry == {"scene-1": "id-1"}
         assert version == 3
         assert snapshot is None
+
+    async def test_get_conversation_carries_the_mode_it_was_used_in(self, db_session, project, test_user):
+        """会话详情要带上"上次是怎么用的"（chat / cowriter）。
+
+        前端刷新页面、或者切回一个旧会话时，靠它把模式恢复成协作模式，而不是
+        悄悄退回对话模式——模式本来就存在 agent_state 里，只是以前没有露出来。
+        """
+        mem = ConversationMemory(db_session)
+        conv_id = await mem.create_conversation(str(project), str(test_user["id"]))
+
+        fresh = await mem.get_conversation(str(project), str(test_user["id"]), conv_id)
+        assert fresh["mode"] == "chat", "全新的会话是对话模式"
+
+        await mem.save_agent_state(conv_id, {}, [], mode="cowriter")
+        again = await mem.get_conversation(str(project), str(test_user["id"]), conv_id)
+        assert again["mode"] == "cowriter"
+
+    async def test_unknown_stored_mode_falls_back_to_chat(self, db_session, project, test_user):
+        """历史数据里出现过 mode="plan" 这类值；前端只认两个值，过期的一律当对话。"""
+        mem = ConversationMemory(db_session)
+        conv_id = await mem.create_conversation(str(project), str(test_user["id"]))
+        await mem.save_agent_state(conv_id, {}, [], mode="plan")
+
+        conv = await mem.get_conversation(str(project), str(test_user["id"]), conv_id)
+        assert conv["mode"] == "chat"
 
     async def test_loop_snapshot_roundtrip(self, db_session, project, test_user):
         from app.agent.memory.conversation import (

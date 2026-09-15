@@ -1,5 +1,4 @@
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from sqlalchemy import CheckConstraint, Column, DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,7 +7,7 @@ from app.project.models import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ModelConfig(Base):

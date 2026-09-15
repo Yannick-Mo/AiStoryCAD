@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { Chapter, Act } from '../types'
+import { countWords } from '../data/wordCount'
 
 interface PreviewPanelProps {
   chapters: Chapter[]
   acts: Act[]
+  /** 章的正文，键是章 id。正文是延迟列，由 store 单独取回来。 */
+  contents: Record<string, string>
   /** 只显示已定稿章节（与导出的过滤保持一致） */
   finalOnly: boolean
   onFinalOnlyChange: (finalOnly: boolean) => void
@@ -36,12 +39,14 @@ function FilterToggle({ finalOnly, onChange }: { finalOnly: boolean; onChange: (
 
 /**
  * Read-only preview of the finished manuscript. It fills the detail panel body
- * instead of opening a modal, and borrows the scene editor's paper-like
+ * instead of opening a modal, and borrows the chapter editor's paper-like
  * typography so reading feels like reading the book.
+ *
+ * 一章就是一段正文：下面没有"场"了，直接把 chapters.content 铺开。
  */
-export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyChange }: PreviewPanelProps) {
+export default function PreviewPanel({ chapters, acts, contents, finalOnly, onFinalOnlyChange }: PreviewPanelProps) {
   const [index, setIndex] = useState(0)
-  const [goalExpanded, setGoalExpanded] = useState(false)
+  const [coreExpanded, setCoreExpanded] = useState(false)
   const chapter = chapters[index]
 
   useEffect(() => {
@@ -54,7 +59,7 @@ export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyCha
 
   // 切换章节时收起章核心
   useEffect(() => {
-    setGoalExpanded(false)
+    setCoreExpanded(false)
   }, [index])
 
   // 切换过滤后列表长度会变，回到第一章，避免停在错位的位置
@@ -81,6 +86,7 @@ export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyCha
   const act = acts.find(a => a.id === chapter.actId)
   const prevAct = index > 0 ? acts.find(a => a.id === chapters[index - 1]?.actId) : null
   const showActHeader = act && act !== prevAct
+  const body = contents[chapter.id] ?? ''
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col">
@@ -88,7 +94,7 @@ export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyCha
         <div className="min-w-0">
           {showActHeader && <div className="truncate text-[11px] text-amber-500/70">{act!.name}</div>}
           <h4 className="truncate text-sm font-medium text-gray-100">{chapter.title}</h4>
-          <div className="mt-0.5 truncate text-[11px] text-gray-500">{chapter.scenes.length} 场 · {chapter.wordCount} 字</div>
+          <div className="mt-0.5 truncate text-[11px] text-gray-500">{body ? `${countWords(body)} 字` : '正文待创作'}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <FilterToggle finalOnly={finalOnly} onChange={onFinalOnlyChange} />
@@ -96,27 +102,33 @@ export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyCha
         </div>
       </div>
 
-      {chapter.goal && (
+      {(chapter.goal || chapter.result) && (
         <div className="shrink-0 border-b border-gray-800/60 bg-gray-900/50 px-4 py-2">
           <div className="mx-auto w-full max-w-[46rem]">
             <div className="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] font-medium text-amber-500/60">章核心</span>
                 <button
-                  onClick={() => setGoalExpanded(!goalExpanded)}
-                  aria-expanded={goalExpanded}
+                  onClick={() => setCoreExpanded(!coreExpanded)}
+                  aria-expanded={coreExpanded}
                   className="flex shrink-0 items-center gap-1 text-[11px] text-gray-500 transition-colors hover:text-amber-400"
                 >
-                  {goalExpanded ? '收起 ▲' : '展开 ▼'}
+                  {coreExpanded ? '收起 ▲' : '展开 ▼'}
                 </button>
               </div>
               <div
-                title={goalExpanded ? undefined : chapter.goal}
-                className={goalExpanded
+                title={coreExpanded ? undefined : chapter.goal}
+                className={coreExpanded
                   ? 'mt-1 max-h-[40vh] overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-gray-400'
                   : 'mt-1 truncate text-xs text-gray-400'}
               >
-                {chapter.goal}
+                <span className="text-gray-500">要写什么：</span>{chapter.goal || '（未填）'}
+                {chapter.result && (
+                  <>
+                    <br />
+                    <span className="text-gray-500">写成了什么：</span>{chapter.result}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -126,21 +138,9 @@ export default function PreviewPanel({ chapters, acts, finalOnly, onFinalOnlyCha
       {/* reading surface */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-gray-950/40">
         <div className="mx-auto w-full max-w-[46rem] px-6 py-6 text-[15px] leading-[1.95] tracking-[0.01em] text-gray-200">
-          {chapter.scenes.length > 0 ? chapter.scenes.map((scene, si) => (
-            <div key={scene.id}>
-              {si > 0 && <hr className="my-5 border-gray-800/70" />}
-              {scene.title && (
-                <div className="mb-2 text-xs font-medium text-gray-500">—— {scene.title} ——</div>
-              )}
-              {scene.content ? (
-                <div className="whitespace-pre-wrap">{scene.content}</div>
-              ) : (
-                <div className="italic text-gray-600">（内容待创作）</div>
-              )}
-            </div>
-          )) : (
-            <div className="text-gray-600">（暂无场景）</div>
-          )}
+          {body
+            ? <div className="whitespace-pre-wrap">{body}</div>
+            : <div className="italic text-gray-600">（内容待创作）</div>}
         </div>
       </div>
 

@@ -19,14 +19,15 @@ class TestToolDone:
             "_tool_use_id": "abc",
         }))
         d = json.loads(td)
-        assert d["tool"] == "列出角色"
+        assert d["tool"] == "列出人物"
         assert "_tool_use_id" not in d
 
-    def test_search_nodes_display_name(self):
+    def test_search_display_name(self):
+        """search_nodes 改造成 search（搜索范围加上正文）后，展示名跟着换掉。"""
         td = sanitise_event("tool_done", json.dumps({
-            "tool": "search_nodes", "success": True, "data": "x",
+            "tool": "search", "success": True, "data": "x",
         }))
-        assert json.loads(td)["tool"] == "搜索节点"
+        assert json.loads(td)["tool"] == "搜索项目内容"
 
     def test_unknown_tool_falls_back_to_generic_label(self):
         td = sanitise_event("tool_done", json.dumps({
@@ -36,7 +37,7 @@ class TestToolDone:
 
     def test_known_error_message_is_shortened(self):
         td = sanitise_event("tool_done", json.dumps({
-            "tool": "update_scene", "success": False,
+            "tool": "write_chapter", "success": False,
             "error": "InFailedSQLTransactionError: current transaction is aborted",
         }))
         assert json.loads(td)["error"] == "数据库异常"
@@ -52,7 +53,7 @@ class TestToolDone:
             "tool": "read_project", "success": True, "data": "keep-me",
         }))
         d = json.loads(td)
-        assert d["tool"] == "读取项目"
+        assert d["tool"] == "读取作品层"
         assert d["data"] == "keep-me"
         assert d["success"] is True
 
@@ -71,7 +72,7 @@ class TestPlan:
         }))
         p = json.loads(plan)
         step = p["steps"][0]
-        assert step["tool"] == "列出关系"
+        assert step["tool"] == "列出角色关系"
         assert "params" not in step
         assert "tool_use_id" not in step
         assert p["status"] == "awaiting_confirmation"
@@ -82,15 +83,15 @@ class TestPlan:
             "reasoning": "",
         }))
         step = json.loads(plan)["steps"][0]
-        assert step["description"] == "列出关系"
+        assert step["description"] == "列出角色关系"
 
     def test_reasoning_sanitises_internal_names(self):
         plan = sanitise_event("plan", json.dumps({
-            "steps": [{"tool": "read_scene", "description": "读取场景"}],
-            "reasoning": "调用 function 'read_scene' 分析后继续",
+            "steps": [{"tool": "read_chapters", "description": "范围读取章节"}],
+            "reasoning": "调用 function 'read_chapters' 分析后继续",
         }))
         p = json.loads(plan)
-        assert "read_scene" not in p["reasoning"]
+        assert "read_chapters" not in p["reasoning"]
         assert "接口" in p["reasoning"]
 
     def test_malformed_json_passes_through(self):
@@ -101,13 +102,13 @@ class TestPlan:
 class TestProjectUpdated:
     def test_display_names_and_strips_details(self):
         pu = sanitise_event("project_updated", json.dumps({
-            "tools_executed": ["list_edges"],
-            "tool_details": [{"name": "list_edges", "changes": {"data": "x"}}],
+            "tools_executed": ["read_chapters"],
+            "tool_details": [{"name": "read_chapters", "changes": {"data": "x"}}],
             "all_success": True,
         }))
         u = json.loads(pu)
-        assert u["tools_executed"][0] == "列出关联"
-        assert u["tool_details"] == [{"name": "列出关联"}]
+        assert u["tools_executed"][0] == "范围读取章节"
+        assert u["tool_details"] == [{"name": "范围读取章节"}]
 
 
 class TestError:
@@ -144,6 +145,6 @@ class TestPassthrough:
         from app.agent.tools import get_tool_registry
 
         registry = get_tool_registry(None)
-        assert len(registry) >= 50, "工具注册表没建起来"
+        assert len(registry) == 38, "规格第 9 节：33 个本范围内（含 delete_setup）+ 4 个范围外 + 1 个写作侧"
         missing = sorted(set(registry) - set(TOOL_DISPLAY_NAMES))
         assert not missing, f"缺少中文显示名的工具：{missing}"

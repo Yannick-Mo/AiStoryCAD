@@ -66,7 +66,7 @@ async def _call_embedding_api_with_retry(texts: list[str]) -> list[list[float]]:
     for attempt in range(_MAX_RETRIES):
         try:
             return await _call_embedding_api(texts)
-        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException):
             if attempt == _MAX_RETRIES - 1:
                 raise
             await asyncio.sleep(2 ** attempt)
@@ -76,9 +76,3 @@ async def _call_embedding_api_with_retry(texts: list[str]) -> list[list[float]]:
 async def embed_text(text: str) -> list[float]:
     vectors = await _call_embedding_api_with_retry([text])
     return vectors[0]
-
-
-async def embed_batch(texts: list[str]) -> list[list[float]]:
-    if not texts:
-        return []
-    return await _call_embedding_api_with_retry(texts)

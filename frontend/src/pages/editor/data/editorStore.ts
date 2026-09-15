@@ -1,18 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { EditorMockData } from '../types'
+import type { EditorMockData, SelectionState, Setup } from '../types'
 import {
-  loadEditorData, syncEditorData, relinkTimeline as apiRelinkTimeline,
-  type SyncPayload, type TimelineEdgePayload,
+  loadEditorData, syncEditorData, loadAllChapterContents,
+  createSetup as apiCreateSetup, updateSetup as apiUpdateSetup, deleteSetup as apiDeleteSetup,
+  type SyncPayload,
 } from '../../../api/editor'
 import { useActs } from './hooks/useActs'
 import { useChapters } from './hooks/useChapters'
-import { useEdges } from './hooks/useEdges'
 import { useCharacters } from './hooks/useCharacters'
-
-export interface EditorSelection {
-  type: 'act' | 'chapter' | 'edge' | null
-  id: string | null
-}
 
 export interface ChangeEntry {
   entity: string
@@ -25,9 +20,8 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   const [data, setData] = useState<EditorMockData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selection, setSelection] = useState<EditorSelection>({ type: null, id: null })
+  const [selection, setSelection] = useState<SelectionState>({ type: null, id: null })
   const [dirty, setDirty] = useState(false)
-  const [version, setVersion] = useState(0)
   const [saving, setSaving] = useState(false)
   const changesRef = useRef<ChangeEntry[]>([])
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
@@ -54,7 +48,19 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     setLoading(true)
     setError(null)
     loadEditorData(projectId)
-      .then(d => { if (!cancelled && mountedRef.current) { setData(d); setLoading(false) } })
+      .then(async d => {
+        if (cancelled || !mountedRef.current) return
+        setData(d)
+        setLoading(false)
+        // chapters.content 是延迟列，editor-data 不返回正文：单独取一次。
+        // best-effort —— 取不到时预览 / 导出为空，但不阻塞编辑。
+        try {
+          const contents = await loadAllChapterContents(projectId)
+          if (!cancelled && mountedRef.current) {
+            setData(prev => prev ? { ...prev, chapterContents: contents } : prev)
+          }
+        } catch { /* 正文拉取失败时保持为空 */ }
+      })
       .catch(e => { if (!cancelled && mountedRef.current) { setError(e.message); setLoading(false) } })
     periodTimerRef.current = setInterval(() => {
       if (changesRef.current.length > 0 && !inFlightRef.current) {
@@ -82,19 +88,6 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   const flushChangesRef = useRef<() => Promise<boolean>>()
   const runFlushRef = useRef<() => Promise<boolean>>()
 
-  // 主时序线由服务端按章节顺序维护：用返回结果替换本地副本，这样
-  // 「调顺序 → 连线跟着变」不需要前端再实现一遍同样的算法。
-  const applyTimelineEdges = useCallback((edges?: TimelineEdgePayload[]) => {
-    if (!edges) return
-    const timeline = edges.map(e => ({
-      id: e.id, sourceId: e.source_id, targetId: e.target_id, type: 'timeline' as const,
-    }))
-    setData(d => d ? {
-      ...d,
-      edges: [...d.edges.filter(e => e.type !== 'timeline'), ...timeline],
-    } : d)
-  }, [])
-
   const runFlush = useCallback(async (): Promise<boolean> => {
     if (changesRef.current.length === 0) return true
     if (inFlightRef.current) return false
@@ -113,9 +106,9 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     }
 
     try {
-      const result = await syncEditorData(projectId, payload)
-      setVersion(result.version)
-      applyTimelineEdges(result.timeline_edges)
+      // 服务端在同一次调用里把 sort_order 归一化成连续 1..N；不再回传 version
+      // 或 timeline_edges（顺序是唯一真相，线是渲染）。
+      await syncEditorData(projectId, payload)
       flushAttemptRef.current = 0
       return true
     } catch (err) {
@@ -139,7 +132,7 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     } finally {
       inFlightRef.current = false
     }
-  }, [projectId, applyTimelineEdges])
+  }, [projectId])
 
   runFlushRef.current = runFlush
 
@@ -185,10 +178,6 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     setSelection({ type, id })
   }, [])
 
-  const selectEdge = useCallback((edgeId: string) => {
-    setSelection({ type: 'edge', id: edgeId })
-  }, [])
-
   const clearSelection = useCallback(() => {
     setSelection({ type: null, id: null })
   }, [])
@@ -199,28 +188,15 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   } = useActs(data, setData, projectId, enqueueChange, clearSelection)
 
   const {
-    addChapter, updateChapter, moveChapter,
-    addScene, deleteScene, updateScene,
+    addChapter, deleteChapter, updateChapter, moveChapter, moveChapterToAct,
   } = useChapters(data, setData, projectId, enqueueChange)
 
-  // 顺序一变服务端就会重建主时序线；这几个动作立刻 flush 一次，
-  // 画布上的连线不用等 3 秒防抖才跟上。
-  const flushSoon = useCallback(() => { void flushChangesRef.current?.() }, [])
+  const {
+    addCharacter, deleteCharacter, updateCharacter,
+    addRelation, deleteRelation, updateRelation,
+  } = useCharacters(data, setData, projectId, enqueueChange, clearSelection)
 
-  // 顶部栏「重连时序」：顺序改动可能还压在防抖里，先把它落库再让服务端重新
-  // 投影，否则重建出来的是旧顺序的链。落不了库的改动宁可报错，也不重建错的链。
-  const relinkTimeline = useCallback(async (): Promise<{ created: number; deleted: number }> => {
-    for (let attempt = 0; attempt < 5 && changesRef.current.length > 0; attempt++) {
-      await flushChangesRef.current?.()
-      if (changesRef.current.length > 0) await new Promise(r => setTimeout(r, 150))
-    }
-    if (changesRef.current.length > 0) {
-      throw new Error('还有未保存的改动，请等同步完成后再重连时序线')
-    }
-    const result = await apiRelinkTimeline(projectId)
-    applyTimelineEdges(result.timeline_edges)
-    return { created: result.created, deleted: result.deleted }
-  }, [projectId, applyTimelineEdges])
+  const flushSoon = useCallback(() => { void flushChangesRef.current?.() }, [])
 
   const addChapterAction = useCallback((actId: string) => {
     const created = addChapter(actId)
@@ -233,47 +209,64 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
     flushSoon()
   }, [moveChapter, flushSoon])
 
+  const moveChapterToActAction = useCallback((chapterId: string, actId: string) => {
+    moveChapterToAct(chapterId, actId)
+    flushSoon()
+  }, [moveChapterToAct, flushSoon])
+
   const deleteChapterAction = useCallback((chapterId: string) => {
     if (!data) return
-    const ch = data.chapters.find(c => c.id === chapterId)
-    if (ch) {
-      for (const scene of ch.scenes) {
-        enqueueChange({ entity: 'scenes', op: 'delete', id: scene.id })
-      }
-    }
-    setData(d => d ? {
-      ...d,
-      chapters: d.chapters.filter(c => c.id !== chapterId),
-      edges: d.edges.filter(e => e.sourceId !== chapterId && e.targetId !== chapterId),
-    } : d)
-    enqueueChange({ entity: 'chapters', op: 'delete', id: chapterId })
+    deleteChapter(chapterId)
     if (selection.type === 'chapter' && selection.id === chapterId) {
       setSelection({ type: null, id: null })
     }
     flushSoon()
-  }, [data, selection, enqueueChange, setData, flushSoon])
+  }, [data, deleteChapter, selection, flushSoon])
 
-  const {
-    addEdge, deleteEdge, changeEdgeType, reconnectEdge,
-    updateEdge,
-  } = useEdges(data, setData, projectId, enqueueChange)
-
-  const {
-    addCharacter, deleteCharacter, updateCharacter,
-    addRelation, deleteRelation, updateRelation,
-  } = useCharacters(data, setData, projectId, enqueueChange, clearSelection)
-
-  // Wrapped deleteAct to also clear selection
   const deleteActAction = useCallback((actId: string) => {
     actsDeleteAct(actId)
     flushSoon()
   }, [actsDeleteAct, flushSoon])
 
-  // Global Settings
-  const saveGlobalSettings = useCallback((text: string) => {
-    setData(d => d ? { ...d, globalSettings: text } : d)
-    enqueueChange({ entity: 'projects', op: 'update', data: { id: projectId, global_settings: text } })
-  }, [projectId, enqueueChange])
+  // Chapter prose（正文就是 chapters.content；保存走 PUT 专用端点而不是增量同步）
+  const setChapterContent = useCallback((chapterId: string, text: string) => {
+    setData(d => d ? { ...d, chapterContents: { ...d.chapterContents, [chapterId]: text } } : d)
+  }, [])
+
+  // ── Setups（伏笔）：走通用 CRUD 端点 ────────────────────────────────
+  const addSetup = useCallback(async (plantedIn: string, note = '') => {
+    const id = crypto.randomUUID()
+    const newSetup: Setup = { id, note, plantedIn, payOffIn: null, status: 'open' }
+    setData(d => d ? { ...d, setups: [...d.setups, newSetup] } : d)
+    try {
+      await apiCreateSetup(projectId, {
+        id, note, planted_in: plantedIn, pay_off_in: null, status: 'open',
+      })
+    } catch (e) {
+      setData(d => d ? { ...d, setups: d.setups.filter(s => s.id !== id) } : d)
+      throw e
+    }
+    return newSetup
+  }, [projectId])
+
+  const updateSetupById = useCallback(async (
+    id: string,
+    updates: Partial<Pick<Setup, 'note' | 'plantedIn' | 'payOffIn' | 'status'>>,
+  ) => {
+    const payload: Record<string, unknown> = {}
+    if (updates.note !== undefined) payload.note = updates.note
+    if (updates.plantedIn !== undefined) payload.planted_in = updates.plantedIn
+    if (updates.payOffIn !== undefined) payload.pay_off_in = updates.payOffIn
+    if (updates.status !== undefined) payload.status = updates.status
+    setData(d => d ? { ...d, setups: d.setups.map(s => s.id === id ? { ...s, ...updates } : s) } : d)
+    if (Object.keys(payload).length === 0) return
+    await apiUpdateSetup(projectId, id, payload)
+  }, [projectId])
+
+  const deleteSetupById = useCallback(async (id: string) => {
+    setData(d => d ? { ...d, setups: d.setups.filter(s => s.id !== id) } : d)
+    await apiDeleteSetup(projectId, id)
+  }, [projectId])
 
   const hasPendingChanges = useCallback(() => {
     return changesRef.current.length > 0
@@ -287,17 +280,18 @@ export function useEditorStore(projectId: string, onFlushError?: (msg: string) =
   )
 
   return {
-    data, loading, error, saving, version, dirty,
+    data, loading, error, saving, dirty,
     setData: setDataDirect,
-    selection, selectNode, selectEdge, clearSelection,
+    selection, selectNode, clearSelection,
     addAct, addChapter: addChapterAction, deleteAct: deleteActAction, deleteChapter: deleteChapterAction,
-    addScene, deleteScene, moveChapter: moveChapterAction, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
+    moveChapter: moveChapterAction, moveChapterToAct: moveChapterToActAction,
     resizeAct,
     addCharacter, deleteCharacter, addRelation, deleteRelation,
-    saveGlobalSettings,
-    updateAct, updateChapter, updateScene, updateEdge,
+    updateAct, updateChapter,
     updateCharacter, updateRelation,
-    flushChanges, relinkTimeline, hasPendingChanges,
+    addSetup, updateSetup: updateSetupById, deleteSetup: deleteSetupById,
+    setChapterContent,
+    flushChanges, hasPendingChanges,
     enqueueChange,
   }
 }

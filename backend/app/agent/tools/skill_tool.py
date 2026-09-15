@@ -17,7 +17,7 @@ from app.knowledge.skill_engine import _shared_engine as _skill_engine
 class InvokeSkillTool(BaseTool):
     meta = ToolMeta(
         name="invoke_skill",
-        description="启用一个写作技能。技能会提供专属的写作指导和知识库支持。调用后系统将在下一轮注入该技能的提示词。技能名称见可用技能列表",
+        description="启用一个写作技能。调用后系统在下一轮注入该技能的提示词。技能名见可用技能列表",
         parameters={
             "type": "object",
             "properties": {

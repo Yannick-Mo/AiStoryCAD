@@ -21,10 +21,10 @@ swallowed).
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
@@ -117,7 +117,6 @@ hook_registry = HookRegistry()
 async def _log_turn_metrics(**kwargs: Any) -> None:
     """Log timing and message count after each turn."""
     state = kwargs.get("state")
-    llm_client = kwargs.get("llm_client")
     turn_start = kwargs.get("turn_start")
     if state is None or turn_start is None:
         return

@@ -3,9 +3,9 @@ import { Handle, Position, type NodeProps } from 'reactflow'
 import type { CharacterNodeData } from '../../types'
 
 const ROLE_LABELS: Record<string, string> = {
-  protagonist: '主角',
-  ally: '盟友',
-  antagonist: '对手',
+  main: '主角',
+  supporting: '配角',
+  minor: '龙套',
 }
 
 function CharacterNode({ data, selected }: NodeProps<CharacterNodeData>) {

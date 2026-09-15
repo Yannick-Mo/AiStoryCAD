@@ -215,7 +215,10 @@ async def build_system_prompt(state: dict, rag_text: str = "") -> str:
     cowriter_active = mode == "cowriter"
 
     acts = project_ctx.get("acts", [])
-    total_ch = sum(len(a.get("chapters", [])) for a in acts) if acts else 0
+    total_ch = int(project_ctx.get("chapter_count") or 0) or (
+        sum(int(a.get("chapter_count") or len(a.get("chapters", []))) for a in acts)
+        if acts else 0
+    )
     project_structure = f"{len(acts)} acts, {total_ch} chapters total" if acts else ""
 
     rag_text = rag_text or ""

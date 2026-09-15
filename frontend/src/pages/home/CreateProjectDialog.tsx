@@ -10,6 +10,21 @@ interface Props {
   onClose: () => void
 }
 
+/**
+ * create-from-material 的进度步骤。
+ *
+ * 这里只登记前端确实认识的步骤；后端流水线加进来的其它节点会按原样追加显示
+ * （label 缺省就是节点名），所以前端不再硬编码一套节点名。
+ */
+const STEP_LABELS: Record<string, string> = {
+  analyze_material: "分析素材",
+  plan_structure: "规划结构",
+  design_characters: "设计角色",
+  build_settings: "生成世界观",
+  validate: "校验结果",
+}
+const KNOWN_STEPS = Object.keys(STEP_LABELS)
+
 export default function CreateProjectDialog({ open, onClose }: Props) {
   const [mode, setMode] = useState<"pick" | "empty" | "material">("pick")
   const [title, setTitle] = useState("")
@@ -82,6 +97,13 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
     )
     abortCreateRef.current = cancel
   }
+
+  // 收到的步骤 + 尚未收到的已知步骤，顺序按流水线实际报告的顺序。
+  const receivedSteps = aiSteps.map(e => e.step).filter(s => s !== "done" && s !== "error")
+  const progressSteps = [...KNOWN_STEPS, ...receivedSteps.filter(s => !KNOWN_STEPS.includes(s))]
+  const currentStep = aiGenerating
+    ? progressSteps.find(s => !receivedSteps.includes(s)) ?? null
+    : null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleClose}>
@@ -214,37 +236,18 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
               <button onClick={() => { abortCreateRef.current?.(); abortCreateRef.current = null; navigate("/") }} className="text-gray-500 hover:text-white text-lg">✕</button>
             </div>
             <div className="space-y-2 mb-6">
-              {["analyze_material", "plan_structure", "design_characters", "build_settings", "generate_all_scenes", "generate_edges", "validate"].map((step, idx) => {
+              {progressSteps.map(step => {
                 const evt = aiSteps.find(e => e.step === step)
-                const lastStep = aiSteps[aiSteps.length - 1]?.step
-                const current = !evt && aiGenerating && (
-                  lastStep === step || (idx === 0 && !lastStep)
-                )
                 const done = !!evt
-                const labels: Record<string, string> = {
-                  analyze_material: "分析素材",
-                  plan_structure: "规划结构",
-                  design_characters: "设计角色",
-                  build_settings: "生成世界观",
-                  generate_all_scenes: "生成场景",
-                  generate_edges: "生成连线",
-                  validate: "校验结果",
-                }
-                const plan = aiSteps.find(e => e.step === "plan_structure")
-                const totalChapters = plan?.preview ? (plan.preview.match(/(\d+)章/)?.[1] ?? "") : ""
-                const sceneCount = step === "generate_all_scenes" && done && evt?.preview
-                  ? (parseInt(evt.preview) || 0) : 0
+                const current = !evt && step === currentStep
                 return (
                   <div key={step} className={`flex items-start gap-3 p-2 rounded-lg ${(done || current) ? 'bg-gray-800/60' : ''}`}>
                     <span className={`text-sm w-5 ${done ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : 'text-gray-600'}`}>{done ? "✓" : current ? "⟳" : "○"}</span>
                     <div className="flex-1 min-w-0">
                       <div className={`text-sm ${current ? 'text-gray-200' : done ? 'text-gray-400' : 'text-gray-600'}`}>
-                        {labels[step]}{step === "generate_all_scenes" && totalChapters ? ` (${totalChapters}章)` : ""}
+                        {STEP_LABELS[step] ?? step}
                       </div>
-                      {step === "generate_all_scenes" && done && sceneCount > 0 && (
-                        <div className="text-xs text-gray-500 mt-0.5">共 {sceneCount} 个场景</div>
-                      )}
-                      {step !== "generate_all_scenes" && evt?.preview && (
+                      {evt?.preview && (
                         <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap leading-relaxed">{evt.preview}</div>
                       )}
                     </div>

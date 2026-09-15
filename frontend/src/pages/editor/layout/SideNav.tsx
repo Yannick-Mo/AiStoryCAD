@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
-  Network, Users, FolderOpen, Eye, Download, Settings, ListTree, Save, Check, LoaderCircle,
+  Network, Users, FolderOpen, Eye, Download, Settings, ListTree, Save, Check, LoaderCircle, Anchor,
+  PanelRight,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { VIEWS } from '../types'
@@ -11,8 +12,13 @@ interface SideNavProps {
   onPreview: () => void
   onExport: () => void
   onGlobalSetting: () => void
+  onSetups: () => void
   onOutline: () => void
   outlineOpen?: boolean
+  setupsOpen?: boolean
+  /** 详情面板的开关（选中项的详情页） */
+  onDetail: () => void
+  detailOpen?: boolean
   /** 导出是否只含已定稿章节（与预览面板的过滤一致） */
   finalOnly?: boolean
   dirty: boolean
@@ -92,8 +98,8 @@ function SaveButton({
 }
 
 export default function SideNav({
-  activeViewId, onSwitchView, onPreview, onExport, onGlobalSetting,
-  onOutline, outlineOpen, finalOnly, dirty, saving, onSave,
+  activeViewId, onSwitchView, onPreview, onExport, onGlobalSetting, onSetups,
+  onOutline, outlineOpen, setupsOpen, onDetail, detailOpen, finalOnly, dirty, saving, onSave,
 }: SideNavProps) {
   const [mgmtOpen, setMgmtOpen] = useState(false)
 
@@ -144,11 +150,13 @@ export default function SideNav({
         )}
       </div>
 
-      {/* Bottom cluster: save status, outline, global settings */}
+      {/* Bottom cluster: save status, outline, setups, global settings */}
       <div className="mt-auto" />
       <div className="mb-1 h-px w-8 bg-gray-800" />
       <SaveButton dirty={dirty} saving={saving} onSave={onSave} />
       <IconButton icon={ListTree} label="大纲" active={outlineOpen} onClick={onOutline} />
+      <IconButton icon={Anchor} label="伏笔" active={setupsOpen} onClick={onSetups} />
+      <IconButton icon={PanelRight} label="详情页" active={detailOpen} onClick={onDetail} />
       <IconButton icon={Settings} label="全局设定" onClick={onGlobalSetting} />
     </nav>
   )

@@ -1,6 +1,4 @@
 import os
-import uuid
-import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -66,15 +64,21 @@ async def db_session():
         yield session
         await session.close()
         await conn.rollback()
-    # 历史上遗留、不在 Base.metadata 注册集合里的表（被测模块按需 import），
-    # drop_all 不会清理它们，而它们的 FK 指向 scenes → 必须在 drop_all 之前
-    # CASCADE 清理，否则 DROP TABLE scenes 触发 DependentObjectsStillExistError。
+    # 兼容改造之前建的测试库：那时的表（scenes / scene_contents / chapter_edges /
+    # project_configs / project_versions，以及更早被删掉的一致性引擎与主题）都不在
+    # Base.metadata 里，drop_all 不会清它们；而它们的外键指向 scenes，
+    # 所以必须在 drop_all 之前整批 CASCADE 掉，否则 DROP TABLE 会报
+    # DependentObjectsStillExistError。**全新的库上这条语句是空操作。**
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "DROP TABLE IF EXISTS scene_fact_cache, consistency_facts,"
-                " entity_aliases, conflict_candidates, consistency_time_cache,"
-                " consistency_fact_queue, consistency_logs, consistency_reports"
+                "DROP TABLE IF EXISTS"
+                " scene_fact_cache, scene_contents, scenes,"
+                " chapter_edges, project_configs, project_versions,"
+                " theme_chapters, chapter_rhythms, themes,"
+                " consistency_facts, consistency_fact_queue, consistency_logs,"
+                " consistency_reports, consistency_time_cache,"
+                " conflict_candidates, entity_aliases"
                 " CASCADE"
             )
         )
@@ -88,6 +92,5 @@ async def test_user(db_session: AsyncSession) -> dict:
     """Single-user local tool: the fixed local identity (UUID id like the
     legacy user fixture, so callers can pass it straight to UUID columns)."""
     from uuid import UUID
-    from app.settings.service import local_user
     u = local_user()
     return {**u, "id": UUID(u["id"])}

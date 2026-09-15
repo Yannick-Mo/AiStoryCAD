@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from loguru import logger
 from redis.asyncio import Redis
@@ -604,12 +603,3 @@ class SuperAgent:
                 await self._llm_client.close()
             except Exception as exc:
                 logger.warning("Error closing LLM client: %s", exc)
-
-
-# ── Factory ────────────────────────────────────────────────────────────
-
-
-def get_super_agent(
-    db: AsyncSession, redis: Redis | None = None
-) -> SuperAgent:
-    return SuperAgent(db, redis)

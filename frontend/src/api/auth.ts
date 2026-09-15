@@ -104,7 +104,43 @@ export async function deleteProject(id: string): Promise<{ ok: boolean }> {
   return apiDelete(`${BASE_PROJECTS}/${id}`)
 }
 
-export async function updateProject(id: string, payload: Partial<{ title: string; description: string; status: string }>): Promise<{ ok: boolean }> {
+/**
+ * 作品层可写字段（规格第 3 节总表；后端 ALLOWED_PROJECT_FIELDS 是同一份名单）。
+ *
+ * ``ending``（终局）和 ``spine``（主线骨架）不是装饰：章蓝图答不出"结局是什么"
+ * 和"我离结局还有多远"，这两个字段是每一章判断该往哪使劲的依据。
+ */
+export interface ProjectUpdatePayload {
+  title?: string
+  genre?: string
+  logline?: string
+  ending?: string
+  spine?: string
+  global_settings?: string
+  total_words?: number
+  description?: string
+  status?: string
+}
+
+/** GET /api/projects/{pid} 直接返回 projects 表的列。 */
+export interface ProjectDetail {
+  id: string
+  title: string
+  genre: string
+  logline: string
+  ending: string
+  spine: string
+  global_settings: string
+  total_words: number
+  description: string
+  status: string
+}
+
+export async function getProject(id: string): Promise<ProjectDetail> {
+  return apiGet(`${BASE_PROJECTS}/${id}`)
+}
+
+export async function updateProject(id: string, payload: ProjectUpdatePayload): Promise<{ ok: boolean }> {
   return apiPatch(`${BASE_PROJECTS}/${id}`, payload)
 }
 

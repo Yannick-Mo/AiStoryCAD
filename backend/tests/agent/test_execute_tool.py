@@ -1,6 +1,5 @@
 """Tests for tool parameter validation and error message consistency."""
 
-import pytest
 from app.agent.tools.base import BaseTool, ToolResult
 
 
@@ -17,7 +16,6 @@ class ValidatableTool(BaseTool):
     }
 
     async def run(self, db, **kwargs):
-        from app.agent.tools.base import ToolResult
         return ToolResult(success=True, data=kwargs)
 
 
@@ -25,17 +23,17 @@ class TestRequireParam:
     """Tests for BaseTool._require_param() — the canonical param validator."""
 
     def test_returns_value_when_present(self):
-        val = BaseTool._require_param({"scene_id": "abc-123"}, "scene_id")
+        val = BaseTool._require_param({"chapter_id": "abc-123"}, "chapter_id")
         assert val == "abc-123"
 
     def test_returns_none_when_missing(self):
-        assert BaseTool._require_param({}, "scene_id") is None
+        assert BaseTool._require_param({}, "chapter_id") is None
 
     def test_returns_none_for_empty_string(self):
-        assert BaseTool._require_param({"scene_id": "  "}, "scene_id") is None
+        assert BaseTool._require_param({"chapter_id": "  "}, "chapter_id") is None
 
     def test_returns_none_for_none_value(self):
-        assert BaseTool._require_param({"scene_id": None}, "scene_id") is None
+        assert BaseTool._require_param({"chapter_id": None}, "chapter_id") is None
 
     def test_strips_whitespace(self):
         val = BaseTool._require_param({"name": "  hello  "}, "name")
@@ -51,17 +49,17 @@ class TestMissingParam:
         assert "chapter_id" in result.error
         assert "read_chapters" in result.error
 
-    def test_scene_id_hint(self):
-        result = BaseTool._missing_param("scene_id")
-        assert "read_chapter" in result.error
+    def test_setup_id_hint(self):
+        result = BaseTool._missing_param("setup_id")
+        assert "list_setups" in result.error
 
     def test_character_id_hint(self):
         result = BaseTool._missing_param("character_id")
         assert "list_characters" in result.error
 
-    def test_edge_id_hint(self):
-        result = BaseTool._missing_param("edge_id")
-        assert "list_edges" in result.error
+    def test_relation_id_hint(self):
+        result = BaseTool._missing_param("relation_id")
+        assert "list_relations" in result.error
 
     def test_unknown_param_fallback(self):
         result = BaseTool._missing_param("unknown_field")
@@ -83,13 +81,13 @@ class TestNotFound:
         assert "章节" in result.error
         assert result.correction_hint is not None
 
-    def test_scene_not_found(self):
-        result = BaseTool._not_found("Scene")
-        assert "场景" in result.error
+    def test_setup_not_found(self):
+        result = BaseTool._not_found("Setup")
+        assert "伏笔" in result.error
 
     def test_character_not_found(self):
         result = BaseTool._not_found("Character")
-        assert "角色" in result.error
+        assert "人物" in result.error
 
     def test_act_not_found(self):
         result = BaseTool._not_found("Act")
@@ -147,7 +145,7 @@ class TestErrorMessagesAreChinese:
     """Verify that tool errors from the base class helpers are in Chinese."""
 
     def test_not_found_is_chinese(self):
-        for entity in ["Act", "Chapter", "Scene", "Character", "Project"]:
+        for entity in ["Act", "Chapter", "Character", "CharacterRelation", "Setup", "Project"]:
             result = BaseTool._not_found(entity)
             # Must contain CJK characters
             assert any('一' <= c <= '鿿' for c in result.error), \
@@ -167,7 +165,7 @@ class TestErrorMessagesAreChinese:
 
     def test_correction_hint_is_chinese(self):
         """correction_hint must be in Chinese for LLM self-correction."""
-        for k in ["chapter_id", "scene_id", "character_id", "edge_id"]:
+        for k in ["chapter_id", "act_id", "character_id", "relation_id", "setup_id"]:
             result = BaseTool._missing_param(k)
             assert result.correction_hint is not None, f"No correction_hint for {k}"
             assert any('一' <= c <= '鿿' for c in result.correction_hint), \

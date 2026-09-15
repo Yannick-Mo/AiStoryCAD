@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import Lock
 
@@ -26,7 +26,6 @@ class TokenTracker:
 
     def _evict_old(self):
         cutoff = datetime.now() - _RECORD_TTL
-        before = len(self._records)
         self._records = [r for r in self._records if r.timestamp > cutoff]
         if len(self._records) > _MAX_RECORDS:
             self._records = self._records[-_MAX_RECORDS:]

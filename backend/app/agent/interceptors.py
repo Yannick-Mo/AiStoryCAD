@@ -60,7 +60,7 @@ def apply_interceptors(
     tool_calls: list[tuple[str, dict, str]],  # [(tool_name, args, tool_use_id), ...]
     mode: str,
     cowriter_session: dict | None = None,
-    tools_registry: dict[str, "BaseTool"] | None = None,
+    tools_registry: dict[str, BaseTool] | None = None,
 ) -> InterceptResult:
     """Apply both gates to a batch of tool calls.
 
@@ -109,7 +109,7 @@ def apply_interceptors(
 
 def build_confirmation_plan(
     pending_tools: list[tuple[str, dict, str]],
-    tools_registry: dict[str, "BaseTool"] | None = None,
+    tools_registry: dict[str, BaseTool] | None = None,
 ) -> dict:
     """Build a plan object for frontend confirmation UI.
 
@@ -153,14 +153,14 @@ def build_confirmation_plan(
 
 def _is_read_by_name(name: str) -> bool:
     """Heuristic for read-only tools when registry is unavailable."""
-    read_prefixes = ("read_", "list_", "search_", "analyze_", "check_", "suggest_", "web_search", "web_fetch")
-    return name.startswith(read_prefixes) or name in ("project_health",)
+    read_prefixes = ("read_", "list_", "search_", "web_search", "web_fetch")
+    return name.startswith(read_prefixes) or name in ("search",)
 
 
 def _needs_confirmation(
     tool_name: str,
     cowriter_session: dict,
-    tools_registry: dict[str, "BaseTool"] | None = None,
+    tools_registry: dict[str, BaseTool] | None = None,
 ) -> bool:
     """Determine if a tool call needs user confirmation.
 

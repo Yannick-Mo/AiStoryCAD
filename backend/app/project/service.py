@@ -1,12 +1,33 @@
 import uuid
-from typing import Optional
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.project.repository import ProjectRepository
-from app.project.models import Project, ProjectConfig
-from app.storycad.models import Chapter, Scene
+from app.project.models import Project
+from app.storycad.models import Chapter
 from app.utils import row_to_dict
+
+
+# count_words（app/agent/utils.py）的中文区间。Python 字符串里的 \u 转义会
+# 变成真实字符，所以传给 Postgres 的就是 [一-鿿] / [^一-鿿]。
+_CJK_CLASS = "[\u4e00-\u9fff]"
+_NOT_CJK_CLASS = "[^\u4e00-\u9fff]"
+
+
+def word_count_expr(column):
+    """与 ``app.agent.utils.count_words`` 口径一致的 SQL 字数表达式。
+
+    字数不落库（派生值不存），但项目列表要显示进度，所以必须有一段 SQL
+    复刻同一套规则：CJK 逐字计数 + 非 CJK 按空白分词。两处口径不一致的话，
+    同一个项目会出现两个"字数"。
+    """
+    cjk = func.length(func.regexp_replace(func.coalesce(column, ""), _NOT_CJK_CLASS, "", "g"))
+    remainder = func.btrim(func.regexp_replace(func.coalesce(column, ""), _CJK_CLASS, "", "g"))
+    non_cjk = case(
+        (remainder == "", 0),
+        else_=func.array_length(func.regexp_split_to_array(remainder, r"\s+"), 1),
+    )
+    return cjk + non_cjk
 
 
 class ProjectService:
@@ -17,7 +38,7 @@ class ProjectService:
         project = await self.repo.create(title, description, owner_id)
         return row_to_dict(project)
 
-    async def get_project(self, project_id: uuid.UUID, owner_id: uuid.UUID) -> Optional[dict]:
+    async def get_project(self, project_id: uuid.UUID, owner_id: uuid.UUID) -> dict | None:
         project = await self.repo.get(project_id)
         if not project or project.owner_id != owner_id:
             return None
@@ -31,31 +52,28 @@ class ProjectService:
 
         project_ids = [p.id for p in projects]
 
-        ch_stmt = select(Chapter.project_id, func.count().label("ch_count")).where(
+        chapter_stmt = select(
+            Chapter.project_id,
+            func.count().label("chapter_count"),
+            func.coalesce(func.sum(word_count_expr(Chapter.content)), 0).label("written_words"),
+        ).where(
             Chapter.project_id.in_(project_ids)
         ).group_by(Chapter.project_id)
-        ch_rows = (await self.repo.db.execute(ch_stmt)).all()
-        ch_map = {row.project_id: row.ch_count for row in ch_rows}
-
-        sc_stmt = select(Scene.project_id, func.count().label("sc_count"), func.coalesce(func.sum(Scene.word_count), 0).label("word_total")).where(
-            Scene.project_id.in_(project_ids)
-        ).group_by(Scene.project_id)
-        sc_rows = (await self.repo.db.execute(sc_stmt)).all()
-        sc_map = {row.project_id: {"count": row.sc_count, "words": row.word_total} for row in sc_rows}
-
-        cfg_stmt = select(ProjectConfig).where(ProjectConfig.project_id.in_(project_ids))
-        cfg_rows = (await self.repo.db.execute(cfg_stmt)).scalars().all()
-        cfg_map = {c.project_id: c for c in cfg_rows}
+        chapter_rows = (await self.repo.db.execute(chapter_stmt)).all()
+        chapter_map = {
+            row.project_id: {"chapters": int(row.chapter_count), "words": int(row.written_words)}
+            for row in chapter_rows
+        }
 
         items = []
-        for p in projects:
-            item = row_to_dict(p)
-            sc_data = sc_map.get(p.id, {"count": 0, "words": 0})
-            item["total_chapters"] = int(ch_map.get(p.id, 0))
-            item["total_scenes"] = int(sc_data["count"])
-            item["total_words"] = int(sc_data["words"])
-            config = cfg_map.get(p.id)
-            item["template_type"] = config.template_type if config else ""
+        for project in projects:
+            stats = chapter_map.get(project.id, {"chapters": 0, "words": 0})
+            item = row_to_dict(project)
+            item["total_chapters"] = stats["chapters"]
+            # 这两个键曾经都叫 total_words（一个是目标、一个是已写），
+            # 现在分开：target_words 是设定，written_words 是实时算出来的。
+            item["target_words"] = int(project.total_words or 0)
+            item["written_words"] = stats["words"]
             items.append(item)
 
         total = (await self.repo.db.execute(
@@ -75,17 +93,3 @@ class ProjectService:
         if not project or project.owner_id != owner_id:
             return False
         return await self.repo.delete(project_id)
-
-    async def get_config(self, owner_id: uuid.UUID, project_id: uuid.UUID):
-        project = await self.repo.get(project_id)
-        if not project or project.owner_id != owner_id:
-            return None
-        return await self.repo.get_config(project_id)
-
-    async def update_config(self, owner_id: uuid.UUID, project_id: uuid.UUID, data: dict):
-        project = await self.repo.get(project_id)
-        if not project or project.owner_id != owner_id:
-            return None
-        allowed = {"total_words", "template_type", "target_audience"}
-        filtered = {k: v for k, v in data.items() if k in allowed}
-        return await self.repo.upsert_config(project_id, **filtered)

@@ -237,7 +237,7 @@ async def _search(
 class WebSearchTool(BaseTool):
     meta = ToolMeta(
         name="web_search",
-        description="搜索网络获取实时信息。适用于查询最新新闻、事实数据、写作参考资料等。返回URL后可调用 web_fetch 获取详情",
+        description="搜索网络获取实时信息（最新新闻、事实数据、写作参考资料等）。返回的 URL 可用 web_fetch 取详情",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",

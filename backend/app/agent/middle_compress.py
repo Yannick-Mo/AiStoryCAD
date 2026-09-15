@@ -4,17 +4,17 @@ Design (agreed with product):
 
 * Only a **whitelist** of tools whose results are "raw material" (long
   prose / big structural dumps) ever reach the middle LLM.  Every other
-  tool (ID-navigation lists like ``list_*`` / ``search_nodes``, write
-  confirmations, and internal-LLM products like ``analyze_*``) passes
+  tool (ID-navigation lists like ``list_*`` / ``read_chapters`` / ``search``, write
+  confirmations, and derived summaries like ``read_progress``) passes
   through untouched — compressing those would break tool-call chaining
   (hallucinated IDs) or double-process LLM answers.
-* Project/DB query tools (``read_scene``, ``read_chapters``,
-  ``read_chapter``) are deliberately NOT whitelisted: their data is
+* Project/DB query tools (``read_chapter_content``, ``read_chapters``,
+  ``read_acts``) are deliberately NOT whitelisted: their data is
   the story outline/framework the loop LLM must see verbatim (truncating
   or summarizing it risks losing the exact structure/IDs the model relies
   on for navigation), and their size is bounded by the outline fields.
 * Thresholds: results under ``LLM_COMPRESS_MIN_CHARS`` are injected
-  verbatim (typical scene content 1-3K chars stays fully visible).
+  verbatim (a typical chapter body of 3-5K chars stays fully visible).
   15K-50K → semantic compression (target ``TARGET_SEMANTIC_CHARS``);
   over 50K → structural compression (target ``TARGET_STRUCTURAL_CHARS``).
 * The middle LLM gets a **clean context**: only its compression prompt +
@@ -35,10 +35,8 @@ import asyncio
 import json
 import logging
 import re
-import uuid
-from typing import Any, Callable
-
-from app.config import settings
+from typing import Any
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

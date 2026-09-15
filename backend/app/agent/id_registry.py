@@ -11,8 +11,8 @@ bookkeeping, is persisted across user requests so IDs stay usable across turns.
 Registry shape (JSON-serializable for Redis persistence)::
 
     {
-      "scene": {
-        "sc-xxxx-xxxx": {"label": "郊外咖啡馆", "seen": 17},
+      "chapter": {
+        "3f2a...": {"label": "第三章 灵堂", "seen": 17},
         ...
       },
       ...
@@ -37,57 +37,59 @@ STALE_WINDOW = 16       # a persisted entry expires after N unconfirmed versions
 # ── Entity type vocabulary ───────────────────────────────────────────────
 
 _ENTITY_TYPES: tuple[str, ...] = (
-    "act", "chapter", "scene", "character", "relation", "edge",
+    "act", "chapter", "character", "relation", "setup",
 )
 
 _TYPE_CN: dict[str, str] = {
     "act": "幕",
     "chapter": "章",
-    "scene": "场景",
-    "character": "角色",
+    "character": "人物",
     "relation": "关系",
-    "edge": "连线",
+    "setup": "伏笔",
 }
 
 # Container key in a tool-result JSON → entity type of the contained items.
 _CONTAINER_TYPES: dict[str, str] = {
     "acts": "act",
     "chapters": "chapter",
-    "scenes": "scene",
     "characters": "character",
     "relations": "relation",
-    "edges": "edge",
+    "setups": "setup",
+    # read_progress 把伏笔拆成两组返回，两组的元素都带 id
+    "open_setups": "setup",
+    "overdue_setups": "setup",
+    "recently_changed_chapters": "chapter",
 }
 
 # Identity field to use as the display label for each entity type.
 _LABEL_FIELDS: dict[str, tuple[str, ...]] = {
     "act": ("name",),
     "chapter": ("title",),
-    "scene": ("title",),
     "character": ("name",),
     "relation": ("character_name", "target_name"),
-    "edge": ("source_title", "target_title"),
+    "setup": ("note",),
 }
 
 # Tools whose *whole* result is a flat dict for a single entity (container
 # recursion can't see these — the entity is the top-level dict, not inside a
-# "characters"/"scenes" key).  Map tool → entity type.
+# "characters"/"setups" key).  Map tool → entity type.
+#
+# 这些工具的返回值里，ID 在 ``id`` 或 ``<entity>_id`` 下，两者都认。
 _FLAT_ENTITY_TOOL: dict[str, str] = {
     "read_character": "character",
-    "read_scene": "scene",
-    "read_chapter": "chapter",
-    "create_character": "character",
-    "create_scene": "scene",
-    "create_chapter": "chapter",
+    "read_relation": "relation",
     "create_act": "act",
-    "create_edge": "edge",
-    "create_relation": "relation",
-    "update_character": "character",
-    "update_scene": "scene",
-    "update_chapter": "chapter",
     "update_act": "act",
-    "update_edge": "edge",
+    "move_act": "act",
+    "create_chapter": "chapter",
+    "update_chapter": "chapter",
+    "move_chapter": "chapter",
+    "create_character": "character",
+    "update_character": "character",
+    "create_relation": "relation",
     "update_relation": "relation",
+    "create_setup": "setup",
+    "update_setup": "setup",
 }
 
 # Unfiltered list_* results are the authoritative full set for their type —
@@ -96,15 +98,15 @@ _FLAT_ENTITY_TOOL: dict[str, str] = {
 _SNAPSHOT_TOOLS: dict[str, str] = {
     "list_characters": "character",
     "list_relations": "relation",
-    "list_edges": "edge",
+    "list_setups": "setup",
 }
 
 # Params that, if present, make a list_* result a *filtered* (non-authoritative)
 # subset.
 _FILTER_PARAMS: dict[str, set[str]] = {
-    "list_character_relations": {"character_id"},
     "list_characters": set(),
-    "list_edges": set(),
+    "list_relations": set(),
+    "list_setups": {"status"},
 }
 
 # Delete tools → (entity_type, data-key) pairs.  Keys may hold a single id
@@ -113,19 +115,18 @@ _DELETE_EVICTION: dict[str, list[tuple[str, str]]] = {
     "delete_act": [
         ("act", "deleted_act_id"),
         ("chapter", "deleted_chapter_ids"),
-        ("scene", "deleted_scene_ids"),
+        ("setup", "deleted_setup_ids"),
     ],
     "delete_chapter": [
         ("chapter", "deleted_chapter_id"),
-        ("scene", "deleted_scene_ids"),
+        ("setup", "deleted_setup_ids"),
     ],
-    "delete_scene": [("scene", "deleted_scene_id")],
     "delete_character": [
-        ("character", "character_id"),
+        ("character", "deleted_character_id"),
         ("relation", "deleted_relation_ids"),
     ],
-    "delete_relation": [("relation", "relation_id")],
-    "delete_edge": [("edge", "deleted_edge_id")],
+    "delete_relation": [("relation", "deleted_relation_id")],
+    "delete_setup": [("setup", "deleted_setup_id")],
 }
 
 # Markers appended by streaming_executor._summarise_tool_output when a JSON
@@ -181,18 +182,13 @@ def _label_is_better(new: str, old: str) -> bool:
 def _compose_label(entity_type: str, item: dict) -> str:
     """Build a display label for *item* of *entity_type*.
 
-    Relations/edges get ``A → B`` labels when names are available; otherwise
-    they degrade to ``关系: <id>`` / ``连线: <id>``.
+    关系（relation）在两端名字齐全时得到 ``A → B`` 形式的标签，
+    否则退化成 ``关系: <id>``。
     """
-    if entity_type in ("relation", "edge"):
-        if entity_type == "relation":
-            a = item.get("character_name") or "?"
-            b = item.get("target_name") or "?"
-            rel = item.get("label") or item.get("rel_type") or "关系"
-        else:
-            a = item.get("source_title") or "?"
-            b = item.get("target_title") or "?"
-            rel = item.get("label") or item.get("edge_type") or "连线"
+    if entity_type == "relation":
+        a = item.get("character_name") or "?"
+        b = item.get("target_name") or "?"
+        rel = item.get("label") or item.get("rel_type") or "关系"
         if "?" not in a and "?" not in b:
             return f"{rel}: {str(a)[:40]} → {str(b)[:40]}"
         eid = item.get("id") or item.get(f"{entity_type}_id")
@@ -443,6 +439,6 @@ def render_id_registry(
         if total >= max_entries:
             break
 
-    lines.append("（注：ID 可能已过期，若调用失败请重新调用获取工具取最新 ID——如 read_chapters / read_chapter_scenes / list_characters 等）")
+    lines.append("（注：ID 可能已过期，若调用失败请重新调用获取工具取最新 ID——如 read_chapters / read_acts / list_characters / list_setups 等）")
     rendered = "\n".join(lines)
     return rendered[:max_chars]
