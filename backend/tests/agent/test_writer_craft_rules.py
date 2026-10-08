@@ -34,7 +34,7 @@ def _prompt(**overrides) -> str:
         spine="奔丧 → 留下", ending="他留下查清旧债",
         previous_chapter_title="第一章", previous_chapter_goal="他拿到了账本。",
         previous_chapter_tail="他站在门口。",
-        characters_text="- 陈默（主角）", open_setups_text="- 账本（第 1 章埋下）",
+        characters_text="- 陈默（主角）", chapter_setups_text="**要收的**（本章必须收掉）：\n- 账本（第 1 章埋下）",
         action="write",
     )
     ctx.update(overrides)

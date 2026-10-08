@@ -1046,16 +1046,23 @@ class ContextBuilder:
 
         ctx["chapter_title"] = chapter.title or ""
         ctx["chapter_goal"] = chapter.goal or ""
-        # 只放 writer.yaml 真正会用的键。章的 result/status/正文字数都不给：
-        # 它们对写手没有信息量（正文本身给了 existing_content），多一个键就是
-        # 一份要维护、会和模板悄悄漂移的载荷——测试 test_writer_context.py 的
-        # UNUSED_CTX_KEYS 就是钉这件事的。
+        # 只放 writer.yaml 真正会用的键。章的 status / 正文字数都不给：它们对写手
+        # 没有信息量，多一个键就是一份要维护、会和模板悄悄漂移的载荷——而且进了
+        # 上下文就是进了提示词，白占写手的注意力。测试 test_writer_context.py 的
+        # UNUSED_CTX_KEYS 与 ACTION_CONDITIONAL 就是钉这件事的。
 
         existing_content = chapter.content or ""
+        # 按动作给，用哪个给哪个——**多给就是让写手分心**：
+        #   continue → 只要尾 1500 字（续写锚点），全文不必给
+        #   rewrite  → 要全文（要重写整章）
+        #   write    → 什么都不给（整体替换，它不知道旧文也不影响）
+        # 曾经三个动作都给全文、continue 和 rewrite 还都给 tail，于是每个动作
+        # 都带了一到两份自己用不上的正文进提示词。
         if existing_content:
-            ctx["existing_content"] = existing_content
-            if action in ("continue", "rewrite"):
+            if action == "continue":
                 ctx["existing_content_tail"] = existing_content[-1500:]
+            elif action == "rewrite":
+                ctx["existing_content"] = existing_content
 
         ordered = await ordered_chapter_ids(self.db, chapter.project_id)
         try:
@@ -1120,19 +1127,41 @@ class ContextBuilder:
         # 人物（第 4 步）：每个人的「他想要什么」+「他从哪到哪」
         ctx["characters_text"] = await self._characters_text(chapter.project_id)
 
-        # 还没收的伏笔：这一章可能轮到它（第 6 步）
+        # 本章的伏笔（第 6 步）：只给「这一章要收的」和「这一章要埋的」。
+        #
+        # 原先给全部 status=="open" 的。`pay_off_in` 记在数据里却从没被用上过——
+        # 于是「打算第 9 章收」的伏笔和本章无关也照给。§13.11 记的那次数据漂移正是
+        # 这么来的：伏笔笔记里写着「七年」，写手两次都照着写了，而人物档案只写
+        # 「多年」。note 是自由文本，给不相关的伏笔等于把无关事实当材料用。
         setups = (await self.db.execute(
-            select(Setup).where(Setup.project_id == chapter.project_id, Setup.status == "open")
+            select(Setup).where(
+                Setup.project_id == chapter.project_id,
+                Setup.status == "open",
+                (Setup.pay_off_in == chapter.id) | (Setup.planted_in == chapter.id),
+            )
             .order_by(*order_by_sequence(Setup))
         )).scalars().all()
         order_map = {cid: index + 1 for index, cid in enumerate(ordered)}
-        if setups:
-            ctx["open_setups_text"] = "\n".join(
+        # 两组分开给：写手不必自己拿本章章号去比对「第 N 章埋下」里的 N。
+        parts: list[str] = []
+        to_pay = [s for s in setups if s.pay_off_in == chapter.id]
+        if to_pay:
+            parts.append("**要收的**（本章必须收掉）：\n" + "\n".join(
                 "- " + (s.note or "（未描述）")
-                + (f"（第 {order_map[s.planted_in]} 章埋下）" if order_map.get(s.planted_in) else "")
-                + (f"（打算第 {order_map[s.pay_off_in]} 章收）" if s.pay_off_in and order_map.get(s.pay_off_in) else "（还没定在哪收）")
-                for s in setups
-            )
+                + (f"（第 {order_map[s.planted_in]} 章埋下）"
+                   if order_map.get(s.planted_in) else "")
+                for s in to_pay
+            ))
+        to_plant = [s for s in setups if s.planted_in == chapter.id]
+        if to_plant:
+            parts.append("**要埋的**（让它们真的出现在正文里）：\n" + "\n".join(
+                "- " + (s.note or "（未描述）")
+                + (f"（打算第 {order_map[s.pay_off_in]} 章收）"
+                   if s.pay_off_in and order_map.get(s.pay_off_in) else "（还没定在哪收）")
+                for s in to_plant
+            ))
+        if parts:
+            ctx["chapter_setups_text"] = "\n\n".join(parts)
 
         return ctx
 

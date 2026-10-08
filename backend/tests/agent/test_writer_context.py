@@ -34,13 +34,17 @@ WRITER_YAML = (Path(__file__).resolve().parents[2]
 #   user_requirement —— 用户这一轮的要求（可能为空）
 CALLER_SUPPLIED = {"persona", "action", "user_requirement"}
 
-# 只在特定 action 下才会被 Jinja2 取值的变量。
-# write 是整体替换，build_for_writing 故意不提供续写点（模板里的 if 会短路，
-# 未取值的变量不会报错）。continue / rewrite 必须全都给到。
+# 只在特定 action 下才会被 Jinja2 取值的变量。每个动作**只给它自己用得上的那些**——
+# 多给就是让写手分心。模板里 existing_content 只出现在 rewrite 的守卫后面、
+# existing_content_tail 只出现在 continue 的守卫后面，所以：
+#   write    → 两个都不给（整体替换，它不知道旧文也不影响）
+#   continue → 只要 tail（续写锚点）
+#   rewrite  → 只要全文（要重写整章）
+# 这张表是"多给了东西"的哨兵：往里加键会让对应用例失败。
 ACTION_CONDITIONAL = {
-    "write": {"existing_content_tail"},
-    "continue": set(),
-    "rewrite": set(),
+    "write": {"existing_content", "existing_content_tail"},
+    "continue": {"existing_content"},
+    "rewrite": {"existing_content_tail"},
 }
 
 # 由**项目状态**（而不是 action）决定在不在的变量：最后一章没有"下一章"，
@@ -233,20 +237,74 @@ async def test_empty_character_list_says_so(db_session: AsyncSession, test_user:
     assert ctx["characters_text"] == "暂无人物"
 
 
-# ── 还没收的伏笔 ──────────────────────────────────────────────────────────────
+# ── 本章的伏笔 ─────────────────────────────────────────────────────────────────
 
-async def test_open_setups_text_lists_only_unpaid_setups(db_session: AsyncSession, test_user: dict):
+async def test_only_setups_for_this_chapter_are_given(db_session: AsyncSession, test_user: dict):
+    """只给「这一章要收的」和「这一章要埋的」。
+
+    原先给全部 status=="open" 的。``pay_off_in`` 记在数据里却从没被用上过——
+    「打算第 9 章收」的伏笔和本章无关也照给，而 §13.11 记的那次数据漂移正是
+    这么来的：伏笔 note 里写着「七年」，写手两次都照着写了。
+    """
     f = await _project(db_session, test_user)
+    # 一条和本章完全无关的：埋在第 1 章、打算第 3 章收，而本章是第 2 章
+    other = Setup(id=uuid.uuid4(), project_id=f["project"].id,
+                  note="和本章无关的伏笔", planted_in=f["prev"].id,
+                  pay_off_in=None, status="open")
+    db_session.add(other)
+    # 造一个"第 3 章"，让上面那条的 pay_off_in 指向它
+    third = Chapter(id=uuid.uuid4(), project_id=f["project"].id, act_id=f["act"].id,
+                    title="第三章", goal="要写什么", content="", sort_order=3)
+    db_session.add(third)
+    await db_session.flush()
+    other.pay_off_in = third.id
+    await db_session.flush()
+
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    text = ctx["chapter_setups_text"]
 
-    text = ctx["open_setups_text"]
+    # 本章要收的（第 1 章埋下、打算第 2 章收 = 本章）
     assert "缺了几页的账本" in text
-    assert "已经收了的旧硬币" not in text, "已收的伏笔不该再提醒写手"
     assert "第 1 章埋下" in text
-    assert "打算第 2 章收" in text
+    assert "要收的" in text
+    # 已收的不给
+    assert "已经收了的旧硬币" not in text
+    # 收在别处的伏笔不给
+    assert "和本章无关的伏笔" not in text, "pay_off_in 不在本章的伏笔不该进上下文"
+    assert "第 3 章收" not in text
 
 
-async def test_no_open_setups_means_no_key_at_all(db_session: AsyncSession, test_user: dict):
+async def test_setups_planted_in_this_chapter_are_given(db_session: AsyncSession, test_user: dict):
+    """本章要埋的也要给 —— 否则写手不知道要埋，伏笔就真的没出现在正文里。"""
+    f = await _project(db_session, test_user)
+    db_session.add(Setup(id=uuid.uuid4(), project_id=f["project"].id,
+                         note="本章要埋的一封信", planted_in=f["target"].id,
+                         pay_off_in=None, status="open"))
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    text = ctx["chapter_setups_text"]
+    assert "要埋的" in text
+    assert "本章要埋的一封信" in text
+    assert "还没定在哪收" in text
+
+
+async def test_both_groups_can_coexist(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    db_session.add(Setup(id=uuid.uuid4(), project_id=f["project"].id,
+                         note="本章要埋的钥匙", planted_in=f["target"].id,
+                         pay_off_in=None, status="open"))
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    text = ctx["chapter_setups_text"]
+    assert "要收的" in text
+    assert "要埋的" in text
+    assert "缺了几页的账本" in text
+    assert "本章要埋的钥匙" in text
+
+
+async def test_no_setups_for_this_chapter_means_no_key_at_all(db_session: AsyncSession, test_user: dict):
     project = await ProjectRepository(db_session).create("NoSetup", "", test_user["id"])
     act = Act(id=uuid.uuid4(), project_id=project.id, name="第一幕", purpose="甲", sort_order=1)
     db_session.add(act)
@@ -256,40 +314,96 @@ async def test_no_open_setups_means_no_key_at_all(db_session: AsyncSession, test
     await db_session.flush()
 
     ctx = await ContextBuilder(db_session).build_for_writing(chapter.id, "write")
-    assert "open_setups_text" not in ctx
+    assert "chapter_setups_text" not in ctx
 
 
-async def test_a_setup_without_a_pay_off_chapter_says_so(db_session: AsyncSession, test_user: dict):
+async def test_a_setup_payable_later_is_not_shown_here(db_session: AsyncSession, test_user: dict):
+    """「还没定在哪收」且不埋在���章的伏笔，这一章不该出现。
+
+    这条纪律是有意的：编排器必须先定"这一章收哪条"，写手才知道。
+    """
     f = await _project(db_session, test_user)
-    f["project"].spine = f["project"].spine  # 保持项目不变，只加一条没有回收计划的伏笔
-    db_session.add(Setup(id=uuid.uuid4(), project_id=f["project"].id, note="没定在哪收的东西",
-                         planted_in=f["prev"].id, pay_off_in=None, status="open"))
+    db_session.add(Setup(id=uuid.uuid4(), project_id=f["project"].id,
+                         note="没定在哪收的东西", planted_in=f["prev"].id,
+                         pay_off_in=None, status="open"))
     await db_session.flush()
 
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
-    assert "没定在哪收的东西（第 1 章埋下）（还没定在哪收）" in ctx["open_setups_text"]
+    assert "没定在哪收的东西" not in ctx.get("chapter_setups_text", "")
 
 
 # ── 已有正文与 action ─────────────────────────────────────────────────────────
 
-async def test_existing_content_is_given_for_write_and_rewrite(db_session: AsyncSession, test_user: dict):
+async def test_write_gets_no_existing_prose_at_all(db_session: AsyncSession, test_user: dict):
+    """write 是整体替换，**旧正文一个字都不给它**。
+
+    模板里 existing_content 只出现在 rewrite 的守卫后面、existing_content_tail
+    只出现在 continue 的守卫后面，所以 write 两个都用不上。而进了上下文就是进了
+    提示词——旧正文动辄几千字，白占写手的注意力。
+    """
     f = await _project(db_session, test_user)
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
 
-    assert ctx["existing_content"] == CHAPTER_BODY
-    assert "existing_content_tail" not in ctx, "write 是整体替换，不需要续写点"
-    # 正文字数不给写手：它对写手没有信息量（正文本身就在 existing_content 里），
-    # 多一个键就是一份会和模板悄悄漂移的载荷。UNUSED_CTX_KEYS 为空即为此。
+    assert "existing_content" not in ctx, "write 用不上旧正文"
+    assert "existing_content_tail" not in ctx
+    # 正文字数不给写手：它对写手没有信息量，多一个键就是一份会和模板悄悄漂移的载荷
     assert "chapter_body_chars" not in ctx
     assert "chapter_status" not in ctx
     assert "chapter_result" not in ctx, "「本章写成了什么」已删除（迁移 0022）"
 
 
-async def test_continue_and_rewrite_get_the_tail(db_session: AsyncSession, test_user: dict):
+async def test_continue_gets_only_the_tail(db_session: AsyncSession, test_user: dict):
+    """续写只要接得上的那 1500 字，不必把整章塞回去。"""
     f = await _project(db_session, test_user)
-    for action in ("continue", "rewrite"):
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "continue")
+
+    assert ctx["existing_content_tail"] == CHAPTER_BODY[-1500:]
+    assert "existing_content" not in ctx, "续写用不上全文——模板只渲染 tail"
+
+
+async def test_rewrite_gets_the_full_prose_and_no_tail(db_session: AsyncSession, test_user: dict):
+    """重写要读整章；tail 是多余的（全文里就含着结尾）。"""
+    f = await _project(db_session, test_user)
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "rewrite")
+
+    assert ctx["existing_content"] == CHAPTER_BODY
+    assert "existing_content_tail" not in ctx, "模板的 rewrite 段只用全文，tail 白给"
+
+
+async def test_each_action_gets_exactly_what_its_prompt_block_needs(db_session: AsyncSession, test_user: dict):
+    """把模板真正会**渲染**出来的正文，逐动作对齐。
+
+    这是"多给就是让写手分心"那条原则的正面钉法。不扫模板源码（守卫行里也会出现
+    变量名，但那只当条件用），而是渲染一遍看结果：正文有没有真的进提示词。
+    """
+    f = await _project(db_session, test_user)
+    # 夹具自造一个够长的正文：必须 > 1500，否则 [-1500:] 就是全文，
+    # 头尾标记都在里面，分不出"给了全文"还是"只给了尾"。
+    long_body = "【章首】" + "叙述。" * 900 + "【章尾】"
+    assert len(long_body) > 1500
+    f["target"].content = long_body
+    await db_session.flush()
+
+    head_marker, tail_marker = "【章首】", "【章尾】"
+    loader = PromptLoader().load("writer")
+    expected = {
+        # action: (章首该出现, 章尾该出现)
+        "write": (False, False),
+        "continue": (False, True),
+        "rewrite": (True, True),
+    }
+    for action, (head_wanted, tail_wanted) in expected.items():
         ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, action)
-        assert ctx["existing_content_tail"] == CHAPTER_BODY[-1500:], action
+        given = {"existing_content", "existing_content_tail"} & set(ctx)
+        ctx.update({"action": action, "persona": "作家"})
+        rendered = loader.render(**ctx)
+        assert "{{" not in rendered, action
+        assert (head_marker in rendered) is head_wanted, f"{action}: 章首是否该出现"
+        assert (tail_marker in rendered) is tail_wanted, f"{action}: 章尾是否该出现"
+        if not head_wanted:
+            assert "existing_content" not in given, f"{action}: 模板没渲染全文，别给"
+        if not tail_wanted:
+            assert "existing_content_tail" not in given, f"{action}: tail 是多余的，别给"
 
 
 async def test_a_chapter_without_prose_has_no_existing_content(db_session: AsyncSession, test_user: dict):
@@ -346,7 +460,7 @@ async def test_the_prompt_renders_without_leftover_placeholders(
 
 
 async def test_the_new_variable_set_actually_reaches_the_prompt(db_session: AsyncSession, test_user: dict):
-    """spine / ending / previous_chapter_goal / characters_text / open_setups_text
+    """spine / ending / previous_chapter_goal / characters_text / chapter_setups_text
     这五个是这次重构新增或改名的，缺一个都会让写手失去判断依据。"""
     f = await _project(db_session, test_user)
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")

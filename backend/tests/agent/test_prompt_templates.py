@@ -266,7 +266,7 @@ class TestWriterPromptHygiene:
             global_settings="一个架空世界", spine="主线骨架", ending="终局",
             user_requirement="控制在 1200 字",
             characters_text="## 小明（主角）\n性格：谨慎",
-            open_setups_text="- 旧硬币（第 1 章埋下）（还没定在哪收）",
+            chapter_setups_text="**要收的**（本章必须收掉）：\n- 旧硬币（第 1 章埋下）",
             previous_chapter_title="第二章", previous_chapter_goal="上一章要写什么",
             previous_chapter_tail="上一章结尾", existing_content="全文",
             existing_content_tail="已有正文末尾", action="continue",
@@ -298,7 +298,7 @@ class TestWriterPromptHygiene:
             chapter_title="第一章", act_name="", act_purpose="", chapter_goal="",
             genre="奇幻", action="write",
             spine="", ending="", logline="", global_settings="",
-            characters_text="", open_setups_text="",
+            characters_text="", chapter_setups_text="",
         )
         assert "（ ）" not in rendered
         assert "（）" not in rendered
