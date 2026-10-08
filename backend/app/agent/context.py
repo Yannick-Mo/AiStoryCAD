@@ -96,6 +96,15 @@ def _is_meaningful_query(query_hint: str) -> bool:
 # token 把世界观截到 2000 字、把人物性格硬切到 200 字，换不来任何东西，代价
 # 却是写手看不见完整规则与人物——于是它自己发明设定，下一章又和上一章对不上。
 _GLOBAL_SETTINGS_BUDGET = 8000
+# 接缝依据：上一章结尾多少字。**800 是按实测定的，不是拍的。**
+# 实测本书前两章正文 2110 / 2103 字——即一章约 2100 字，不是设想的 3000–5000。
+# 800 字因此是上一章的 38%。抽查第 2 章结尾那 800 字：身体状态（腿抖、抓草往上拽、
+# 张嘴灌风）、心理（"他不想知道"）、空间（半坡、山道往上、往黑里钻）、手上的东西
+# （六块三攥出汗）、以及叙述距离与句长节奏，全都在——接缝需要的几样一样不缺。
+# 被挡在外面的那 1303 字是"已经发生完毕的过程"（被面包车发现、挤人堆、爬围墙洞），
+# 本章不需要接，接错反而是噪声。
+# 一句话依据：已写正文是唯一真值，所以宁可多给原文；被挡掉的部分风险不在"缺"，
+# 而在"下一章会不会把中间某个未解决状态当成没发生过"——抽查里没有这种状态。
 _PREV_TAIL_CHARS = 800
 # 上一章没有蓝图时，只剩逐字原文可依——800 字接不住一次自由发挥的章。
 _PREV_TAIL_CHARS_NO_GOAL = 2000
@@ -107,6 +116,8 @@ _CHAR_FIELD_LIMITS = {
     "appearance": 200, "personality": 320, "motivation": 320, "arc": 320, "background": 480,
 }
 _ROLE_LABELS = {"main": "主角", "supporting": "配角", "minor": "次要"}
+# 角色分量：预算不够时主角/配角优先拿到完整档案。
+_ROLE_RANK = {"main": 0, "supporting": 1, "minor": 2}
 
 # 篇幅参考：本书自己的手感是最准的尺子；还没有正文时用单章常规体量。
 _LENGTH_FALLBACK = (2500, 4000)
@@ -1124,8 +1135,16 @@ class ContextBuilder:
                 _clip_text(settings_text, _GLOBAL_SETTINGS_BUDGET) if settings_text else ""
             )
 
-        # 人物（第 4 步）：每个人的「他想要什么」+「他从哪到哪」
-        ctx["characters_text"] = await self._characters_text(chapter.project_id)
+        # 人物（第 4 步）：每个人的「他想要什么」+「他从哪到哪」。
+        # 排序用的"可能出场"文本 = 本章蓝图 + 上一章结尾原文：名字出现在里面的
+        # 人，预算再紧也保得住完整档案。
+        stage_hints = "\n".join(filter(None, [
+            ctx.get("chapter_goal", ""),
+            ctx.get("previous_chapter_tail", ""),
+        ]))
+        ctx["characters_text"] = await self._characters_text(
+            chapter.project_id, stage_hints
+        )
 
         # 本章的伏笔（第 6 步）：只给「这一章要收的」和「这一章要埋的」。
         #
@@ -1169,8 +1188,18 @@ class ContextBuilder:
         r = await self.db.execute(select(Project).where(Project.id == project_id))
         return r.scalar_one_or_none()
 
-    async def _characters_text(self, project_id: uuid.UUID) -> str:
-        """人物清单：静态档案只给摘要，重点是「他想要什么」和「他从哪到哪」。"""
+    async def _characters_text(self, project_id: uuid.UUID, stage_hints: str = "") -> str:
+        """人物清单：静态档案只给摘要，重点是「他想要什么」和「他从哪到哪」。
+
+        ``stage_hints`` 是"本章可能出场"的文本（本章蓝图 + 上一章结尾）。人物按
+        **出场概率**排序后再分配预算，而不是按 ``sort_order`` —— 原来按顺序分配，
+        排在后面的人无论出场不出场都先被降级成只有名字，而"外貌缺失 → 写手现编"
+        （豆彪的鸳鸯脸、柳如烟的月白道袍，全书一次都没进过正文）恰恰是本设计
+        最怕的那条事故。
+
+        排序键：(名字出现在 stage_hints 里吗, 角色分量, sort_order)。同分时保持原
+        顺序，所以"全员都在这一章"的常见情况与改动前完全一致。
+        """
         result = await self.db.execute(
             select(Character).where(Character.project_id == project_id)
             .order_by(*order_by_sequence(Character))
@@ -1178,10 +1207,26 @@ class ContextBuilder:
         chars = result.scalars().all()
         if not chars:
             return "暂无人物"
+
+        # 出场判定：名字出现在本章蓝图或上一章结尾里。宁可多给档案——多给是浪费
+        # token，给少了是让写手即兴发挥人物，两者不对等。
+        ranked = sorted(
+            chars,
+            key=lambda c: (
+                0 if (c.name or "").strip() and (c.name or "") in stage_hints else 1,
+                _ROLE_RANK.get((c.role or "").strip(), 3),
+                c.sort_order or 0,
+            ),
+        )
+        on_stage = {
+            c.name for c in ranked
+            if (c.name or "").strip() and (c.name or "") in stage_hints
+        }
+
         used = 0
         lines: list[str] = []
         names_only: list[str] = []
-        for char in chars:
+        for char in ranked:
             role = _ROLE_LABELS.get((char.role or "").strip(), char.role or "未指定")
             parts = [f"- {char.name}（{role}）"]
             for field, label, value in (
@@ -1194,17 +1239,18 @@ class ContextBuilder:
                 if value.strip():
                     parts.append(f"  {label}：{_clip_text(value, _CHAR_FIELD_LIMITS[field])}")
             block = "\n".join(parts)
-            if names_only or used + len(block) + 1 > _CHARACTERS_BUDGET:
+            # 预算不够时，让**这一章大概不出场**的那个人降级，而不是排序靠前的。
+            # 名单一个都不能丢：写手不知道还有谁存在，就会自己造一个人顶上去。
+            over_budget = used + len(block) + 1 > _CHARACTERS_BUDGET
+            if over_budget and char.name not in on_stage:
                 names_only.append(f"- {char.name}（{role}）")
                 continue
             used += len(block) + 1
             lines.append(block)
         if names_only:
-            # 名单**一个都不能丢**：写手不知道还有谁存在，就会自己造一个人顶上去。
-            # 超出预算的这次只给名字，档案按需再读。
             lines.append(
-                "（以下人物这次只列了名字，档案没有全带上——正文里需要他们时按名字与"
-                "角色定位处理，不要替他们改写已有的设定：）"
+                "（以下人物这一章大概不会出现，只列了名字——正文里真要用到他们时按"
+                "名字与角色定位处理，不要替他们改写已有的设定：）"
             )
             lines.extend(names_only)
         return "\n".join(lines)

@@ -237,6 +237,44 @@ async def test_empty_character_list_says_so(db_session: AsyncSession, test_user:
     assert ctx["characters_text"] == "暂无人物"
 
 
+async def test_a_character_named_in_this_chapter_keeps_their_profile_over_budget(
+    db_session: AsyncSession, test_user: dict,
+):
+    """预算不够时，**这一章出场的人**保住档案，没出场的降级成名字。
+
+    原来是按 ``sort_order`` 顺序分配预算：排在后面的人无论出场不出场都先被降级。
+    而"外貌缺失 → 写手现编"（豆彪的鸳鸯脸全书一次都没进过正文）恰恰是这套设计
+    最怕的事���所以降级不该按顺序，该按出场概率。
+    """
+    f = await _project(db_session, test_user)
+    # 把预算压到几乎为零，逼出降级
+    import app.agent.context as ctx_mod
+    old = ctx_mod._CHARACTERS_BUDGET
+    ctx_mod._CHARACTERS_BUDGET = 10
+    try:
+        # 一堆凑数的次要人物，排在陈默**前面**（sort_order 更小）
+        for i in range(12):
+            db_session.add(Character(
+                id=uuid.uuid4(), project_id=f["project"].id, name=f"路人{i}",
+                role="minor", appearance="一张普通的脸", motivation="混口饭吃",
+                sort_order=-100 + i,
+            ))
+        # 本章蓝图里点到「陈默」——他必须保住完整档案
+        f["target"].goal = "陈默回老宅翻父亲抽屉。"
+        await db_session.flush()
+
+        ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+    finally:
+        ctx_mod._CHARACTERS_BUDGET = old
+
+    text = ctx["characters_text"]
+    assert "他想要什么：查清父亲留下的债" in text, "出场的人不该被降级"
+    assert "外貌：瘦高个" in text
+    # 没出场的降级了，但名字一个都不许丢
+    assert "路人0" in text
+    assert "这一章大概不会出现" in text
+
+
 # ── 本章的伏笔 ─────────────────────────────────────────────────────────────────
 
 async def test_only_setups_for_this_chapter_are_given(db_session: AsyncSession, test_user: dict):
