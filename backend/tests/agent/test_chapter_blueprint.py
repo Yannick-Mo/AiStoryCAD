@@ -419,10 +419,11 @@ class TestWriterToolContract:
 
     def test_description_declares_what_it_loads_itself(self):
         desc = self._tool().meta.description
-        for word in ("自动加载", "本章要写什么", "上一章写成了什么", "这一幕要干什么",
+        for word in ("自动加载", "本章要写什么", "上一章蓝图与结尾原文", "这一幕要干什么",
                      "主线骨架与终局", "人物想要什么", "还没收的伏笔", "全局设定"):
             assert word in desc, word
         assert "不必先读" in desc
+        assert "写成了什么" not in desc, "「本章写成了什么」已删除（迁移 0022）"
 
     def test_user_requirement_forbids_restating_the_blueprint(self):
         desc = self._tool().meta.parameters["properties"]["user_requirement"]["description"]
@@ -474,7 +475,7 @@ class TestTwoWritingRoutesAreDescribedSeparately:
         desc = get_tool_registry()["write_chapter"].meta.description
         assert "覆盖" in desc
         assert "read_chapter_content" in desc
-        assert "update_chapter" in desc, "写完必须把「本章写成了什么」补上"
+        assert "不用再补任何摘要" in desc, "写完不用补「本章写成了什么」——下一章直接读结尾原文"
 
     def test_continue_chapter_warns_against_repeating_existing_prose(self):
         """content 是追加：传了全文会让正文翻倍。"""

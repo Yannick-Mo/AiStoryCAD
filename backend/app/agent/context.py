@@ -97,6 +97,8 @@ def _is_meaningful_query(query_hint: str) -> bool:
 # 却是写手看不见完整规则与人物——于是它自己发明设定，下一章又和上一章对不上。
 _GLOBAL_SETTINGS_BUDGET = 8000
 _PREV_TAIL_CHARS = 800
+# 上一章没有蓝图时，只剩逐字原文可依——800 字接不住一次自由发挥的章。
+_PREV_TAIL_CHARS_NO_GOAL = 2000
 _CHARACTERS_BUDGET = 8000
 # 人物档案分给写手的份额。**外貌必须在场**：先前只给性格/动机/弧光/背景，结果每一章的
 # 长相都是写手现编的——豆彪的鸳鸯脸、柳如烟的月白道袍与素色长剑、赵怀瑾的折扇，
@@ -275,8 +277,8 @@ class ContextBuilder:
 
         包含：
 
-        1. 这一章：要写什么（goal）、写成了什么（result）、状态、全局章号、所属幕；
-        2. 上一章的结果——这就是这一章的起点（第 1 步）；
+        1. 这一章：要写什么（goal）、状态、全局章号、所属幕；
+        2. 上一章的蓝图与结尾原文——后者就是这一章的起点（第 1 步）；
         3. 它在整本书里的位置：幕的 purpose + 项目的 终局 / 主线骨架 / 一句话梗概（第 3 步）；
         4. 人物：每个人的「他想要什么」+「他从哪到哪」（第 4 步）；
         5. 还没回收的伏笔（第 6 步的预读）。
@@ -320,7 +322,6 @@ class ContextBuilder:
                 "id": str(row.id),
                 "title": row.title or "",
                 "goal": row.goal or "",
-                "result": row.result or "",
                 "status": row.status or "",
             }
 
@@ -351,7 +352,6 @@ class ContextBuilder:
                 "id": str(chapter.id),
                 "title": chapter.title or "",
                 "goal": chapter.goal or "",
-                "result": chapter.result or "",
                 "status": chapter.status or "",
                 "sort_order": chapter.sort_order,
                 "global_order": global_order,
@@ -464,7 +464,6 @@ class ContextBuilder:
                 Chapter.act_id,
                 Chapter.title,
                 Chapter.goal,
-                Chapter.result,
                 Chapter.status,
                 Chapter.sort_order,
                 Chapter.updated_at,
@@ -493,17 +492,11 @@ class ContextBuilder:
                     "fix_with": "update_act",
                 })
         for row in ordered:
+            # 只有蓝图算缺口。「本章写成了什么」这个字段已删除（迁移 0022）：
+            # 下一章直接读上一章结尾原文，所以"有正文但没写回"不是个问题。
             if not (row.goal or "").strip():
                 design_gaps.append({
                     "what": "章没写「本章要写什么」",
-                    "chapter_id": str(row.id),
-                    "global_order": global_order[row.id],
-                    "title": row.title or "",
-                    "fix_with": "update_chapter",
-                })
-            elif (row.body_chars or 0) > 0 and not (row.result or "").strip():
-                design_gaps.append({
-                    "what": "章有正文但没写「本章写成了什么」——下一章没有起点",
                     "chapter_id": str(row.id),
                     "global_order": global_order[row.id],
                     "title": row.title or "",
@@ -615,16 +608,16 @@ class ContextBuilder:
 
         ``detail``：
 
-        - ``full``（默认）：每章的**要写什么** + **写成了什么** —— 回看前情用这个；
+        - ``full``（默认）：每章的**要写什么** —— 梳理全书走向用这个；
         - ``index``：只给 章号 / 标题 / 状态 / 所属幕 / 有没有正文 —— 粗看长范围用。
           一条 index 行只有 full 的约 1/3 大小，所以同样预算能一次读三倍多的章：
           3000 章的书用 full 一次约 65 章（扫完要 46 次），用 index 约 200 章。
 
         **两种模式都不给正文**（那是 ``read_chapter_content`` 的事）。
 
-        这是作者写作循环第 1 步的主力（回看上一章成了什么样），也是第 2 步的
+        这是作者写作循环第 1 步的主力（梳理全书走向），也是第 2 步的
         素材（这一章要干什么）。**正文不在里面**——正文由
-        ``read_chapter_content`` 按需读取。
+        ``read_chapter_content`` 按需读取；下一章的起点由写手从上一章正文里读。
 
         输出在这里按预算裁剪，而不是交给执行器 8000 字符的天花板，这样
         ``truncated`` / ``next_from`` 两个结构标记才不会先被截掉。
@@ -655,7 +648,6 @@ class ContextBuilder:
                 Chapter.id,
                 Chapter.title,
                 Chapter.goal,
-                Chapter.result,
                 Chapter.status,
                 Chapter.sort_order,
                 Chapter.act_id,
@@ -694,7 +686,6 @@ class ContextBuilder:
                     "act_name": row.act_name or "",
                     "status": row.status or "",
                     "goal": row.goal or "",
-                    "result": row.result or "",
                     "body_chars": int(row.body_chars or 0),
                 }
             est = len(json.dumps(entry, ensure_ascii=False))
@@ -960,7 +951,6 @@ class ContextBuilder:
                     "status": chapter.status or "",
                     "body_chars": int(body_chars.get(chapter.id, 0)),
                     "goal": chapter.goal or "",
-                    "result": chapter.result or "",
                 })
             acts_data.append({
                 "id": str(act.id),
@@ -1034,11 +1024,16 @@ class ContextBuilder:
         """给写作 Agent 的专注上下文——**按章**，不再按场。
 
         只装一个写作 agent 需要的东西：这一章要写什么、它在整本书里的位置、
-        上一章写成了什么样、人物此刻要什么、已有正文。
+        上一章的计划与逐字结尾、人物此刻要什么、已有正文。
 
         没有视角字段：视角写在章蓝图里（规格第 11 节范围界定第 4 条）。
-        跨章连续性靠 ``previous_chapter_result`` 对接——这就是"上一章写成了
-        什么"必须写回的原因（第 7 步）。
+
+        跨章连续性靠两样东西对接：``previous_chapter_goal`` 给弧线（上一章
+        打算干什么），``previous_chapter_tail`` 给起点与语感（上一章实际停在
+        哪儿）。**没有"上一章写成了什么"这个字段了**：那是要模型事后复述的
+        摘要，而 ``save_chapter_content`` 不会跟着改它——用户手改一段正文，
+        摘要就开始描述一个不存在的版本，且没有任何东西会重算它。逐字结尾是
+        真值，用户改一个字它就跟着变。
         """
         ctx: dict[str, Any] = {}
 
@@ -1070,19 +1065,25 @@ class ContextBuilder:
             ctx["chapter_number"] = chapter.sort_order
             position = None
 
-        # 上一章：跨章连续性唯一的载体（第 1 步）
+        # 上一章：计划给弧线，原文给起点。计划会被偏离（提示词明确允许蓝图之外
+        # 长东西），所以起点只认原文——这一句顺序不能反。
         if position is not None and position > 0:
             prev = (await self.db.execute(
                 with_chapter_content(select(Chapter).where(Chapter.id == ordered[position - 1]))
             )).scalar_one_or_none()
             if prev:
                 ctx["previous_chapter_title"] = prev.title or ""
-                ctx["previous_chapter_result"] = prev.result or ""
+                prev_goal = (prev.goal or "").strip()
+                if prev_goal:
+                    ctx["previous_chapter_goal"] = prev_goal
                 prev_content = prev.content or ""
                 if prev_content:
-                    # 上一章结尾原文是"接缝 + 语感"的唯一来源：800 字够写手
-                    # 接上时空、句长与对白分寸，也比 500 字更像一段完整的话。
-                    ctx["previous_chapter_tail"] = prev_content[-_PREV_TAIL_CHARS:]
+                    # 上一章结尾原文是跨章连续性的唯一真值：它是写完之后的事实，
+                    # 用户改一个字它就跟着变，而计划不会。800 字够写手接上时空、
+                    # 句长与对白分寸，也比 500 字更像一段完整的话；上一章没写蓝图
+                    # 时只剩它可依，放宽到 2000 字。
+                    tail_chars = _PREV_TAIL_CHARS if prev_goal else _PREV_TAIL_CHARS_NO_GOAL
+                    ctx["previous_chapter_tail"] = prev_content[-tail_chars:]
 
         # 下一章要写什么：**不给写手自由发挥的余地，只给它一个停点**。
         # 写手最常见的越界是"为了给后面铺路"把下一章的事件提前写掉。

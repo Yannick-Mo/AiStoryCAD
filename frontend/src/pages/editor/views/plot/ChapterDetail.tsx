@@ -15,10 +15,8 @@ interface ChapterDetailProps {
   /** 回退路径：用 GET /chapters/{id}/content 单独把这一章的正文取回来。 */
   onContentLoad?: (chapterId: string) => Promise<void> | void
   onContentSave: (chapterId: string, content: string) => Promise<void> | void
-  onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'result' | 'status' | 'actId'>>) => void
+  onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'status' | 'actId'>>) => void
   onEditGoal?: (chapter: Chapter) => void
-  /** 在详情面板里全屏编辑「本章写成了什么」 */
-  onEditResult?: (chapter: Chapter) => void
   /** 在详情面板里全屏编辑正文 */
   onEditBody?: (chapter: Chapter) => void
   onOpenAiPanel?: (contextView: string, contextId?: string) => void
@@ -68,7 +66,7 @@ async function writeToClipboard(text: string): Promise<boolean> {
 }
 
 /**
- * 章详情：一章 = 计划（本章要写什么）+ 正文 + 结果（本章写成了什么）+ 状态。
+ * 章详情：一章 = 计划（本章要写什么）+ 正文 + 状态。
  *
  * 下面没有"场"了——章是最底层，也是正文层。换幕走章自己的 ``act_id``。
  *
@@ -81,10 +79,9 @@ async function writeToClipboard(text: string): Promise<boolean> {
  */
 export default function ChapterDetail({
   chapter, acts, projectId, content, contentLoaded, onContentLoad, onContentSave,
-  onUpdateChapter, onEditGoal, onEditResult, onEditBody, onOpenAiPanel,
+  onUpdateChapter, onEditGoal, onEditBody, onOpenAiPanel,
 }: ChapterDetailProps) {
   const [goal, setGoal] = useState(chapter.goal)
-  const [result, setResult] = useState(chapter.result)
   const [draft, setDraft] = useState(content)
   const [savedText, setSavedText] = useState(content)
   const [savingBody, setSavingBody] = useState(false)
@@ -100,7 +97,6 @@ export default function ChapterDetail({
   const [aiLoading, setAiLoading] = useState(false)
 
   const goalRef = useRef<HTMLTextAreaElement>(null)
-  const resultRef = useRef<HTMLTextAreaElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const contentRequestedFor = useRef<string | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -117,13 +113,10 @@ export default function ChapterDetail({
     Promise.resolve(onContentLoad?.(chapter.id)).catch(() => {})
   }, [contentLoaded, chapter.id, onContentLoad])
 
-  // 外部（AI 写入 / 重载）改了 goal / result 时跟随，除非用户正在那个框里打字。
+  // 外部（AI 写入 / 重载）改了 goal 时跟随，除非用户正在那个框里打字。
   useEffect(() => {
     if (document.activeElement !== goalRef.current) setGoal(chapter.goal)
   }, [chapter.goal])
-  useEffect(() => {
-    if (document.activeElement !== resultRef.current) setResult(chapter.result)
-  }, [chapter.result])
 
   // 正文是异步取回来的：服务端的值到了、且本地没有未保存的修改时，重置草稿。
   useEffect(() => {
@@ -366,36 +359,6 @@ export default function ChapterDetail({
             onChange={e => setGoal(e.target.value)}
             onBlur={() => { if (goal !== chapter.goal) onUpdateChapter(chapter.id, { goal }) }}
             placeholder="动笔前的计划：这一章要推进什么、章末跟章初有什么不同、留什么钩子..."
-            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
-            rows={3}
-          />
-        </section>
-
-        {/* 结果 */}
-        <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <button
-              onClick={() => onEditResult?.(chapter)}
-              className="text-[10px] text-gray-400 hover:text-amber-300 transition-colors flex items-center gap-1 group cursor-pointer"
-              title="在详情页里放大编辑本章写成了什么"
-            >
-              <span>🏁 本章写成了什么</span>
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/80 text-[9px]">⛶ 编辑</span>
-            </button>
-            <button
-              onClick={() => onEditResult?.(chapter)}
-              className="text-[9px] text-gray-600 hover:text-amber-400 transition-colors shrink-0"
-              title="在详情页里放大编辑本章写成了什么"
-            >
-              下一章的前情 · {result.length} 字 ↗
-            </button>
-          </div>
-          <textarea
-            ref={resultRef}
-            value={result}
-            onChange={e => setResult(e.target.value)}
-            onBlur={() => { if (result !== chapter.result) onUpdateChapter(chapter.id, { result }) }}
-            placeholder="写完之后的事实：结束时局面变成什么样、谁欠着谁、什么没交代完..."
             className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
             rows={3}
           />

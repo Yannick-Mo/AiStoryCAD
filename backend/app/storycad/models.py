@@ -11,7 +11,8 @@ from app.project.models import Base as StoryBase
 #
 # 场景层已删除：原来的最小写作单位是"场"，一章 3-4 场，一本 100 章的
 # 书约 400 个接缝且章内接缝几乎没人管。现在最小单位是章，接缝降到约
-# 100 个，每一个都由上一章的「本章写成了什么」对接。
+# 100 个，每一个都由**上一章的结尾原文**对接（不是摘要——摘要是要复述的
+# 派生字段，用户手改正文之后它就开始过期，且没有东西会重算它）。
 # 见 docs/故事模型设计规格.md 第 6 节。
 # ============================================================
 
@@ -29,7 +30,13 @@ class Act(StoryBase):
 
 
 class Chapter(StoryBase):
-    """章：计划（要写什么）+ 正文 + 结果（写成了什么）。"""
+    """章：计划（要写什么）+ 正文。
+
+    **没有「本章写成了什么」**（迁移 0022 删除）：那是一个要事后复述、且
+    ``save_chapter_content`` 不会跟着重算的派生字段——用户手改一段正文，它就
+    开始描述一个不存在的版本。跨章连续性改由「上一章蓝图 + 上一章结尾原文」
+    承担，前者给弧线，后者是逐字真值。
+    """
 
     __tablename__ = "chapters"
 
@@ -41,7 +48,6 @@ class Chapter(StoryBase):
 
     title = Column(String(200), nullable=False, default="新章")    # 章名
     goal = Column(Text, default="")                               # 本章要写什么（动笔前的计划）
-    result = Column(Text, default="")                             # 本章写成了什么（下一章的前情）
     # 正文。延迟加载是结构性保证而非自觉：row_to_dict 按 mapper 检查
     # deferred 标记并跳过该列，所以列出章节的查询永远拖不上正文。
     #
@@ -96,7 +102,8 @@ class CharacterRelation(StoryBase):
 
     三个强度值（trust / threat / attraction，0-100）已删除：它们是伪精度，
     而且关系强度随剧情变化属于动态——静态记录里放动态值必然过时。
-    关系的变化写进「本章写成了什么」。
+    关系的**事实性变化**写进这条记录的 ``description``（来龙去脉）；
+    需要往后传的活线另建一条 ``Setup``。
     """
 
     __tablename__ = "character_relations"

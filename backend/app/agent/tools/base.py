@@ -255,7 +255,6 @@ class BaseTool(ABC):
             "query": "必须提供搜索关键词或查询内容",
             "skill_name": "必须提供要启用的技能名称，见可用技能列表",
             "goal": "必须提供这一章要写什么（章蓝图）",
-            "result": "必须提供这一章写成了什么",
         }
         correction_tools = {
             "chapter_id": "read_chapters",

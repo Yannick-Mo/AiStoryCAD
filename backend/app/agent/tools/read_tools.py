@@ -151,7 +151,7 @@ class ReadActsTool(BaseTool):
 class ReadChaptersTool(BaseTool):
     meta = ToolMeta(
         name="read_chapters",
-        description="读第 X 到第 Y 章：每章的 本章要写什么 + 本章写成了什么 + 状态 + 所属幕 + 是否已有正文（回看前情的主力）"
+        description="读第 X 到第 Y 章：每章的 本章要写什么 + 状态 + 所属幕 + 是否已有正文（回看全书走向的主力）"
                     "。全局章号从第 1 幕第 1 章起跨幕连续编号。**粗看很长的范围用 detail=index**："
                     "只给 章号/标题/状态/幕/是否已写，同样预算能读的章数是默认模式的三倍多。正文不在这里（用 read_chapter_content）"
                     "；动一章之前的全部输入用 read_chapter_package。truncated=true 时用 next_from 接着读",
@@ -164,7 +164,7 @@ class ReadChaptersTool(BaseTool):
                 "chapter_from": {"type": "integer", "description": "全局章序号起点（从1开始，含）"},
                 "chapter_to": {"type": "integer", "description": "全局章序号终点（含）"},
                 "detail": {"type": "string", "enum": ["full", "index"],
-                           "description": "full（默认）=每章的计划与结果，回看前情用它；"
+                           "description": "full（默认）=每章的计划，梳理全书走向用它；"
                                           "index=只给 章号/标题/状态/幕/有没有正文，粗看长范围（例如全书目录）用它"},
             },
             "required": ["chapter_from", "chapter_to"],
@@ -593,7 +593,7 @@ class ReadProgressTool(BaseTool):
 class SearchTool(BaseTool):
     meta = ToolMeta(
         name="search",
-        description="按关键词在**整个项目**里找（含正文：章正文、计划、结果、幕、人物、关系、伏笔）"
+        description="按关键词在**整个项目**里找（含正文：章正文、章蓝图、幕、人物、关系、伏笔）"
                     "，每条命中标出命中的是哪个字段。适合「那枚旧硬币在哪一章提过」这类定位",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,
@@ -636,10 +636,10 @@ class SearchTool(BaseTool):
                     if value and lowered in value.lower()
                 ]
 
-            # 章：正文与两个蓝图字段一起搜——命中哪个字段必须标出来
+            # 章：正文与蓝图一起搜——命中哪个字段必须标出来
             chapter_rows = (await db.execute(
                 select(
-                    Chapter.id, Chapter.title, Chapter.goal, Chapter.result,
+                    Chapter.id, Chapter.title, Chapter.goal,
                     Chapter.content, Chapter.status,
                     func.length(func.coalesce(Chapter.content, "")).label("body_chars"),
                 )
@@ -647,7 +647,6 @@ class SearchTool(BaseTool):
                 .where(or_(
                     Chapter.title.ilike(like),
                     Chapter.goal.ilike(like),
-                    Chapter.result.ilike(like),
                     Chapter.content.ilike(like),
                 ))
                 .order_by(*order_by_sequence(Chapter))
@@ -664,7 +663,7 @@ class SearchTool(BaseTool):
                     "body_chars": int(row.body_chars or 0),
                     "matches": _fields((
                         ("title", row.title), ("goal", row.goal),
-                        ("result", row.result), ("content", row.content),
+                        ("content", row.content),
                     )),
                 })
 

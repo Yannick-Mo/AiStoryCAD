@@ -342,9 +342,10 @@ class CreateChapterTool(BaseTool):
 class UpdateChapterTool(BaseTool):
     meta = ToolMeta(
         name="update_chapter",
-        description="改章：章名 / 本章要写什么 / 本章写成了什么 / 状态（draft · revising · final）"
-                    "。**一章写完、正文落库之后，必须调这个把「本章写成了什么」补上**——它是跨章连续性唯一的载体。"
-                    "位置不在这里改：换幕或重排用 move_chapter",
+        description="改章：章名 / 本章要写什么 / 状态（draft · revising · final）。"
+                    "位置不在这里改：换幕或重排用 move_chapter。"
+                    "**正文不算这一章的前情**——下一章直接读上一章结尾原文，"
+                    "所以不需要（也没有）\"本章写成了什么\"这个字段",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -352,11 +353,6 @@ class UpdateChapterTool(BaseTool):
                 "chapter_id": {"type": "string", "description": "章节ID，来自 read_chapters 或 read_acts"},
                 "title": {"type": "string", "description": "章名"},
                 "goal": {"type": "string", "description": chapter_hint()},
-                "result": {
-                    "type": "string",
-                    "description": "本章写成了什么：这一章实际写成了什么样——章末的局面、谁欠着谁、"
-                                   "什么还没交代完、正文里长出来的计划之外的事实。它就是下一章的起点",
-                },
                 "status": {
                     "type": "string",
                     "description": "这一章算不算过：draft（草稿）/ revising（修订中）/ final（终稿）",
@@ -388,20 +384,16 @@ class UpdateChapterTool(BaseTool):
                         correction_hint="请把 status 设为 draft（草稿）、revising（修订中）或 final（终稿）之一",
                     )
                 chapter.status = status
-            for field in ("title", "goal", "result"):
+            for field in ("title", "goal"):
                 if field in kwargs and kwargs[field] is not None:
                     setattr(chapter, field, kwargs[field])
             await db.commit()
-            data = {
+            return ToolResult(success=True, data={
                 "chapter_id": str(chapter.id),
                 "title": chapter.title or "",
                 "status": chapter.status or "",
                 "has_goal": bool((chapter.goal or "").strip()),
-                "has_result": bool((chapter.result or "").strip()),
-            }
-            if not data["has_result"]:
-                data["warning"] = "这一章还没有「本章写成了什么」——下一章没有起点，请补上"
-            return ToolResult(success=True, data=data)
+            })
         except Exception as e:
             await db.rollback()
             return self._err(e)

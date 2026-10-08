@@ -23,7 +23,7 @@ from app.utils import row_to_dict
 
 @mcp.tool()
 async def read_chapter(token: str, chapter_id: str) -> dict:
-    """获取一章的规划与结果（本章要写什么 / 本章写成了什么 / 状态），不含正文。"""
+    """获取一章的规划（本章要写什么 / 状态），不含正文。"""
     async with async_session() as db:
         user = await get_current_user_mcp(token, db)
         chapter = (await db.execute(
@@ -72,7 +72,7 @@ async def read_acts(token: str, project_id: str) -> list[dict]:
 
 @mcp.tool()
 async def read_chapters(token: str, project_id: str, chapter_from: int, chapter_to: int) -> dict:
-    """按全局章序号读一个连续范围：每章的要写什么 + 写成了什么 + 状态 + 是否已有正文。
+    """按全局章序号读一个连续范围：每章的要写什么 + 状态 + 是否已有正文。
 
     全局章号从第 1 幕第 1 章起跨幕连续编号。
     """
@@ -152,12 +152,11 @@ async def update_chapter(
     chapter_id: str,
     title: str = "",
     goal: str = "",
-    result: str = "",
     status_value: str = "",
 ) -> dict:
-    """修改一章：章名 / 本章要写什么 / 本章写成了什么 / 状态（draft|revising|final）。
+    """修改一章：章名 / 本章要写什么 / 状态（draft|revising|final）。
 
-    一章写完（正文落库）之后必须把「本章写成了什么」写回——它是下一章唯一的起点。
+    没有「本章写成了什么」：正文本身就是下一章的前情，写完不用再补摘要。
     """
     async with async_session() as db:
         user = await get_current_user_mcp(token, db)
@@ -172,8 +171,6 @@ async def update_chapter(
             chapter.title = title
         if goal:
             chapter.goal = goal
-        if result:
-            chapter.result = result
         if status_value:
             if status_value not in ("draft", "revising", "final"):
                 raise ValueError("status 只能是 draft / revising / final")

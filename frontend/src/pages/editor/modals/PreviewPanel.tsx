@@ -102,7 +102,7 @@ export default function PreviewPanel({ chapters, acts, contents, finalOnly, onFi
         </div>
       </div>
 
-      {(chapter.goal || chapter.result) && (
+      {chapter.goal && (
         <div className="shrink-0 border-b border-gray-800/60 bg-gray-900/50 px-4 py-2">
           <div className="mx-auto w-full max-w-[46rem]">
             <div className="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2">
@@ -122,13 +122,7 @@ export default function PreviewPanel({ chapters, acts, contents, finalOnly, onFi
                   ? 'mt-1 max-h-[40vh] overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-gray-400'
                   : 'mt-1 truncate text-xs text-gray-400'}
               >
-                <span className="text-gray-500">要写什么：</span>{chapter.goal || '（未填）'}
-                {chapter.result && (
-                  <>
-                    <br />
-                    <span className="text-gray-500">写成了什么：</span>{chapter.result}
-                  </>
-                )}
+                <span className="text-gray-500">要写什么：</span>{chapter.goal}
               </div>
             </div>
           </div>

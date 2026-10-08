@@ -32,7 +32,7 @@ def _prompt(**overrides) -> str:
         genre="悬疑", logline="一个外人的丧事变成他的旧案",
         global_settings="小镇名叫渡口。",
         spine="奔丧 → 留下", ending="他留下查清旧债",
-        previous_chapter_title="第一章", previous_chapter_result="他拿到了账本。",
+        previous_chapter_title="第一章", previous_chapter_goal="他拿到了账本。",
         previous_chapter_tail="他站在门口。",
         characters_text="- 陈默（主角）", open_setups_text="- 账本（第 1 章埋下）",
         action="write",
@@ -61,7 +61,13 @@ class TestCraftRulesStayInThePrompt:
 
     def test_conflict_arbitration_order_is_declared(self):
         prompt = _prompt()
-        assert "已写正文说明的事实 > 本章蓝图 > 人物行为逻辑 > 类型惯例" in prompt
+        assert "上一章结尾原文说明的事实 > 本章蓝图 > 人物行为逻辑 > 类型惯例" in prompt
+
+    def test_the_previous_chapters_blueprint_is_marked_as_merely_intended(self):
+        """上一章的蓝图是计划，不是事实——正文可能没照它走，起点只认原文。"""
+        prompt = _prompt()
+        assert "它可能没完全照这份计划走" in prompt
+        assert "蓝图是意图" in prompt
 
     def test_blueprint_weight_maps_to_chapter_weight(self):
         """蓝图里"一句带过"的事，正文不许扩成一场戏。"""

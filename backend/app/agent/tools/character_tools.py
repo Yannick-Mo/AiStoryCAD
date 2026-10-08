@@ -4,7 +4,8 @@
 他从哪到哪（弧线：arc）**。
 
 "他从哪到哪"是**设计意图**（起点→终点），不是随写作变化的记录；
-"他此刻在哪、手里有什么"属于「本章写成了什么」——那是历史，不是人物卡。
+"他此刻在哪、手里有什么"是正文里的历史，不是人物卡——写手靠读上一章结尾原文
+拿到它；确实需要往后传的，另建一条 Setup。
 
 角色关系是一条条**记录**，不是一张图。三个强度值（信任/威胁/吸引）已删除：
 它们是伪精度，而且关系强度随剧情变化属于动态——静态记录里放动态值必然过时。
@@ -281,8 +282,9 @@ class CreateRelationTool(BaseTool):
 class UpdateRelationTool(BaseTool):
     meta = ToolMeta(
         name="update_relation",
-        description="改一条角色关系：关系类型 / 更具体的说法 / 来龙去脉。关系变化的**事实**写进那一章的「本章写成了什么」，"
-                    "这里只改描述性文字",
+        description="改一条角色关系：关系类型 / 更具体的说法 / 来龙去脉。**关系变化的事实写进这条记录的 "
+                    "description**——它本来就是「这段关系的来龙去脉」。"
+                    "读者看不到的关系就别记，那是正文的事",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",

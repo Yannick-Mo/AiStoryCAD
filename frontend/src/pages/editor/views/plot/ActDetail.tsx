@@ -10,7 +10,7 @@ interface ActDetailProps {
   contents: Record<string, string>
   onSelectChapter: (chapterId: string) => void
   onUpdateAct: (id: string, updates: Partial<Pick<Act, 'name' | 'purpose' | 'color'>>) => void
-  onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'result' | 'status' | 'actId'>>) => void
+  onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'status' | 'actId'>>) => void
   onAddChapter: (actId: string) => void
   /** 幕内上移 / 下移一章：sort_order 是顺序的唯一真相 */
   onMoveChapter: (chapterId: string, direction: -1 | 1) => void
@@ -150,27 +150,15 @@ export default function ActDetail({
               </div>
 
               {isExpanded && (
-                <div className="space-y-2 border-t border-gray-700/30 px-3 pb-3 pt-2">
-                  <div>
-                    <div className="text-[10px] text-gray-500 mb-1">📝 本章要写什么</div>
-                    <textarea
-                      value={ch.goal}
-                      onChange={e => onUpdateChapter(ch.id, { goal: e.target.value })}
-                      placeholder="动笔前的计划..."
-                      rows={2}
-                      className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-2 text-[11px] leading-relaxed text-gray-300 focus:border-amber-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-gray-500 mb-1">🏁 本章写成了什么</div>
-                    <textarea
-                      value={ch.result}
-                      onChange={e => onUpdateChapter(ch.id, { result: e.target.value })}
-                      placeholder="写完之后的事实（下一章的前情）..."
-                      rows={2}
-                      className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-2 text-[11px] leading-relaxed text-gray-300 focus:border-amber-600 focus:outline-none"
-                    />
-                  </div>
+                <div className="border-t border-gray-700/30 px-3 pb-3 pt-2">
+                  <div className="text-[10px] text-gray-500 mb-1">📝 本章要写什么</div>
+                  <textarea
+                    value={ch.goal}
+                    onChange={e => onUpdateChapter(ch.id, { goal: e.target.value })}
+                    placeholder="动笔前的计划..."
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-2 text-[11px] leading-relaxed text-gray-300 focus:border-amber-600 focus:outline-none"
+                  />
                 </div>
               )}
             </div>

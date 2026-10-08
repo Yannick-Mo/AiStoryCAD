@@ -3,8 +3,9 @@
 本文件守住两件历史上真的出过事故的事：
 
 1. **上下文不许再装场景层**。写作单位是章：``build_for_writing(chapter_id, action)``
-   只装这一章要写什么、它在整本书里的位置、上一章写成了什么样、人物此刻要什么、
-   还没收的伏笔、已有正文。视角没有字段（写在章蓝图里）。
+   只装这一章要写什么、它在整本书里的位置、上一章的蓝图与结尾原文、人物此刻要什么、
+   还没收的伏笔、已有正文。视角没有字段（写在章蓝图里）。跨章连续性靠上一章的
+   **逐字结尾**（不是摘要——摘要是会过期又不重算的派生字段，迁移 0022 已删除）。
 2. **模板变量与上下文字段必须一致**。历史上 ``writer.yaml`` 引用了
    ``build_for_writing`` 从不提供的 ``tone``，而 ``build_for_writing`` 又拼了模板
    从不使用的 ``related_edges`` / ``available_skills`` —— 每次写作白查两次库。
@@ -42,10 +43,16 @@ ACTION_CONDITIONAL = {
     "rewrite": set(),
 }
 
-# 由**项目状态**（而不是 action）决定在不在的变量：最后一章没有"下一章"。
-# 豁免必须有正向用例兜着（test_the_next_chapter_is_given_only_as_a_stopping_point），
+# 由**项目状态**（而不是 action）决定在不在的变量：最后一章没有"下一章"，
+# 上一章可能没写蓝图（那就没有"上一章要写什么"）。
+# 豁免必须有正向用例兜着（test_the_next_chapter_is_given_only_as_a_stopping_point、
+# test_tail_widens_when_the_previous_chapter_has_no_blueprint），
 # 否则这张表就成了掩盖 bug 的后门。
-STATE_OPTIONAL = {"next_chapter_title", "next_chapter_goal"}
+STATE_OPTIONAL = {
+    "next_chapter_title",
+    "next_chapter_goal",
+    "previous_chapter_goal",
+}
 
 # build_for_writing 会多装、模板目前不用的三个键。
 #
@@ -54,7 +61,7 @@ STATE_OPTIONAL = {"next_chapter_title", "next_chapter_goal"}
 # 名单留空但仍要断言，这样以后再加多余键会被拦住，而不是悄悄堆在上下文里。
 UNUSED_CTX_KEYS: set[str] = set()
 
-PREV_RESULT = "上一章写成了什么：陈默拿到账本，姑妈改了口。"
+PREV_GOAL = "上一章要写什么：陈默在姑妈家翻出账本，姑妈改了口。"
 CHAPTER_GOAL = "本章要写什么：陈默连夜去杂货铺问老板。"
 CHAPTER_BODY = "陈默推门进去，老板正在擦杯子。" * 5
 
@@ -79,10 +86,11 @@ async def _project(db_session: AsyncSession, test_user: dict) -> dict:
     db_session.add(act)
 
     prev = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
-                   title="第一章", goal="上一章要写什么", result=PREV_RESULT,
+                   goal=PREV_GOAL,
+                   title="第一章",
                    content="上一章正文的结尾段落。", status="final", sort_order=1)
     target = Chapter(id=uuid.uuid4(), project_id=project.id, act_id=act.id,
-                     title="第二章", goal=CHAPTER_GOAL, result="",
+                     goal=CHAPTER_GOAL, title="第二章",
                      content=CHAPTER_BODY, status="revising", sort_order=2)
     db_session.add_all([prev, target])
 
@@ -126,15 +134,48 @@ async def test_unknown_chapter_yields_an_empty_context(db_session: AsyncSession,
     assert ctx == {}
 
 
-# ── 跨章连续性：上一章写成了什么 ──────────────────────────────────────────────
+# ── 跨章连续性：上一章蓝图 + 逐字结尾 ──────────────────────────────────────────
 
-async def test_previous_chapter_result_is_the_starting_point(db_session: AsyncSession, test_user: dict):
+async def test_previous_chapter_blueprint_and_tail_are_the_starting_point(db_session: AsyncSession, test_user: dict):
     f = await _project(db_session, test_user)
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
 
     assert ctx["previous_chapter_title"] == "第一章"
-    assert ctx["previous_chapter_result"] == PREV_RESULT
+    assert ctx["previous_chapter_goal"] == PREV_GOAL
+    # 起点是**逐字原文**，不是任何摘要。用户改一个字它就跟着变。
     assert ctx["previous_chapter_tail"] == "上一章正文的结尾段落。"
+    assert "previous_chapter_result" not in ctx, "「本章写成了什么」已删除（迁移 0022）"
+
+
+async def test_tail_widens_when_the_previous_chapter_has_no_blueprint(db_session: AsyncSession, test_user: dict):
+    """上一章没写蓝图时只剩逐字原文可依——800 字接不住一次自由发挥的章。
+
+    这是删掉 result 之后唯一的降级路径：没有摘要兜底，就得给原文更多字。
+    """
+    f = await _project(db_session, test_user)
+    long_tail = "陈默把手按在柜台上。" * 400        # 远超 800 字
+    f["prev"].goal = ""
+    f["prev"].content = long_tail
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert "previous_chapter_goal" not in ctx
+    tail = ctx["previous_chapter_tail"]
+    assert len(tail) == 2000, "无蓝图时 tail 放宽到 2000 字"
+    assert long_tail.endswith(tail), "取的仍是结尾"
+
+
+async def test_tail_keeps_800_chars_when_the_previous_chapter_has_a_blueprint(db_session: AsyncSession, test_user: dict):
+    f = await _project(db_session, test_user)
+    long_tail = "陈默把手按在柜台上。" * 400
+    f["prev"].content = long_tail
+    await db_session.flush()
+
+    ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
+
+    assert ctx["previous_chapter_goal"] == PREV_GOAL
+    assert len(ctx["previous_chapter_tail"]) == 800
 
 
 async def test_the_first_chapter_has_no_previous_chapter_keys(db_session: AsyncSession, test_user: dict):
@@ -142,8 +183,9 @@ async def test_the_first_chapter_has_no_previous_chapter_keys(db_session: AsyncS
     ctx = await ContextBuilder(db_session).build_for_writing(f["prev"].id, "write")
 
     assert ctx["chapter_number"] == 1
-    assert "previous_chapter_result" not in ctx
+    assert "previous_chapter_goal" not in ctx
     assert "previous_chapter_title" not in ctx
+    assert "previous_chapter_tail" not in ctx
 
 
 # ── 整本书里的位置 ────────────────────────────────────────────────────────────
@@ -240,7 +282,7 @@ async def test_existing_content_is_given_for_write_and_rewrite(db_session: Async
     # 多一个键就是一份会和模板悄悄漂移的载荷。UNUSED_CTX_KEYS 为空即为此。
     assert "chapter_body_chars" not in ctx
     assert "chapter_status" not in ctx
-    assert "chapter_result" not in ctx
+    assert "chapter_result" not in ctx, "「本章写成了什么」已删除（迁移 0022）"
 
 
 async def test_continue_and_rewrite_get_the_tail(db_session: AsyncSession, test_user: dict):
@@ -304,7 +346,7 @@ async def test_the_prompt_renders_without_leftover_placeholders(
 
 
 async def test_the_new_variable_set_actually_reaches_the_prompt(db_session: AsyncSession, test_user: dict):
-    """spine / ending / previous_chapter_result / characters_text / open_setups_text
+    """spine / ending / previous_chapter_goal / characters_text / open_setups_text
     这五个是这次重构新增或改名的，缺一个都会让写手失去判断依据。"""
     f = await _project(db_session, test_user)
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
@@ -313,7 +355,8 @@ async def test_the_new_variable_set_actually_reaches_the_prompt(db_session: Asyn
 
     assert ctx["spine"] in rendered
     assert ctx["ending"] in rendered
-    assert PREV_RESULT in rendered
+    assert PREV_GOAL in rendered
+    assert "上一章正文的结尾段落。" in rendered, "逐字结尾是接缝的唯一来源"
     assert "他想要什么：查清父亲留下的债" in rendered
     assert "缺了几页的账本" in rendered
 

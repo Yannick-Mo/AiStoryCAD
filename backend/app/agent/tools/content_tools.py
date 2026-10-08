@@ -21,7 +21,7 @@ class WriteChapterTool(BaseTool):
         name="write_chapter",
         description="写入或**整体替换**一章正文（**重写也用它**）。⚠️ 会覆盖这一章已有的正文："
                     "先 read_chapter_content 读完再改；只想往后接请用 continue_chapter。"
-                    "写完记得用 update_chapter 补上「本章写成了什么」",
+                    "写完不用再补任何摘要——下一章直接读这一章的结尾原文",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         timeout=60,
@@ -59,7 +59,6 @@ class WriteChapterTool(BaseTool):
                 "word_count": count_words(content),
                 "body_chars": len(content),
                 "replaced_body_chars": replaced_chars,
-                "reminder": "这一章的「本章写成了什么」还没写的话，现在用 update_chapter 补上——下一章靠它接上",
             })
         except Exception as e:
             await db.rollback()

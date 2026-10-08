@@ -55,15 +55,15 @@ class _ScalarsResult:
         return self._items
 
 
-def _chapter(uid, act_id, title="章", goal="", result="", status="draft", sort_order=1):
+def _chapter(uid, act_id, title="章", goal="", status="draft", sort_order=1):
     return SimpleNamespace(id=uid, act_id=act_id, project_id=uuid.uuid4(), title=title,
-                           goal=goal, result=result, status=status,
+                           goal=goal, status=status,
                            body_chars=0, sort_order=sort_order)
 
 
 def _window_row(chapter, act_name, body_chars=0):
     return SimpleNamespace(id=chapter.id, title=chapter.title, goal=chapter.goal,
-                           result=chapter.result, status=chapter.status,
+                           status=chapter.status,
                            sort_order=chapter.sort_order, act_id=chapter.act_id,
                            act_name=act_name, body_chars=body_chars)
 
@@ -209,9 +209,9 @@ class TestChapterIndexMode:
                                for c in chapters]),
         )
 
-    async def test_index_rows_drop_plan_and_result(self):
+    async def test_index_rows_drop_the_plan(self):
         a1 = uuid.uuid4()
-        ch = _chapter(uuid.uuid4(), a1, "章一", goal="计划" * 50, result="结果" * 50)
+        ch = _chapter(uuid.uuid4(), a1, "章一", goal="计划" * 50)
         ch.content = "正" * 100
         out = await ContextBuilder(self._db([ch])) \
             .build_chapter_window(uuid.uuid4(), 1, 1, detail="index")
@@ -225,9 +225,8 @@ class TestChapterIndexMode:
     async def test_index_mode_reads_much_more_in_the_same_budget(self):
         a1 = uuid.uuid4()
         chs = [_chapter(uuid.uuid4(), a1, f"第{i}章",
-                        goal="这一章要写什么（计划）" * 10,
-                        result="这一章写成了什么（结果）" * 10,
-                        sort_order=i) for i in range(1, 401)]
+                         goal="这一章要写什么（计划）" * 20,
+                         sort_order=i) for i in range(1, 401)]
         full = await ContextBuilder(self._db(chs)) \
             .build_chapter_window(uuid.uuid4(), 1, 400, detail="full")
         idx = await ContextBuilder(self._db(chs)) \
@@ -241,7 +240,7 @@ class TestChapterIndexMode:
 
     async def test_default_detail_is_full(self):
         a1 = uuid.uuid4()
-        ch = _chapter(uuid.uuid4(), a1, "章一", goal="计划", result="结果")
+        ch = _chapter(uuid.uuid4(), a1, "章一", goal="计划")
         out = await ContextBuilder(self._db([ch])).build_chapter_window(uuid.uuid4(), 1, 1)
         assert out["detail"] == "full"
         assert out["chapters"][0]["goal"] == "计划"
@@ -264,7 +263,7 @@ class TestReadChaptersDetailParam:
     @patch("app.agent.tools.read_tools.verify_project_owner")
     async def test_detail_reaches_the_builder(self, mock_verify):
         a1 = uuid.uuid4()
-        ch = _chapter(uuid.uuid4(), a1, "章一", goal="计划", result="结果")
+        ch = _chapter(uuid.uuid4(), a1, "章一", goal="计划")
         db = _fake_db(_QueryResult(rows=[(ch.id,)]),
                       _QueryResult(rows=[_window_row(ch, "幕")]))
         res = await ReadChaptersTool().run(
@@ -292,12 +291,12 @@ class TestBuildChapterWindow:
             ]),
         )
 
-    async def test_basic_window_carries_plan_result_and_act_name(self):
+    async def test_basic_window_carries_plan_and_act_name(self):
         a1, a2 = uuid.uuid4(), uuid.uuid4()
         chs = [
-            _chapter(uuid.uuid4(), a1, "章一", goal="目标一", result="结果一"),
-            _chapter(uuid.uuid4(), a2, "章二", goal="目标二", result="结果二"),
-            _chapter(uuid.uuid4(), a2, "章三", goal="目标三", result=""),
+            _chapter(uuid.uuid4(), a1, "章一", goal="目标一"),
+            _chapter(uuid.uuid4(), a2, "章二", goal="目标二"),
+            _chapter(uuid.uuid4(), a2, "章三", goal="目标三"),
         ]
         db = self._window_db(chs, [(a1, "第一幕"), (a2, "第二幕")])
         out = await ContextBuilder(db).build_chapter_window(uuid.uuid4(), 2, 3)
@@ -309,10 +308,10 @@ class TestBuildChapterWindow:
         first = out["chapters"][0]
         assert first["title"] == "章二"
         assert first["goal"] == "目标二"
-        assert first["result"] == "结果二"
         assert first["act_name"] == "第二幕"
         assert first["act_id"] == str(a2)
         assert "body_chars" in first
+        assert "result" not in first, "「本章写成了什么」已删除（迁移 0022）"
 
     async def test_window_reports_body_chars_not_body(self):
         a1 = uuid.uuid4()

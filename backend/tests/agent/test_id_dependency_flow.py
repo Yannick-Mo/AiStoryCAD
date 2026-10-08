@@ -306,13 +306,18 @@ class TestListThenWriteScenario:
         update_req = update.meta.parameters.get("required", [])
         assert "character_id" in update_req  # update needs existing ID
 
-    def test_create_chapter_then_write_it_then_record_the_result(self):
-        """建章 → 写正文 → 写回「本章写成了什么」的完整链条。"""
+    def test_create_chapter_then_write_it(self):
+        """建章 → 写正文的完整链条。
+
+        链条到写正文为止：没有"再写回摘要"这一步了——下一章直接读这一章的
+        结尾原文（迁移 0022 删掉了「本章写成了什么」）。
+        """
         registry = get_tool_registry()
         create_req = registry["create_chapter"].meta.parameters["required"]
         assert set(create_req) == {"act_id", "chapters"}
         assert "chapter_id" in registry["write_chapter"].meta.parameters["required"]
 
         update_props = registry["update_chapter"].meta.parameters["properties"]
-        assert {"title", "goal", "result", "status"} <= set(update_props)
+        assert {"title", "goal", "status"} <= set(update_props)
+        assert "result" not in update_props, "「本章写成了什么」已删除（迁移 0022）"
         assert update_props["status"]["enum"] == ["draft", "revising", "final"]

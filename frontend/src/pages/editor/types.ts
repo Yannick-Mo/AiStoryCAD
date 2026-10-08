@@ -46,10 +46,8 @@ export interface Chapter {
   id: string
   actId: string
   title: string
-  /** 本章要写什么（动笔前的计划） */
+  /** 本章要写什么（动笔前的计划）。下一章的前情直接来自正文，不需要摘要字段。 */
   goal: string
-  /** 本章写成了什么（下一章的前情） */
-  result: string
   status: ChapterStatus
   sortOrder?: number
 }

@@ -186,7 +186,6 @@ function apiChapterToUi(ch: ApiChapter): Chapter {
     actId: ch.act_id,
     title: ch.title,
     goal: ch.goal || "",
-    result: ch.result || "",
     status: (ch.status as ChapterStatus) || 'draft',
     sortOrder: ch.sort_order || 0,
   }
@@ -244,7 +243,7 @@ function normalizeApiData(raw: Record<string, unknown>): EditorMockData {
 // ============================================================
 
 interface ApiAct { id: string; name: string; purpose: string; sort_order: number; color: string }
-interface ApiChapter { id: string; act_id: string; title: string; goal: string; result: string; status: string; sort_order: number }
+interface ApiChapter { id: string; act_id: string; title: string; goal: string; status: string; sort_order: number }
 interface ApiCharacter { id: string; name: string; role: string; personality: string; appearance: string; background: string; motivation: string; arc: string }
 interface ApiCharRelation { id: string; character_id: string; target_id: string; rel_type: string; label: string; description: string }
 interface ApiSetup { id: string; note: string; planted_in: string; pay_off_in: string | null; status: string }

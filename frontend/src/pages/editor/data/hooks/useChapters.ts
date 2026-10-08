@@ -18,7 +18,7 @@ export function useChapters(
     const newCh: Chapter = {
       id, actId,
       title: `第 ${actChapters.length + 1} 章`,
-      goal: '', result: '', status: 'draft', sortOrder: maxOrder + 1,
+      goal: '', status: 'draft', sortOrder: maxOrder + 1,
     }
     setData(d => d ? { ...d, chapters: [...d.chapters, newCh] } : d)
     // 不带 sort_order：新章接在幕末尾，位置由服务端决定（_create_entity 会用
@@ -46,12 +46,11 @@ export function useChapters(
     enqueueChange({ entity: 'chapters', op: 'delete', id: chapterId })
   }, [data, enqueueChange, setData])
 
-  const updateChapter = useCallback((id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'result' | 'status' | 'actId'>>) => {
+  const updateChapter = useCallback((id: string, updates: Partial<Pick<Chapter, 'title' | 'goal' | 'status' | 'actId'>>) => {
     setData(d => d ? { ...d, chapters: d.chapters.map(c => c.id === id ? { ...c, ...updates } : c) } : d)
     const backendData: Record<string, unknown> = { id }
     if (updates.title !== undefined) backendData.title = updates.title
     if (updates.goal !== undefined) backendData.goal = updates.goal
-    if (updates.result !== undefined) backendData.result = updates.result
     if (updates.status !== undefined) backendData.status = updates.status
     // 章能换幕：归属走章自己的 act_id（规格第 5 节"归属可改"）。
     if (updates.actId !== undefined) backendData.act_id = updates.actId

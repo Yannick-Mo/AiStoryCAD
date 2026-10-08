@@ -112,7 +112,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
   // What the detail panel shows instead of the normal selection view: a full-panel
-  // field editor (本章要写什么 / 本章写成了什么 / 正文), the finished-content
+  // field editor (本章要写什么 / 正文), the finished-content
   // preview, the setups list or the global settings.
   // Cleared on save / cancel or when the selection moves on.
   const [detailMode, setDetailMode] = useState<
@@ -190,7 +190,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   }, [handleChapterClick])
 
   /**
-   * 全屏字段编辑器保存。goal / result 只是 store 上的字段；正文要先写服务端再改
+   * 全屏字段编辑器保存。goal 只是 store 上的字段；正文要先写服务端再改
    * 本地——正文是延迟列，本地那份只是副本。
    */
   const handleFieldSave = useCallback(async (text: string) => {
@@ -201,11 +201,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       store.setChapterContent(chapterId, text)
       return
     }
-    if (field === 'goal') store.updateChapter(chapterId, { goal: text })
-    else store.updateChapter(chapterId, { result: text })
-    setSelectedChapter(prev => (prev && prev.id === chapterId
-      ? (field === 'goal' ? { ...prev, goal: text } : { ...prev, result: text })
-      : prev))
+    store.updateChapter(chapterId, { goal: text })
+    setSelectedChapter(prev => (prev && prev.id === chapterId ? { ...prev, goal: text } : prev))
   }, [detailMode, projectId, store])
 
   /**
@@ -469,7 +466,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
               store.setChapterContent(chapterId, text)
             }}
             onEditGoal={(chapter) => setDetailMode({ kind: 'chapter-field', chapterId: chapter.id, field: 'goal' })}
-            onEditResult={(chapter) => setDetailMode({ kind: 'chapter-field', chapterId: chapter.id, field: 'result' })}
             onEditBody={(chapter) => handleOpenBodyEditor(chapter)}
             onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
           />
@@ -522,7 +518,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       }
       parts.push(`\n## ${ch.title}\n`)
       if (ch.goal) parts.push(`要写什么：${ch.goal}\n\n`)
-      if (ch.result) parts.push(`写成了什么：${ch.result}\n\n`)
       const body = data.chapterContents[ch.id]
       if (body) parts.push(body + '\n\n')
     }

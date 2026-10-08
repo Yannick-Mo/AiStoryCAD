@@ -56,7 +56,7 @@ class TestContentWriteToolsReturnFreshCounts:
         assert res.data["word_count"] == 5
         assert res.data["body_chars"] == 5
         assert res.data["replaced_body_chars"] == len("旧正文" * 10)
-        assert "update_chapter" in res.data["reminder"], "写完必须提醒补「本章写成了什么」"
+        assert "reminder" not in res.data, "写完不用补摘要——下一章直接读这一章的结尾原文"
         db.commit.assert_awaited()
 
     async def test_continue_chapter_appends_and_reports_counts(self):

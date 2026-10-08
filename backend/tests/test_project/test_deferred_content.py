@@ -29,7 +29,7 @@ async def _project_with_chapter(db_session: AsyncSession, test_user: dict):
     db_session.add(act)
     await db_session.flush()
     chapter = Chapter(project_id=project.id, act_id=act.id, title="第一章",
-                      goal="本章要写什么", result="本章写成了什么",
+                      goal="本章要写什么",
                       content=BODY, status="draft", sort_order=1)
     db_session.add(chapter)
     await db_session.flush()
@@ -57,7 +57,6 @@ async def test_row_to_dict_omits_chapter_content(db_session: AsyncSession, test_
     # 其余列一个都不少
     assert row["title"] == "第一章"
     assert row["goal"] == "本章要写什么"
-    assert row["result"] == "本章写成了什么"
     assert row["status"] == "draft"
     assert row["id"] == str(chapter.id)
     expected = {c.name for c in Chapter.__table__.columns} - {"content"}

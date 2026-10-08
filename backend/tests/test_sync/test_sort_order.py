@@ -113,7 +113,7 @@ async def test_update_chapter_does_not_take_a_raw_sort_order(db_session: AsyncSe
 
     props = UpdateChapterTool.meta.parameters["properties"]
     assert "sort_order" not in props
-    assert set(props) == {"chapter_id", "title", "goal", "result", "status"}
+    assert set(props) == {"chapter_id", "title", "goal", "status"}
 
     project, repo, (act1,) = await _project(db_session, test_user, acts=1)
     first = await _add_chapter(repo, project.id, act1, "first")

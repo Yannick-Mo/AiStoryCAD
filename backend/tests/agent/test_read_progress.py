@@ -32,8 +32,8 @@ async def _progress_fixture(db_session: AsyncSession, test_user: dict) -> dict:
       * 第二幕 purpose 为空            → design_gaps「幕没写要干什么」
 
     章（全局章号 1..5）：
-      * 1 第一章：有正文、有 result     → 无缺口
-      * 2 第二章：有正文、result 为空   → design_gaps「章有正文但没写写成了什么」
+      * 1 第一章：有正文、有 goal       → 无缺口
+      * 2 第二章：有正文、有 goal       → 无缺口（「本章写成了什么」已删除）
       * 3 第三章：没有正文、有 goal     → content_break（第一个正文为空的章）
       * 4 第四章：goal 为空            → design_gaps「章没写要写什么」
       * 5 第五章：有 goal、没有正文
@@ -52,15 +52,15 @@ async def _progress_fixture(db_session: AsyncSession, test_user: dict) -> dict:
     db_session.add_all([act1, act2])
     await db_session.flush()
 
-    def chapter(act, title, goal, result, content, status, order):
+    def chapter(act, title, goal, content, status, order):
         return Chapter(project_id=project.id, act_id=act.id, title=title, goal=goal,
-                       result=result, content=content, status=status, sort_order=order)
+                       content=content, status=status, sort_order=order)
 
-    ch1 = chapter(act1, "第一章", "要写什么", "写成了什么", BODY, "final", 1)
-    ch2 = chapter(act1, "第二章", "要写什么", "", BODY, "revising", 2)
-    ch3 = chapter(act1, "第三章", "要写什么", "", "", "draft", 3)
-    ch4 = chapter(act2, "第四章", "", "", "", "draft", 1)
-    ch5 = chapter(act2, "第五章", "要写什么", "", "", "draft", 2)
+    ch1 = chapter(act1, "第一章", "要写什么", BODY, "final", 1)
+    ch2 = chapter(act1, "第二章", "要写什么", BODY, "revising", 2)
+    ch3 = chapter(act1, "第三章", "要写什么", "", "draft", 3)
+    ch4 = chapter(act2, "第四章", "", "", "draft", 1)
+    ch5 = chapter(act2, "第五章", "要写什么", "", "draft", 2)
     db_session.add_all([ch1, ch2, ch3, ch4, ch5])
 
     hero = Character(project_id=project.id, name="主角", role="main",
@@ -143,8 +143,10 @@ async def test_design_gaps_report_every_missing_field(db_session: AsyncSession, 
 
     assert any("幕没写" in kind for kind in kinds), kinds
     assert any("章没写" in kind and "要写什么" in kind for kind in kinds), kinds
-    assert any("有正文但没写" in kind for kind in kinds), kinds
     assert any("人物没写" in kind for kind in kinds), kinds
+    # 曾经还有一条「章有正文但没写『本章写成了什么』」。它现在**不该存在**：
+    # 下一章直接读上一章结尾原文，没有需要写回的字段（迁移 0022）。
+    assert not any("有正文但没写" in kind for kind in kinds), kinds
 
 
 async def test_design_gaps_carry_the_id_and_the_fixing_tool(db_session: AsyncSession, test_user: dict):
@@ -162,13 +164,12 @@ async def test_design_gaps_carry_the_id_and_the_fixing_tool(db_session: AsyncSes
     assert ("update_chapter", str(f["chapters"][3].id)) in by_id, "第四章没写 goal，必须报出来"
     assert ("update_character", str(f["characters"][1].id)) in by_id, "配角没写 motivation，必须报出来"
 
-    # 有正文却没写「本章写成了什么」的那一章：缺口说的是 result，不是 goal
-    chapter_gap = by_id[("update_chapter", str(f["chapters"][1].id))]
-    assert chapter_gap["global_order"] == 2
-    assert "写成了什么" in chapter_gap["what"]
-    # 没有正文的章不报这条缺口（还没到写 result 的时候）
-    assert ("update_chapter", str(f["chapters"][2].id)) not in by_id or \
-        "要写什么" in by_id[("update_chapter", str(f["chapters"][2].id))]["what"]
+    # 第二章有正文也有蓝图 → 不再是缺口。「本章写成了什么」已删除（迁移 0022），
+    # 「有正文但没写回摘要」不再是问题：下一章直接读结尾原文。
+    assert ("update_chapter", str(f["chapters"][1].id)) not in by_id
+    assert not any("写成了什么" in g["what"] for g in progress["design_gaps"])
+    # 没有正文但有蓝图的章也不报缺口
+    assert ("update_chapter", str(f["chapters"][2].id)) not in by_id
 
 
 async def test_a_complete_design_has_no_gaps(db_session: AsyncSession, test_user: dict):
@@ -178,9 +179,9 @@ async def test_a_complete_design_has_no_gaps(db_session: AsyncSession, test_user
     await db_session.flush()
     db_session.add_all([
         Chapter(project_id=project.id, act_id=act.id, title="第一章", goal="要写什么",
-                result="写成了什么", content=BODY, status="final", sort_order=1),
+                content=BODY, status="final", sort_order=1),
         Chapter(project_id=project.id, act_id=act.id, title="第二章", goal="要写什么",
-                result="", content="", status="draft", sort_order=2),
+                content="", status="draft", sort_order=2),
         Character(project_id=project.id, name="主角", role="main",
                   motivation="想要什么", arc="从哪到哪", sort_order=1),
     ])
@@ -255,7 +256,7 @@ async def test_next_step_prefers_the_content_break_when_design_is_complete(db_se
     db_session.add(act)
     await db_session.flush()
     db_session.add(Chapter(project_id=project.id, act_id=act.id, title="第一章",
-                           goal="要写什么", result="写成了什么", content=BODY,
+                           goal="要写什么", content=BODY,
                            status="final", sort_order=1))
     await db_session.flush()
 
@@ -272,7 +273,7 @@ async def test_next_step_is_the_overdue_setup_line_when_that_is_all_that_is_left
     db_session.add(act)
     await db_session.flush()
     ch1 = Chapter(project_id=project.id, act_id=act.id, title="第一章", goal="要写什么",
-                  result="写成了什么", content=BODY, status="final", sort_order=1)
+                  content=BODY, status="final", sort_order=1)
     db_session.add(ch1)
     await db_session.flush()
     db_session.add(Setup(project_id=project.id, note="旧硬币", planted_in=ch1.id,

@@ -2,7 +2,7 @@
 
 角色关系是一条条**记录**，不是一张图。三个强度值（trust / threat / attraction）
 已删除：它们是伪精度，而且关系强度随剧情变化属于动态——静态记录里放动态值必然过时。
-关系的变化写进那一章的「本章写成了什么」。
+关系的变化写进这条记录的 description（它本来就是"来龙去脉"）。
 
 ``list_character_relations`` 已并入 ``list_relations``（规格第 10 节），
 ``list_tools.py`` 模块本身也不再存在——这些工具现在住在 ``read_tools.py``。

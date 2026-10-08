@@ -4,7 +4,7 @@ import { countWords } from '../data/wordCount'
 import type { Chapter } from '../types'
 
 /** 章上可以放大来写/改的三个文本字段。 */
-export type ChapterTextField = 'goal' | 'result' | 'body'
+export type ChapterTextField = 'goal' | 'body'
 
 interface FieldMeta {
   /** 面板标题里的图标 */
@@ -28,14 +28,6 @@ const FIELD_META: Record<ChapterTextField, FieldMeta> = {
     hint: '写一段话概括本章要完成什么',
     placeholder: '动笔前的计划：这一章要推进什么、章末跟章初有什么不同、留什么钩子...',
     toast: '章节目标已保存',
-  },
-  result: {
-    icon: '🏁',
-    title: '本章写成了什么',
-    subtitle: '下一章的前情',
-    hint: '写完之后的事实：下一章靠它接上',
-    placeholder: '写完之后的事实：结束时局面变成什么样、谁欠着谁、什么没交代完...',
-    toast: '本章结果已保存',
   },
   body: {
     icon: '✍️',
@@ -74,16 +66,14 @@ interface ChapterTextEditorProps {
  * 章字段的全屏编辑器。它填满宿主容器（详情面板的正文区），**不是模态框**：
  * 保存或取消只是把详情面板还给选中的那一章。
  *
- * 「本章写成了什么」和「正文」要的是同一件东西——一段可以放大来写、带字数和
- * 保存/取消的文本，所以这里按字段泛化成一个组件，而不是三个几乎相同的文件。
+ * 「本章要写什么」和「正文」要的是同一件东西——一段可以放大来写、带字数和
+ * 保存/取消的文本，所以这里按字段泛化成一个组件，而不是两个几乎相同的文件。
  */
 export default function ChapterTextEditor({
   chapter, field, content, contentLoaded = true, onSave, onClose,
 }: ChapterTextEditorProps) {
   const meta = FIELD_META[field]
-  const initial = field === 'body'
-    ? (content ?? '')
-    : (field === 'goal' ? chapter.goal ?? '' : chapter.result ?? '')
+  const initial = field === 'body' ? (content ?? '') : (chapter.goal ?? '')
   const blocked = field === 'body' && !contentLoaded
 
   const { addToast } = useToast()
