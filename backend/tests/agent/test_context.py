@@ -143,7 +143,7 @@ class TestRagFetchedOnDemandOnly:
         builder = ContextBuilder(AsyncMock())
         pid = uuid.uuid4()
         cached = {"project": {"title": "T", "genre": "", "global_settings": ""},
-                  "acts": [], "characters": [], "relations": [], "edges": []}
+                  "acts": [], "characters": [], "relations": [], "setups": []}
         builder._cache_get = AsyncMock(return_value=cached)
         builder._get_rag_context_if_meaningful = AsyncMock(return_value="KNOWLEDGE")
         out = await builder.build_summary(pid, depth="framework")

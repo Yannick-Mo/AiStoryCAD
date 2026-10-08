@@ -859,7 +859,7 @@ async def autonomous_loop(
                         transition="plan_execution_interrupted",
                         messages=state.messages + [Message(role="system", content=(
                             f"【执行中断】一个已确认的计划（步骤工具：{plan_desc}）上次执行时被网络中断，"
-                            "部分步骤可能已经生效。请先调用读取工具核对项目当前状态（相关场景/角色/章节是否"
+                            "部分步骤可能已经生效。请先调用读取工具核对项目当前状态（相关人物/关系/伏笔/章节是否"
                             "已被删除或修改），再根据实际状态决定是否需要补做，不要重做该计划。"
                         ))],
                     )

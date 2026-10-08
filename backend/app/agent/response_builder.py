@@ -247,14 +247,17 @@ async def build_system_prompt(state: dict, rag_text: str = "") -> str:
     if project_structure:
         chars_count = len(project_ctx.get("characters", []))
         rels_count = len(project_ctx.get("relations", []))
-        edges_count = len(project_ctx.get("edges", []))
+        # 原本这里还统计 project_ctx["edges"] 并输出"X条连线"。章间连线层随场景层
+        # 一起删掉后，**全仓再没有一处会写这个键**——这行于是变成 len([])==0 的死分支。
+        # 死分支比没有更糟：它让人以为连线还在。伏笔条数改由 setups 承担。
+        setups_count = len(project_ctx.get("setups", []))
         stats_parts = [f"项目规模：{project_structure}"]
         if chars_count:
             stats_parts.append(f"{chars_count}角色")
         if rels_count:
             stats_parts.append(f"{rels_count}条关系")
-        if edges_count:
-            stats_parts.append(f"{edges_count}条连线")
+        if setups_count:
+            stats_parts.append(f"{setups_count}条伏笔")
         sections.append(
             _ContextSection(tier=1, label="project_stats", text=" | ".join(stats_parts))
         )
