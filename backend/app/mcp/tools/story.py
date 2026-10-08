@@ -177,19 +177,3 @@ async def update_chapter(
             chapter.status = status_value
         await db.commit()
         return row_to_dict(chapter)
-
-
-@mcp.tool()
-async def write_chapter(token: str, chapter_id: str, content: str) -> dict:
-    """写入或整体替换一章正文（重写也用它）。会覆盖已有正文。"""
-    async with async_session() as db:
-        user = await get_current_user_mcp(token, db)
-        chapter = (await db.execute(
-            select(Chapter).where(Chapter.id == uuid.UUID(chapter_id))
-        )).scalar_one_or_none()
-        if not chapter:
-            raise ValueError(f"Chapter {chapter_id} not found")
-        await verify_project_ownership(str(chapter.project_id), user["id"], db)
-        chapter.content = content
-        await db.commit()
-        return {"chapter_id": str(chapter.id), "body_chars": len(content)}

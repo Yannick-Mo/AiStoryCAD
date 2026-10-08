@@ -145,6 +145,9 @@ class TestPassthrough:
         from app.agent.tools import get_tool_registry
 
         registry = get_tool_registry(None)
-        assert len(registry) == 38, "规格第 9 节：33 个本范围内（含 delete_setup）+ 4 个范围外 + 1 个写作侧"
+        assert len(registry) == 36, (
+            "规格第 9 节：31 个本范围内（含 delete_setup）+ 4 个范围外 + 1 个写作侧"
+            "（内容那 2 个 write_chapter / continue_chapter 已删）"
+        )
         missing = sorted(set(registry) - set(TOOL_DISPLAY_NAMES))
         assert not missing, f"缺少中文显示名的工具：{missing}"

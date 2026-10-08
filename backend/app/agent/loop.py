@@ -171,7 +171,10 @@ def _section_for_tool(tool_name: str) -> str:
                      "create_chapter", "update_chapter", "move_chapter",
                      "delete_chapter"):
         return "structure"
-    if tool_name in ("write_chapter", "continue_chapter", "call_writer_agent"):
+    # 正文只有一个写入口：call_writer_agent。write_chapter / continue_chapter
+    # 已删除——它们只把正文存库、不加载任何东西，主循环裸写会跳过 writer.yaml
+    # 的整套写作方法（对话分寸、节奏、比喻配额），而且能静默覆盖整章正文。
+    if tool_name == "call_writer_agent":
         return "content"
     if tool_name in ("create_character", "update_character", "delete_character",
                      "create_relation", "update_relation", "delete_relation"):
@@ -510,6 +513,8 @@ async def _build_turn_sections(
             "- 在调用任何写作工具之前，先通过对话与用户确认方向和内容\n"
             "- 你可以根据用户的思路提供完整段落草稿作为示范或起点\n"
             "- 建章时顺手把「本章要写什么」写了：一段话说清这一章从哪走到哪、章末停在什么处境\n"
+            "- **写正文只有一条路：call_writer_agent**（写作智能体）。它带着完整的写作方法，"
+            "上下文也自己装好——不必先读，先读只会白花轮次。\n"
             "- **一章写完，正文本身就是下一章的前情**——下一章读的是这一章的结尾原文，"
             "不需要补摘要；正文里长出的活线用 create_setup 记下来\n"
             "- 这一章算不算过，用 update_chapter(status=...) 标出来"

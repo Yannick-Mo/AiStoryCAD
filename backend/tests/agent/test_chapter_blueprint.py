@@ -129,7 +129,7 @@ class TestNoLintMachinery:
         assert not hasattr(blueprint_mod, name), name
 
     @pytest.mark.parametrize("tool", [
-        "create_chapter", "update_chapter", "write_chapter", "continue_chapter",
+        "create_chapter", "update_chapter",
     ])
     def test_tools_do_not_report_blueprint_wording(self, tool):
         from app.agent.tools import get_tool_registry
@@ -436,12 +436,18 @@ class TestWriterToolContract:
         assert props["action"]["enum"] == ["write", "continue", "rewrite"]
 
 
-class TestTwoWritingRoutesAreDescribedSeparately:
-    """两条写正文的路，对「要不要先读」的要求正好相反，工序必须分开说。
+class TestProseHasOneWriteEntrypoint:
+    """写正文**只有 call_writer_agent 一条路**。
 
-    把两条路合成一句话（「写正文不必自己先读」）说错过一次：那对
-    ``call_writer_agent`` 成立，对 ``write_chapter`` / ``continue_chapter`` 是错的——
-    后两个只把正文存库、不加载任何东西，不先读就等于盲写。
+    这里曾经是两条（``call_writer_agent`` 与 ``write_chapter`` /
+    ``continue_chapter``），并有一个测试类专门防止把它们合并成一句话——因为
+    合并过一次，而那句话对其中一条是错的。现在两条路只剩一条，那个前提本身
+    消失了，所以这个类改成盯住"别把第二条路加回来"。
+
+    为什么删掉那两条：它们只把正文存库、不加载任何东西。走它们等于绕过
+    ``writer.yaml`` 的整套写作方法（对话分寸、节奏、比喻配额），而且
+    ``write_chapter`` 能静默覆盖整章正文——它有 ``is_destructive`` 标记，
+    却没有 ``needs_confirmation``，所以模型选错时用户连确认框都看不到。
     """
 
     @staticmethod
@@ -450,37 +456,64 @@ class TestTwoWritingRoutesAreDescribedSeparately:
 
         return get_prompt_builder().get_static_section("tool_usage")
 
-    def test_guide_splits_the_two_routes(self):
+    def test_guide_states_a_single_route(self):
         text = self._tool_usage()
-        assert "两条写正文的路" in text
-        assert "`call_writer_agent`（写作智能体）：**不必先读**" in text
-        assert "（你自己写正文）：**可以先读了解情况**" in text
+        assert "写正文只有一条路" in text
+        assert "`call_writer_agent`（写作智能体）" in text
 
-    def test_subagent_route_explains_why_no_read(self):
-        assert "它会自动加载" in self._tool_usage()
+    def test_removed_tools_are_not_mentioned_anywhere_in_the_guide(self):
+        """提示词里不能再出现那两个名字——留着就等于还留着一扇门。"""
+        text = self._tool_usage()
+        for dead in ("write_chapter", "continue_chapter"):
+            assert dead not in text, f"写作工序里不该再提 {dead}"
 
-    def test_self_write_route_explains_why_it_must_read(self):
+    def test_the_guide_forbids_writing_prose_itself(self):
         usage = self._tool_usage()
-        assert "这两个工具只把正文存库" in usage
-        assert "不加载任何东西" in usage
-        assert "read_chapter_package" in usage
+        assert "你自己不要直接写正文" in usage
+
+    def test_three_actions_replace_the_three_separate_tools(self):
+        """新写/续写/重写走 action 参数，不是三个工具。"""
+        from app.agent.tools import get_tool_registry
+
+        props = get_tool_registry()["call_writer_agent"].meta.parameters["properties"]
+        assert props["action"]["enum"] == ["write", "continue", "rewrite"]
+
+    def test_cowriter_mode_says_the_same_thing(self):
+        """协作模式也必须说"只有一条路"，否则换个模式就写出质量差一截的东西。
+
+        协作模式这段规则是 ``loop.py`` 里拼的（不是 YAML），所以直接读源码，
+        跟 ``test_prompt_templates`` 里钉 routes_ai 的做法一致。
+
+        只截 ``# --- 写作行为规则 ---`` 那一段，**不扫整个文件**：源码注释里会
+        解释"为什么删掉 write_chapter"，那些解释必须留着。
+        """
+        import inspect
+
+        from app.agent import loop as loop_mod
+
+        src = inspect.getsource(loop_mod)
+        block = src[src.find('"# --- 写作行为规则 ---'):]
+        block = block[:block.find('"# --- 写作行为规则', 1)]
+        assert "写正文只有一条路：call_writer_agent" in block, "协作模式缺单一路由规则"
+        assert "write_chapter" not in block, "协作模式的规则里不该再提已删的 write_chapter"
+        assert "continue_chapter" not in block, "不该再提已删的 continue_chapter"
+
+    def test_cowriter_yaml_says_the_same_thing(self):
+        from app.agent.prompts import render_prompt
+
+        rendered = render_prompt("cowriter")
+        assert rendered, "cowriter.yaml 渲染失败"
+        assert "写正文只有一条路" in rendered
+        for dead in ("write_chapter", "continue_chapter"):
+            assert dead not in rendered
 
     def test_analysis_still_reads_the_blueprint(self):
-        """分析、规划、回答用户问题仍然要读蓝图——不能因为写正文的路不用读就一起删掉。"""
+        """分析、规划、回答用户问题仍然要读蓝图——不能因为写正文不用读就一起删掉。"""
         assert "分析、规划、回答用户问题前先读章蓝图" in self._tool_usage()
 
-    def test_write_chapter_warns_about_overwriting_and_names_the_read_tool(self):
+    def test_reading_prose_is_still_possible(self):
+        """不写正文 ≠ 读不到正文。重写前想先读一遍仍然可以。"""
         from app.agent.tools import get_tool_registry
 
-        desc = get_tool_registry()["write_chapter"].meta.description
-        assert "覆盖" in desc
-        assert "read_chapter_content" in desc
-        assert "不用再补任何摘要" in desc, "写完不用补「本章写成了什么」——下一章直接读结尾原文"
-
-    def test_continue_chapter_warns_against_repeating_existing_prose(self):
-        """content 是追加：传了全文会让正文翻倍。"""
-        from app.agent.tools import get_tool_registry
-
-        desc = get_tool_registry()["continue_chapter"].meta.description
-        assert "追加" in desc
-        assert "不重发已有正文" in desc
+        assert "read_chapter_content" in get_tool_registry()
+        assert "read_chapter_content" in self._tool_usage()

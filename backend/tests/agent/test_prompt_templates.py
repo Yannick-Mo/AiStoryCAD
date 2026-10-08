@@ -437,9 +437,9 @@ class TestToolUsageExamplesMatchSchemas:
 
     def test_write_examples_use_chapter_id(self):
         reg = self._registry()
-        write_params = reg["write_chapter"].meta.parameters["properties"]
+        write_params = reg["call_writer_agent"].meta.parameters["properties"]
         assert "chapter_id" in write_params
-        assert "content" in write_params
+        assert "action" in write_params
 
     def test_no_scene_tools_or_params_in_the_registry(self):
         reg = self._registry()
@@ -448,12 +448,22 @@ class TestToolUsageExamplesMatchSchemas:
             props = tool.meta.parameters.get("properties", {})
             assert "scene_id" not in props, name
 
-    def test_write_chapter_replaces_so_rewrite_is_not_a_separate_tool(self):
+    def test_prose_has_exactly_one_write_entrypoint(self):
+        """写正文只有 call_writer_agent 一个入口。
+
+        write_chapter / continue_chapter 已删除：它们只把正文存库、不加载任何东西，
+        走它们等于绕过 writer.yaml 的整套写作方法，而且能静默覆盖整章正文。
+        """
         reg = self._registry()
-        assert "write_chapter" in reg
+        assert "call_writer_agent" in reg
+        assert "write_chapter" not in reg
+        assert "continue_chapter" not in reg
         assert "rewrite_scene" not in reg
         assert "continue_scene" not in reg
-        assert "continue_chapter" in reg
+        # 续写/重写走 action 参数，不是独立工具
+        assert reg["call_writer_agent"].meta.parameters["properties"]["action"]["enum"] == [
+            "write", "continue", "rewrite",
+        ]
 
     def test_update_character_uses_character_id(self):
         reg = self._registry()

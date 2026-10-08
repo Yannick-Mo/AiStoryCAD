@@ -8,8 +8,13 @@ class TestWriteTools:
 
     def test_known_write_tools(self):
         assert "update_chapter" in COWRITER_TOOLS
-        assert "write_chapter" in COWRITER_TOOLS
+        assert "call_writer_agent" in COWRITER_TOOLS, "写正文的唯一入口必须对协作模式可见"
         assert "create_character" in COWRITER_TOOLS
+
+    def test_prose_write_tools_are_gone(self):
+        """write_chapter / continue_chapter 已删除，别让它们回来。"""
+        for gone in ("write_chapter", "continue_chapter"):
+            assert gone not in COWRITER_TOOLS, gone
 
     def test_read_tools_not_in_write(self):
         assert "read_project" in READ_ONLY_TOOLS

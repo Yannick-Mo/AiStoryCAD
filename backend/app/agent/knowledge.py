@@ -33,8 +33,8 @@ APP_GUIDE = """# ——— AiStoryCAD 应用程序指南 ———
 2. **搭结构**：`create_act` / `create_chapter`。**结构是长出来的**：只落实用户给的那部分，
    **不要自动补全整个故事**的幕章结构，也不要因为"一般该有几幕"就替他占位。
 3. **塑人物**：`create_character` / `update_character`，重点是「他想要什么」「他从哪到哪」。
-4. **一章一章写**：`read_chapter_package` 拿齐输入 → `write_chapter`（或 `call_writer_agent`）。
-   写完不用补摘要——下一章会直接读这一章的结尾原文。
+4. **一章一章写**：`call_writer_agent`（章 id + write/continue/rewrite）。
+   写正文**只有这一条路**——它自己装好上下文并带着完整的写作方法。
 5. **记账**：`create_setup` / `update_setup` 记埋与收；正文里长出、后面还得提的活线
    （挖到的信息、埋下的物件、关系的变化）也走这里；不确定下一步做什么就 `read_progress`。
 

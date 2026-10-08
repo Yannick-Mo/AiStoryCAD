@@ -79,9 +79,8 @@ class TestIdDependencyMarkersInSchemas:
         ("read_chapter_content", "chapter_id", "read_chapters"),
         ("read_character", "character_id", "list_characters"),
         ("read_relation", "relation_id", "list_relations"),
-        # 写：内容
-        ("write_chapter", "chapter_id", "read_chapters"),
-        ("continue_chapter", "chapter_id", "read_chapters"),
+        # 写：内容（只有一条路）
+        ("call_writer_agent", "chapter_id", "read_chapters"),
         # 写：章
         ("create_chapter", "act_id", "read_acts"),
         ("update_chapter", "chapter_id", "read_chapters"),
@@ -245,14 +244,13 @@ class TestListThenWriteScenario:
         assert "chapter_id" in required, \
             f"update_chapter needs chapter_id, got {required}"
 
-    def test_read_chapters_output_feeds_write_chapter(self):
-        """read_chapters → write_chapter chain."""
-        write_ch = get_tool_registry()["write_chapter"]
-        required = write_ch.meta.parameters.get("required", [])
+    def test_read_chapters_output_feeds_the_writer_agent(self):
+        """read_chapters → call_writer_agent 链。"""
+        tool = get_tool_registry()["call_writer_agent"]
+        required = tool.meta.parameters.get("required", [])
         assert "chapter_id" in required, \
-            f"write_chapter needs chapter_id, got {required}"
-        props = write_ch.meta.parameters["properties"]
-        assert "content" in props
+            f"call_writer_agent needs chapter_id, got {required}"
+        assert "action" in tool.meta.parameters["properties"]
 
     def test_list_setups_scope_param_is_status(self):
         """list_setups 是唯一带筛选参数的名录工具：只看 open / paid / dropped。"""
@@ -315,7 +313,7 @@ class TestListThenWriteScenario:
         registry = get_tool_registry()
         create_req = registry["create_chapter"].meta.parameters["required"]
         assert set(create_req) == {"act_id", "chapters"}
-        assert "chapter_id" in registry["write_chapter"].meta.parameters["required"]
+        assert "chapter_id" in registry["call_writer_agent"].meta.parameters["required"]
 
         update_props = registry["update_chapter"].meta.parameters["properties"]
         assert {"title", "goal", "status"} <= set(update_props)

@@ -1,14 +1,18 @@
 """工具注册表契约（docs/故事模型设计规格.md 第 8、9 节）。
 
-规格第 9 节的数量账是本文件的判据：
+规格第 9 节的数量账原是 33 个 = 读 12 + 写 21（幕 4 + 章 4 + **内容 2** + 伏笔 3
++ 人物与关系 6 + 作品层 2）。**内容那 2 个已删除**（``write_chapter`` /
+``continue_chapter``）：它们只把正文存库、不加载任何东西，走它们等于绕过
+``writer.yaml`` 的整套写作方法，而且 ``write_chapter`` 能静默覆盖整章正文。
+写正文现在只有 ``call_writer_agent`` 一个入口，所以本范围内是 **31** 个 = 读 12
++ 写 19。
 
-* 本范围内 **33** 个 = 读 **12** + 写 **21**（幕 4 + 章 4 + 内容 2 + 伏笔 3 + 人物与关系 6
-  + 作品层 2）。规格原本给伏笔的只有 create / update，`delete_setup` 是补上的第 33 个
-  （理由见规格第 13.5 节）；
-* **修复类 0 个** —— 字数实时算、顺序由实现归一化、不变式由结构保证，
-  所以没有"重算"和"重建"这回事（``recalc_*`` / ``relink_*`` / ``rebuild_*`` 一个都不该有）；
-* 另有 4 个属于范围外（``search_knowledge`` ``web_search`` ``web_fetch`` ``invoke_skill``）、
-  1 个属于写作侧（``call_writer_agent``）。
+其余不变：规格原本给伏笔的只有 create / update，``delete_setup`` 是补上的那一个
+（理由见规格第 13.5 节）；**修复类 0 个**——字数实时算、顺序由实现归一化、
+不变式由结构保证，所以没有"重算"和"重建"这回事（``recalc_*`` / ``relink_*`` /
+``rebuild_*`` 一个都不该有）；另有 4 个属于范围外（``search_knowledge``
+``web_search`` ``web_fetch`` ``invoke_skill``）、1 个属于写作侧
+（``call_writer_agent``）。
 """
 import re
 
@@ -34,7 +38,6 @@ SPEC_WRITE = {
     "update_project", "create_project_from_material",
     "create_act", "update_act", "move_act", "delete_act",
     "create_chapter", "update_chapter", "move_chapter", "delete_chapter",
-    "write_chapter", "continue_chapter",
     "create_character", "update_character", "delete_character",
     "create_relation", "update_relation", "delete_relation",
     "create_setup", "update_setup", "delete_setup",
@@ -68,23 +71,34 @@ def registry():
 
 # ── 数量 ──────────────────────────────────────────────────────────────────────
 
-def test_spec_surface_is_exactly_33_tools(registry):
+def test_spec_surface_is_exactly_31_tools(registry):
     assert len(SPEC_READ) == 12
-    assert len(SPEC_WRITE) == 21
+    assert len(SPEC_WRITE) == 19
     assert SPEC_READ | SPEC_WRITE <= set(registry), SPEC_READ | SPEC_WRITE - set(registry)
 
 
-def test_registry_is_exactly_33_spec_tools_plus_5(registry):
+def test_registry_is_exactly_31_spec_tools_plus_5(registry):
     assert set(registry) == SPEC_READ | SPEC_WRITE | OUT_OF_SCOPE | WRITER_SIDE
 
 
-def test_registry_size_is_38(registry):
-    assert len(registry) == 38
+def test_registry_size_is_36(registry):
+    assert len(registry) == 36
 
 
-def test_read_group_is_12_and_write_group_is_21(registry):
+def test_read_group_is_12_and_write_group_is_19(registry):
     assert len(SPEC_READ & set(registry)) == 12
-    assert len(SPEC_WRITE & set(registry)) == 21
+    assert len(SPEC_WRITE & set(registry)) == 19
+
+
+def test_prose_write_tools_are_not_in_the_registry(registry):
+    """写正文只有 call_writer_agent 一个入口（迁移之外的一次设计删除）。
+
+    这两个名字不许回来：它们只把正文存库、不加载任何东西，主循环走它们等于
+    绕过 writer.yaml 的写作方法，而且 write_chapter 能静默覆盖整章正文。
+    """
+    for gone in ("write_chapter", "continue_chapter"):
+        assert gone not in registry, gone
+    assert "call_writer_agent" in registry
 
 
 # ── 修复类必须为 0 ────────────────────────────────────────────────────────────
@@ -164,14 +178,17 @@ def test_list_tools_are_read_only_and_never_write(registry):
 
 
 def test_destructive_tools_need_confirmation(registry):
-    """删除类工具既标破坏性、又要求确认——不能悄悄删掉一章正文。"""
+    """删除类工具既标破坏性、又要求确认——不能悄悄删掉一章正文。
+
+    ``write_chapter`` 曾经只标了 ``is_destructive``、没要求确认，于是模型选错路时
+    能静默覆盖整章正文。它现在整个删掉了（写正文只有 call_writer_agent 一个入口），
+    所以这里不用再替它操心。
+    """
     for name in ("delete_act", "delete_chapter", "delete_character",
-                 "delete_relation", "delete_setup", "write_chapter"):
+                 "delete_relation", "delete_setup"):
         tool = registry[name]
         assert tool.meta.is_destructive, name
-    for name in ("delete_act", "delete_chapter", "delete_character", "delete_relation",
-                 "delete_setup"):
-        assert registry[name].meta.needs_confirmation, name
+        assert tool.meta.needs_confirmation, name
 
 
 # ── schema 形状 ───────────────────────────────────────────────────────────────

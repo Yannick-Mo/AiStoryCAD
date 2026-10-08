@@ -22,15 +22,13 @@ COWRITER_TOOLS: set[str] = {
     "create_act", "update_act", "move_act", "delete_act",
     # CRUD — 章
     "create_chapter", "update_chapter", "move_chapter", "delete_chapter",
-    # 内容 — 章就是正文层
-    "write_chapter", "continue_chapter",
     # CRUD — 人物
     "create_character", "update_character", "delete_character",
     # CRUD — 角色关系
     "create_relation", "update_relation", "delete_relation",
     # CRUD — 伏笔
     "create_setup", "update_setup", "delete_setup",
-    # 写作侧（待写手设计时定）
+    # 写作侧 —— 写正文的唯一入口
     "call_writer_agent",
 }
 

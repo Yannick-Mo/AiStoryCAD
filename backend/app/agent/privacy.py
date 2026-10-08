@@ -45,9 +45,8 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "update_chapter": "修改章节",
     "move_chapter": "移动章节",
     "delete_chapter": "删除章节",
-    # 写：正文
-    "write_chapter": "写入章正文",
-    "continue_chapter": "续写章正文",
+    # 写：正文（call_writer_agent 由 agent 侧描述）
+    # write_chapter / continue_chapter 已删除——写正文只有 call_writer_agent 一个入口
     # 写：人物与关系
     "create_character": "创建人物",
     "update_character": "修改人物",

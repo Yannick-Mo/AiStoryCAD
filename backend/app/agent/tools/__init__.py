@@ -16,12 +16,18 @@ def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) 
 def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
     """全部工具注册表。
 
-    规格第 9 节的数量账：本范围内 33 个 = 读 12 + 写 21（幕 4 + 章 4 + 内容 2 +
+    规格第 9 节的数量账：本范围内 **31** 个 = 读 12 + 写 19（幕 4 + 章 4 +
     人物 3 + 关系 3 + 伏笔 3 + 作品层 2）。规格原本给伏笔的只有 create / update 两个，
     delete_setup 是补上的那一个（理由见 setup_tools 模块说明与规格第 13.5 节）。
     **修复类 0 个**——字数实时算、顺序由实现归一化、不变式由结构保证，所以没有
     "重算"和"重建"这回事。另有 4 个属于范围外（知识库 / 联网 / 技能），
-    1 个属于写作侧待定（call_writer_agent）。
+    1 个属于写作侧（call_writer_agent）。
+
+    **写正文只有 call_writer_agent 一个入口。** write_chapter / continue_chapter
+    已删除：它们只把正文存库、不加载任何东西，主循环走它们等于绕过 writer.yaml
+    的整套写作方法（对话分寸、节奏、比喻配额），而且能静默覆盖整章正文。
+    需要改正文请用 ``call_writer_agent(action=rewrite)``；用户手动编辑走的是
+    ``PUT /chapters/{id}/content``，不经过 agent。
     """
     from .read_tools import (
         ReadProjectTool, ReadActsTool, ReadChaptersTool, ReadChapterContentTool,
@@ -33,7 +39,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         CreateActTool, UpdateActTool, MoveActTool, DeleteActTool,
         CreateChapterTool, UpdateChapterTool, MoveChapterTool, DeleteChapterTool,
     )
-    from .content_tools import WriteChapterTool, ContinueChapterTool
     from .setup_tools import CreateSetupTool, UpdateSetupTool, DeleteSetupTool
     from .character_tools import (
         CreateCharacterTool, UpdateCharacterTool, DeleteCharacterTool,
@@ -55,8 +60,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         # ── 写：结构（8）──
         CreateActTool, UpdateActTool, MoveActTool, DeleteActTool,
         CreateChapterTool, UpdateChapterTool, MoveChapterTool, DeleteChapterTool,
-        # ── 写：内容（2）──
-        WriteChapterTool, ContinueChapterTool,
         # ── 写：伏笔（3）──
         CreateSetupTool, UpdateSetupTool, DeleteSetupTool,
         # ── 写：人物与关系（6）──
