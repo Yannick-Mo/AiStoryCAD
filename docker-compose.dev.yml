@@ -3,7 +3,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
 # - backend: 挂载源码 + 测试文件，uvicorn 热重载（DEV_MODE）
-# - frontend: 挂载 src，跑 vite dev server（对外端口 8080）
+# - frontend: 挂载 src，跑 vite dev server（对外端口 5173，改前端代码即时生效）
 # 生产部署请只使用 docker-compose.yml（无源码挂载、nginx 托管静态产物）。
 
 services:
@@ -31,8 +31,13 @@ services:
     build:
       context: ./frontend
       target: dev
-    ports:
-      - "8080:5173"
+    # `!override` 是必需的，不是洁癖：compose 对 ports 是**叠加**不是替换。
+    # 少了它，base 的 "5173:8080"(nginx) 和这里的映射会同时生效，
+    # 宿主机上留下两个入口 —— 而且 5173 上那个还指着已经不再运行的 nginx，
+    # 表现就是"页面能开但接口全挂"。
+    # 端口沿用 5173，访问地址不变，只是从"静态产物"换成"vite dev server"。
+    ports: !override
+      - "5173:5173"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
