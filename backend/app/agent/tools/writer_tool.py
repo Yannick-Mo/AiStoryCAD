@@ -15,6 +15,16 @@ from app.storycad.repository import with_chapter_content
 
 logger = logging.getLogger(__name__)
 
+# ``user_requirement`` 的长度上限。**这是代码层的守卫，不是提示词的君子协定。**
+#
+# 它本来只有一个描述层的约束（"不要复述本章蓝图、人物设定、世界观"），而模型可以
+# 一边说"不复述"一边把整份蓝图几千字塞进来。后果不是报错，是 build_for_writing
+# 精心配比好的上下文被冲垮——「蓝图怎么用」「这一章的节奏」「句法与手感」全在后面。
+#
+# 600 字足够装"写成无声的 / 更克制 / 控制在 1200 字 / 别让配角太蠢"这类要求。
+# 超过这个量级说明模型在复述材料——那本来就该走 read_*，不该塞进这个参数。
+_MAX_REQ_CHARS = 600
+
 
 def _action_label(action: str) -> str:
     return {"continue": "续写", "rewrite": "重写"}.get(action, "创作")
@@ -61,11 +71,14 @@ class CallWriterAgentTool(BaseTool):
                 "user_requirement": {
                     "type": "string",
                     "description": (
-                        "只装用户对这次写作的要求：风格（如「写成无声的」「更克制」）、"
+                        f"只装用户对这次写作的要求：风格（如「写成无声的」「更克制」）、"
                         "篇幅、想强调的点或禁忌；照用户的原话说，不要改写成任务简报。"
+                        f"**上限 {_MAX_REQ_CHARS} 字，超过会被拒绝**。"
                         "用户这一轮没提要求就省略本参数，不要为了填而编。"
                         "不要复述本章蓝图、人物设定、世界观、上一章发生了什么，"
                         "也不要重述本章要发生的事——这些工具会自动加载。"
+                        "要改蓝图或人物设定请用 update_chapter / update_character，"
+                        "不要写进这里。"
                     ),
                 },
             },
@@ -86,7 +99,22 @@ class CallWriterAgentTool(BaseTool):
                           "不要省略该参数，否则将默认整体替换本章正文。",
                     correction_hint="下一步：明确指定 action=write（新写）/continue（续写追加）/rewrite（重写）后再调用本工具",
                 )
-            user_requirement = kwargs.get("user_requirement", "")
+            # 长度守卫放在最前面：不合法就别去查库、别建上下文。
+            user_requirement = (kwargs.get("user_requirement") or "").strip()
+            if len(user_requirement) > _MAX_REQ_CHARS:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f"user_requirement 太长：{len(user_requirement)} 字，上限 {_MAX_REQ_CHARS}。"
+                        "这个参数只装用户对**这一章的要求**（风格、篇幅、禁忌），"
+                        "不装本章蓝图、人物设定或世界观——那些工具已经自动加载了。"
+                    ),
+                    correction_hint=(
+                        f"把要求压到 {_MAX_REQ_CHARS} 字以内，只留用户原话里的风格与禁忌；"
+                        "需要改蓝图或人物设定请改用 update_chapter / update_character，"
+                        "不要写进 user_requirement。"
+                    ),
+                )
 
             ch_id = uuid.UUID(ch_raw)
             chapter = (await db.execute(
