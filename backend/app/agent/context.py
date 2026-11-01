@@ -290,7 +290,7 @@ class ContextBuilder:
 
         1. 这一章：要写什么（goal）、状态、全局章号、所属幕；
         2. 上一章的蓝图与结尾原文——后者就是这一章的起点（第 1 步）；
-        3. 它在整本书里的位置：幕的 purpose + 项目的 终局 / 主线骨架 / 一句话梗概（第 3 步）；
+        3. 它在整本书里的位置：幕的 purpose + 项目的 当前已完成骨架 / 一句话梗概（第 3 步）；
         4. 人物：每个人的「他想要什么」+「他从哪到哪」（第 4 步）；
         5. 还没回收的伏笔（第 6 步的预读）。
 
@@ -379,7 +379,6 @@ class ContextBuilder:
                 "genre": project.genre if project else "",
                 "logline": (project.logline or "") if project else "",
                 "spine": (project.spine or "") if project else "",
-                "ending": (project.ending or "") if project else "",
                 "total_words": int(project.total_words or 0) if project else 0,
                 "global_settings": (project.global_settings or "") if project else "",
             },
@@ -619,14 +618,14 @@ class ContextBuilder:
 
         ``detail``：
 
-        - ``full``（默认）：每章的**要写什么** —— 梳理全书走向用这个；
+        - ``full``（默认）：每章的**要写什么** —— 回看当前这一段用这个；
         - ``index``：只给 章号 / 标题 / 状态 / 所属幕 / 有没有正文 —— 粗看长范围用。
           一条 index 行只有 full 的约 1/3 大小，所以同样预算能一次读三倍多的章：
           3000 章的书用 full 一次约 65 章（扫完要 46 次），用 index 约 200 章。
 
         **两种模式都不给正文**（那是 ``read_chapter_content`` 的事）。
 
-        这是作者写作循环第 1 步的主力（梳理全书走向），也是第 2 步的
+        这是作者写作循环第 1 步的主力（回看当前这一段），也是第 2 步的
         素材（这一章要干什么）。**正文不在里面**——正文由
         ``read_chapter_content`` 按需读取；下一章的起点由写手从上一章正文里读。
 
@@ -868,7 +867,6 @@ class ContextBuilder:
 
         global_settings = proj.global_settings or ""
         spine = proj.spine or ""
-        ending = proj.ending or ""
         characters_data, relations_data, setups_data = await self._build_side_records(
             proj.id, order_of, lean=True
         )
@@ -879,7 +877,6 @@ class ContextBuilder:
                 "id": str(proj.id), "title": proj.title, "genre": proj.genre or "",
                 "logline": proj.logline or "",
                 "spine": spine[:1200], "spine_chars": len(spine),
-                "ending": ending[:1200], "ending_chars": len(ending),
                 "total_words": int(proj.total_words or 0), "status": proj.status or "",
                 "global_settings": global_settings[:2000],
                 "global_settings_chars": len(global_settings),
@@ -985,14 +982,12 @@ class ContextBuilder:
 
         global_settings = proj.global_settings or ""
         spine = proj.spine or ""
-        ending = proj.ending or ""
 
         result = {
             "project": {
                 "id": str(proj.id), "title": proj.title, "genre": proj.genre or "",
                 "logline": proj.logline or "",
                 "spine": spine, "spine_chars": len(spine),
-                "ending": ending, "ending_chars": len(ending),
                 "total_words": int(proj.total_words or 0), "status": proj.status or "",
                 "global_settings": global_settings[:2000],
                 "global_settings_chars": len(global_settings),
@@ -1128,7 +1123,6 @@ class ContextBuilder:
             ctx["project_title"] = project.title or ""
             ctx["genre"] = project.genre or ""
             ctx["logline"] = project.logline or ""
-            ctx["ending"] = project.ending or ""
             ctx["spine"] = project.spine or ""
             settings_text = (project.global_settings or "").strip()
             ctx["global_settings"] = (

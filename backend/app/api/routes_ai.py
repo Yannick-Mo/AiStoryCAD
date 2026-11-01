@@ -224,7 +224,7 @@ async def create_from_material(
             "project_title": payload.title.strip() or "未命名项目",
             "genre": "", "tone": "",
             "plot_summary": "", "world_elements": "", "global_settings": "",
-            "ending": "", "spine": "", "logline": "",
+            "spine": "", "logline": "",
             "acts": [], "chapters": [], "characters": [], "relations": [],
             "errors": [],
         }
@@ -267,11 +267,9 @@ def _make_preview(output: dict) -> str:
     if output.get("relations"):
         bits.append(f"{len(output['relations'])}条关系")
     if output.get("spine"):
-        bits.append("主线骨架已定")
-    if output.get("ending"):
-        bits.append("终局已定")
+        bits.append("当前骨架已定")
     if output.get("global_settings"):
-        bits.append("全局设定已定")
+        bits.append("初始设定已定")
     if output.get("errors"):
         bits.append(f"{len(output['errors'])}个问题")
     return " · ".join(bits)

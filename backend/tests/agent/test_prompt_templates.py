@@ -263,7 +263,7 @@ class TestWriterPromptHygiene:
             chapter_title="第三章", act_name="第二幕", act_purpose="升级",
             chapter_goal="推进剧情", chapter_status="draft",
             chapter_body_chars=120, genre="奇幻", logline="一句话梗概",
-            global_settings="一个架空世界", spine="主线骨架", ending="终局",
+            global_settings="一个架空世界", spine="当前已完成骨架",
             user_requirement="控制在 1200 字",
             characters_text="## 小明（主角）\n性格：谨慎",
             chapter_setups_text="**要收的**（本章必须收掉）：\n- 旧硬币（第 1 章埋下）",
@@ -287,7 +287,7 @@ class TestWriterPromptHygiene:
         """空的可选变量必须让整块消失，而不是留下空括号或悬空的句子。
 
         视角已经没有字段了（写在章蓝图里），所以这里不再断言「保持同一个视角人物」——
-        改断言「全书走向」那一块在 spine / ending 都空时整块消失。
+        改断言「当前已完成骨架」那一块在 spine 空时整块消失。
         """
         from app.agent.prompts import PromptLoader
 
@@ -297,14 +297,14 @@ class TestWriterPromptHygiene:
             persona="作家", project_title="测试", chapter_number=1,
             chapter_title="第一章", act_name="", act_purpose="", chapter_goal="",
             genre="奇幻", action="write",
-            spine="", ending="", logline="", global_settings="",
+            spine="", logline="", global_settings="",
             characters_text="", chapter_setups_text="",
         )
         assert "（ ）" not in rendered
         assert "（）" not in rendered
         assert "- 位置：第 1 章" in rendered
         assert "（第一幕）" not in rendered
-        assert "全书走向" not in rendered
+        assert "当前已完成骨架（这一章是在往这个方向使劲）" not in rendered
         assert "上一章（**本章的起点**）" not in rendered
         assert "还没回收的伏笔" not in rendered
         assert "视角写在章蓝图里" in rendered
@@ -335,6 +335,16 @@ class TestStructureIsNotPrescribed:
         assert "通常 3-5 幕" not in APP_GUIDE
         assert "结构是长出来的" in APP_GUIDE
         assert "不要自动补全整个故事" in APP_GUIDE
+
+    def test_app_guide_teaches_rolling_planning_not_a_full_book_ending(self):
+        from app.agent.knowledge import APP_GUIDE
+
+        assert "当前已完成骨架" in APP_GUIDE
+        assert "spine_append" in APP_GUIDE
+        assert "global_settings_append" in APP_GUIDE
+        assert "只规划眼前这一段" in APP_GUIDE
+        assert "不预写全书结局" in APP_GUIDE
+        assert "终局" not in APP_GUIDE
 
     def test_cowriter_prompt_does_not_fix_the_act_count(self):
         from app.agent.prompts import PromptLoader

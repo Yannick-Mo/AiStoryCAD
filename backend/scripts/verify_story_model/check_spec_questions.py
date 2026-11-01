@@ -35,13 +35,13 @@ async def main():
 
         print(f"project: {proj.title!r}  id={pid}\n")
 
-        # ── 1. 这本书是什么、要走到哪、主线怎么走 ──
+        # ── 1. 这本书是什么、目前确定了什么、这一段怎么走 ──
         r = await call("read_project")
         d = r.data or {}
-        check("Q1 作品层答得出：书名/类型/梗概/终局/主线骨架/全局设定/目标字数",
-              r.success and all(k in d for k in ("title", "genre", "logline", "ending", "spine",
+        check("Q1 作品层答得出：书名/类型/梗概/当前已完成骨架/当前全局设定/目标字数",
+              r.success and all(k in d for k in ("title", "genre", "logline", "spine",
                                                  "global_settings", "total_words")),
-              f"title={d.get('title')!r} ending={d.get('ending_chars')}字 spine={d.get('spine')!r}")
+              f"title={d.get('title')!r} spine_chars={d.get('spine_chars')}字")
 
         # ── 2. 第 N 幕承担什么转变、它有几章、起止全局章号 ──
         r = await call("read_acts")

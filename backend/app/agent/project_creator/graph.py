@@ -8,8 +8,8 @@ from app.agent.project_creator.nodes.blueprints import write_chapter_blueprints
 from app.agent.project_creator.nodes.validate import validate
 
 # 一个节点一件事，顺序就是它们互相依赖的顺序：
-# 拆素材 → 建世界观 → 定这本书要走到哪 → 拆幕与章 → 设计人物 → 逐幕写章蓝图 → 校验。
-# 场景层与章间连线已删除：这条流水线只产出 幕 / 章 / 人物 / 角色关系。
+# 拆素材 → 建初始世界观 → 定开头这一段走向 → 拆开头的幕与章 → 设计人物 → 逐幕写章蓝图 → 校验。
+# 只生成故事开头，不预写全书结局；场景层与章间连线已删除。
 NODE_STEPS = [
     ("analyze_material", analyze_material),
     ("build_settings", build_settings),

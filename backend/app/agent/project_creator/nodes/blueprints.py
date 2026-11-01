@@ -26,7 +26,7 @@ def _chapters_text(chapters: list[dict]) -> str:
 
 def _characters_text(characters: list[dict]) -> str:
     if not characters:
-        return "（还没有设计人物，先按章名与主线骨架写）"
+        return "（还没有设计人物，先按章名与当前已完成骨架写）"
     lines = []
     for c in characters:
         if not isinstance(c, dict):
@@ -35,7 +35,7 @@ def _characters_text(characters: list[dict]) -> str:
         if not name:
             continue
         lines.append(f"- {name}（{as_text(c.get('role'))}）：{as_text(c.get('motivation'))}")
-    return "\n".join(lines) if lines else "（还没有设计人物，先按章名与主线骨架写）"
+    return "\n".join(lines) if lines else "（还没有设计人物，先按章名与当前已完成骨架写）"
 
 
 async def _blueprint_one_act(
@@ -44,7 +44,6 @@ async def _blueprint_one_act(
     act_chapters: list[dict],
     characters: list[dict],
     spine: str,
-    ending: str,
 ) -> list[str]:
     """跑一次模型，返回这一幕每一章的蓝图（按章序，可能比章数少）。"""
     client = get_shared_client()
@@ -56,7 +55,6 @@ async def _blueprint_one_act(
             chapters_text=_chapters_text(act_chapters),
             characters_text=_characters_text(characters),
             spine=spine,
-            ending=ending,
             blueprint_spec=render_guide("chapter"),
         )
     except KeyError as e:
@@ -111,7 +109,6 @@ async def write_chapter_blueprints(state: MaterialState) -> dict:
                 [chapters[p] for p in positions],
                 characters,
                 as_text(state.get("spine")),
-                as_text(state.get("ending")),
             )
 
     results = await asyncio.gather(*(_run(act_index, positions) for act_index, positions in targets))

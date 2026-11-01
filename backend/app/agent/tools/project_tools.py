@@ -1,8 +1,8 @@
 """作品层写入工具——规格第 9 节。
 
-``update_project`` 里的**终局**和**主线骨架**是这次重构新增的两个字段：
-章蓝图答不出「结局是什么」、也答不出「我离结局还有多远」。没有这两个字段，
-每一章都在盲写，模型也没有判断"这一章该往哪使劲"的依据。
+``update_project`` 管的是**当前已经确定的部分**：一句话梗概 / 当前已完成骨架 /
+当前全局设定。骨架只覆盖已经创建出来的章（含还没写正文的章），续写时用
+``spine_append`` 往后追加，不一次定完整本书，也不预写终局。
 """
 from __future__ import annotations
 
@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 class UpdateProjectTool(BaseTool):
     meta = ToolMeta(
         name="update_project",
-        description="改作品层：书名 / 类型 / 一句话梗概 / 终局 / 主线骨架 / 全局设定 / 目标字数，"
-                    "只传要改的字段。**终局** = 故事结束时局面变成什么样、主角变成什么样；**主线骨架** = 从开局到终局的因果主链——写章节之前这两个必须已经存在",
+        description="改作品层：书名 / 类型 / 一句话梗概 / 当前已完成骨架 / 当前全局设定 / 目标字数，"
+                    "只传要改的字段。**当前已完成骨架** = 目前已经确定、已经创建出来（含还没写正文）的这一段走向，"
+                    "不是全书大纲；续写时用 spine_append 往后追加，不要整段重写。"
+                    "**当前全局设定** = 目前已知的世界观与背景；补充时用 global_settings_append",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -29,10 +31,11 @@ class UpdateProjectTool(BaseTool):
                 "title": {"type": "string", "description": "书名"},
                 "genre": {"type": "string", "description": "类型，例如：悬疑、奇幻、科幻"},
                 "logline": {"type": "string", "description": "一句话梗概：这个故事是什么、开局的钩子"},
-                "ending": {"type": "string", "description": "终局：故事结束时局面变成什么样、主角变成什么样"},
-                "spine": {"type": "string", "description": "主线骨架：从开局到终局的因果主链，例如「奔丧 → 发现账本缺页 → 姑妈改口 → 旧债浮出 → 陈默留下」"},
-                "global_settings": {"type": "string", "description": "全局设定：世界观与背景（地名、习俗、规则、来龙去脉）"},
-                "total_words": {"type": "integer", "description": "目标字数"},
+                "spine": {"type": "string", "description": "当前已完成骨架：只覆盖目前已经确定、已经创建的章（含还没写正文的章），写成一串因果节点。要往后扩写用 spine_append，不要整段覆盖"},
+                "spine_append": {"type": "string", "description": "往后追加当前已完成骨架：续写时把下一段走向接在现有骨架后面，不覆盖旧内容"},
+                "global_settings": {"type": "string", "description": "当前全局设定：目前已知的世界观与背景（地名、习俗、规则、来龙去脉）"},
+                "global_settings_append": {"type": "string", "description": "往后追加当前全局设定：补充新设定时接在现有内容后面，不覆盖旧内容"},
+                "total_words": {"type": "integer", "description": "全书目标字数"},
             },
         },
     )
@@ -44,6 +47,17 @@ class UpdateProjectTool(BaseTool):
         "world_settings": "global_settings",
         "summary": "logline",
     }
+
+    @staticmethod
+    def _append_text(current: str, addition: str) -> str:
+        """把新内容接在旧内容后面；两边都保留，绝不覆盖。"""
+        current = (current or "").rstrip()
+        addition = (addition or "").strip()
+        if not addition:
+            return current
+        if not current:
+            return addition
+        return f"{current}\n{addition}"
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -58,13 +72,15 @@ class UpdateProjectTool(BaseTool):
                     kwargs[correct] = kwargs[wrong]
                     logger.warning("update_project: aliased param '%s' -> '%s'", wrong, correct)
 
-            updatable = {"title", "genre", "logline", "ending", "spine", "global_settings", "total_words"}
-            given = set(kwargs) & updatable
+            updatable = {"title", "genre", "logline", "spine", "global_settings", "total_words"}
+            appendable = {"spine_append": "spine", "global_settings_append": "global_settings"}
+            given = set(kwargs) & (updatable | set(appendable))
             if not given:
                 return ToolResult(
                     success=False,
                     error="未传入任何要更新的字段，请在调用时至少提供 "
-                          "title / genre / logline / ending / spine / global_settings / total_words 中的一个",
+                          "title / genre / logline / spine / spine_append / "
+                          "global_settings / global_settings_append / total_words 中的一个",
                     correction_hint="请传入要修改的字段及其新值",
                 )
 
@@ -75,6 +91,11 @@ class UpdateProjectTool(BaseTool):
             for field in updatable - {"total_words"}:
                 if field in kwargs and kwargs[field] is not None:
                     setattr(project, field, kwargs[field])
+            for append_field, target in appendable.items():
+                if kwargs.get(append_field) is not None:
+                    setattr(project, target, self._append_text(
+                        getattr(project, target) or "", str(kwargs[append_field])
+                    ))
             if kwargs.get("total_words") is not None:
                 try:
                     project.total_words = int(kwargs["total_words"])
@@ -83,14 +104,14 @@ class UpdateProjectTool(BaseTool):
 
             await db.commit()
             settings = project.global_settings or ""
+            spine = project.spine or ""
             return ToolResult(success=True, data={
                 "project_id": str(project.id),
                 "title": project.title or "",
                 "genre": project.genre or "",
                 "logline": project.logline or "",
-                "ending": project.ending or "",
-                "ending_chars": len(project.ending or ""),
-                "spine": project.spine or "",
+                "spine": spine,
+                "spine_chars": len(spine),
                 "global_settings_chars": len(settings),
                 "total_words": int(project.total_words or 0),
                 "updated_fields": sorted(given),
@@ -103,9 +124,9 @@ class UpdateProjectTool(BaseTool):
 class CreateProjectFromMaterialTool(BaseTool):
     meta = ToolMeta(
         name="create_project_from_material",
-        description="从素材一次生成完整项目：幕（含每一幕要干什么）/ 章（含每一章要写什么）/ 人物（含他想要什么、他从哪到哪）"
-                    "/ 角色关系 / 终局与主线骨架 / 全局设定。**不生成正文**。素材撑不起完整结构时，"
-                    "返回值里的 truncated 会如实列出被削减了什么。素材至少 10 个字",
+        description="从素材生成一个故事开头：初步全局设定 / 开头几幕几章 / 人物（含他想要什么、他从哪到哪）"
+                    "/ 角色关系 / 当前已完成骨架 / 一句话梗概。**不生成正文**，也**不预写全书结局**；"
+                    "后面的走向等需要时再往后追加。素材撑不起这部分时，返回值里的 truncated 会如实列出被削减了什么。素材至少 10 个字",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
@@ -140,7 +161,7 @@ class CreateProjectFromMaterialTool(BaseTool):
                 "project_title": (kwargs.get("project_title") or "未命名项目").strip(),
                 "genre": "", "tone": "",
                 "plot_summary": "", "world_elements": "", "global_settings": "",
-                "ending": "", "spine": "", "logline": "",
+                "spine": "", "logline": "",
                 "acts": [], "chapters": [], "characters": [], "relations": [],
                 "errors": [],
             }

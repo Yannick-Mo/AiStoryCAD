@@ -87,7 +87,7 @@ def framework_context(
     return {
         "project": {
             "id": "p1", "title": "测试书", "genre": "", "logline": "",
-            "spine": "", "spine_chars": 0, "ending": "", "ending_chars": 0,
+            "spine": "", "spine_chars": 0,
             "global_settings": "", "global_settings_chars": 0,
             "total_words": 0, "status": "",
         },

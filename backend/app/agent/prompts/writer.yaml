@@ -28,10 +28,11 @@ system: |
   {% if length_target %}- 篇幅参考：{{length_target}}{% endif %}
   {% if next_chapter_title or next_chapter_goal %}- 下一章要写什么（**这一章不要写它**，它只用来告诉你这一章该在哪儿收）：{% if next_chapter_title %}《{{next_chapter_title}}》{% endif %}{% if next_chapter_goal %}{{next_chapter_goal}}{% endif %}{% endif %}
 
-  {% if spine or ending %}
-  ## 全书走向（这一章是在往这个方向使劲）
-  {% if spine %}- 主线骨架：{{spine}}{% endif %}
-  {% if ending %}- 终局：{{ending}}{% endif %}
+  {% if spine %}
+  ## 当前已完成骨架（这一章是在往这个方向使劲）
+  - 当前已完成骨架：{{spine}}
+  骨架只写到目前已经确定的这一段：没写到的后续不要替作者补全，不要提前收尾，
+  这一章只演到本章蓝图停下的地方。
   {% endif %}
 
   {% if previous_chapter_title or previous_chapter_goal or previous_chapter_tail %}

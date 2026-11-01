@@ -21,6 +21,8 @@ async def read_project(token: str, project_id: str) -> dict:
             raise ValueError(f"Project {project_id} not found")
         config = await repo.get_config(uuid.UUID(project_id))
         data = row_to_dict(project)
+        # ending（终局）列保留在库里，但已从产品里拿掉，不再对外暴露。
+        data.pop("ending", None)
         if config:
             data["config"] = row_to_dict(config)
         return data
@@ -56,7 +58,9 @@ async def update_project(
         if not ok:
             raise ValueError(f"Project {project_id} not found")
         project = await repo.get(uuid.UUID(project_id))
-        return row_to_dict(project)
+        data = row_to_dict(project)
+        data.pop("ending", None)
+        return data
 
 
 @mcp.tool()

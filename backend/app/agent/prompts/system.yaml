@@ -38,7 +38,7 @@ tool_usage:
       - 章的规划：read_chapters(chapter_from, chapter_to)——按当前创作依赖取离散区间
         （如同时依赖第 1-3 章与第 15-20 章就分两次调用），不要一次拉很长范围
       - **动某一章之前要的全部输入**：read_chapter_package(chapter_id)——本章要写什么、上一章蓝图与结尾原文、
-        这一幕要干什么、主线骨架与终局、人物想要什么、还没收的伏笔，一次拿齐
+        这一幕要干什么、当前已完成骨架、人物想要什么、还没收的伏笔，一次拿齐
       - 章正文：read_chapter_content(chapter_id)；完整世界观设定：read_project
       - 人物：list_characters / read_character；关系：list_relations / read_relation；伏笔：list_setups
       - 「写到哪了 / 下一步做什么」：read_progress（设计缺什么、正文断点在第几章、伏笔逾期、最近改动的章）

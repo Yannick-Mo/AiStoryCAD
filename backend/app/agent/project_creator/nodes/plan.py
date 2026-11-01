@@ -1,7 +1,7 @@
-"""规划幕与章：幕名 + 这一幕承担什么转变，以及每一幕有哪些章。
+"""规划开头的幕与章：幕名 + 这一幕承担什么转变，以及每一幕有哪些章。
 
-这一步只定**结构**（幕、章名、章属于哪一幕），不写每一章的蓝图——
-蓝图由 blueprints 节点逐幕写成一段话。章在状态里是扁平列表，
+只规划故事开头这一段，不预写全书结构；这一步只定**结构**（幕、章名、章属于哪一幕），
+不写每一章的蓝图——蓝图由 blueprints 节点逐幕写成一段话。章在状态里是扁平列表，
 靠 act_index（0-based）指回幕；这样 writer 只需要一处越界判断。
 """
 from loguru import logger
@@ -10,8 +10,7 @@ from app.agent.project_creator.state import MaterialState, as_text, as_int
 from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt, GenerationError
 from app.llm.types import Message
 
-# 模型没给 estimated_words 时按章数推：一章 4000 字是这类长篇的常规量级。
-WORDS_PER_CHAPTER = 4000
+# 模型没给 estimated_words 时用全书默认目标；**不能拿开头几章的字数当全书目标**。
 DEFAULT_TOTAL_WORDS = 100000
 
 
@@ -25,7 +24,6 @@ async def plan_structure(state: MaterialState) -> dict:
             logline=state.get("logline", ""),
             plot_summary=state.get("plot_summary", ""),
             world_elements=state.get("world_elements", ""),
-            ending=state.get("ending", ""),
             spine=state.get("spine", ""),
         )
     except KeyError as e:
@@ -34,7 +32,7 @@ async def plan_structure(state: MaterialState) -> dict:
 
     messages: list[Message] = [
         Message(role="system", content=system),
-        Message(role="user", content="请规划完整的幕-章结构"),
+        Message(role="user", content="请规划开头这一段的幕-章结构（只规划开头，不规划全书）"),
     ]
 
     result = await client.chat(messages, temperature=0.5, max_tokens=8192)
@@ -70,6 +68,7 @@ async def plan_structure(state: MaterialState) -> dict:
 
     estimated = as_int(parsed.get("estimated_words"), 0)
     if estimated <= 0:
-        estimated = len(chapters) * WORDS_PER_CHAPTER or DEFAULT_TOTAL_WORDS
+        # 开头几章的字数不是全书目标：模型没给就用默认长篇目标。
+        estimated = DEFAULT_TOTAL_WORDS
 
     return {"acts": acts, "chapters": chapters, "estimated_words": estimated}

@@ -14,6 +14,13 @@ _CJK_CLASS = "[\u4e00-\u9fff]"
 _NOT_CJK_CLASS = "[^\u4e00-\u9fff]"
 
 
+def _project_dict(project: Project) -> dict:
+    """projects 表里 ``ending``（终局）已废弃：列保留、旧数据不动，但不再对外暴露。"""
+    data = row_to_dict(project)
+    data.pop("ending", None)
+    return data
+
+
 def word_count_expr(column):
     """与 ``app.agent.utils.count_words`` 口径一致的 SQL 字数表达式。
 
@@ -36,13 +43,13 @@ class ProjectService:
 
     async def create_project(self, title: str, description: str, owner_id: uuid.UUID) -> dict:
         project = await self.repo.create(title, description, owner_id)
-        return row_to_dict(project)
+        return _project_dict(project)
 
     async def get_project(self, project_id: uuid.UUID, owner_id: uuid.UUID) -> dict | None:
         project = await self.repo.get(project_id)
         if not project or project.owner_id != owner_id:
             return None
-        return row_to_dict(project)
+        return _project_dict(project)
 
     async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20, search: str = "", status: str = "") -> dict:
         projects = await self.repo.list_projects(owner_id, page, size, search, status)
@@ -68,7 +75,7 @@ class ProjectService:
         items = []
         for project in projects:
             stats = chapter_map.get(project.id, {"chapters": 0, "words": 0})
-            item = row_to_dict(project)
+            item = _project_dict(project)
             item["total_chapters"] = stats["chapters"]
             # 这两个键曾经都叫 total_words（一个是目标、一个是已写），
             # 现在分开：target_words 是设定，written_words 是实时算出来的。

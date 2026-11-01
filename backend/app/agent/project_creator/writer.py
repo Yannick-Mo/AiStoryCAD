@@ -77,7 +77,6 @@ async def write_project_from_state(db, state: dict, owner_id) -> dict:
         title=_clip(as_text(state.get("project_title")) or DEFAULT_TITLE, TITLE_LIMIT, truncated, "书名"),
         genre=_clip(as_text(state.get("genre")), GENRE_LIMIT, truncated, "类型"),
         logline=as_text(state.get("logline")),
-        ending=as_text(state.get("ending")),
         spine=as_text(state.get("spine")),
         global_settings=as_text(state.get("global_settings")),
         total_words=total_words,

@@ -34,8 +34,7 @@ def _chapters_prompt() -> str:
     return load_project_prompt("material_chapters").format(
         act_name="第一幕",
         act_purpose="把他扣在镇上",
-        ending="终局：陈默留下查清旧债",
-        spine="主线骨架：奔丧 → 账本缺页 → 姑妈改口 → 留下",
+        spine="当前已完成骨架：奔丧 → 账本缺页 → 姑妈改口 → 旧债浮出",
         characters_text="陈默（主角）",
         chapters_text="- 归乡\n- 撕掉的几页",
         blueprint_spec=render_guide(),
@@ -46,7 +45,7 @@ def _structure_prompt() -> str:
     return load_project_prompt("material_structure").format(
         genre="悬疑", tone="克制", logline="一个外人的丧事变成他的旧案",
         plot_summary="铺梗", world_elements="小镇",
-        ending="他留下", spine="奔丧 → 留下",
+        spine="奔丧 → 旧债浮出",
     )
 
 
@@ -157,6 +156,39 @@ class TestPromptSurfaces:
         assert "{blueprint_spec}" not in prompt
         assert "不写正文" in prompt
         assert "也不要写每一章的蓝图" in prompt
+
+    def test_material_structure_only_plans_the_opening(self):
+        """从素材创建默认只搭开头：不要求 3-5 幕 / 15-30 章，也不写终局。"""
+        prompt = _structure_prompt()
+        assert "只规划**开头这一段**" in prompt
+        assert "15-30 章" not in prompt
+        assert "终局" not in prompt
+
+    def test_material_spine_only_plans_the_opening(self):
+        prompt = load_project_prompt("material_spine").format(
+            genre="悬疑", tone="克制", plot_summary="铺梗",
+            world_elements="小镇", global_settings="渡口",
+        )
+        assert "当前已完成骨架" in prompt
+        assert "3-6 个转折" in prompt
+        assert "不要写全书结局" in prompt
+        assert "ending" not in prompt
+
+    def test_material_characters_arc_is_limited_to_the_opening(self):
+        prompt = load_project_prompt("material_characters").format(
+            genre="悬疑", tone="克制", plot_summary="铺梗",
+            characters_raw_text="陈默",
+        )
+        assert "终局" not in prompt
+        assert "开头这一段" in prompt
+        assert "不要替他写全书最终的结局" in prompt
+
+    def test_material_settings_only_writes_what_is_known(self):
+        prompt = load_project_prompt("material_settings").format(
+            genre="悬疑", tone="克制", plot_summary="铺梗", world_elements="小镇",
+        )
+        assert "目前素材里已经明确的初始设定" in prompt
+        assert "后面的设定等故事写下去再追加" in prompt
 
     def test_loop_injects_the_guide(self):
         import app.agent.loop as loop_mod
@@ -422,7 +454,7 @@ class TestWriterToolContract:
     def test_description_declares_what_it_loads_itself(self):
         desc = self._tool().meta.description
         for word in ("自动加载", "本章要写什么", "上一章蓝图与结尾原文", "这一幕要干什么",
-                     "主线骨架与终局", "人物想要什么", "还没收的伏笔", "全局设定"):
+                     "当前已完成骨架", "人物想要什么", "还没收的伏笔", "当前全局设定"):
             assert word in desc, word
         assert "不必先读" in desc
         assert "写成了什么" not in desc, "「本章写成了什么」已删除（迁移 0022）"

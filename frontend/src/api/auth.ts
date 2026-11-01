@@ -107,14 +107,13 @@ export async function deleteProject(id: string): Promise<{ ok: boolean }> {
 /**
  * 作品层可写字段（规格第 3 节总表；后端 ALLOWED_PROJECT_FIELDS 是同一份名单）。
  *
- * ``ending``（终局）和 ``spine``（主线骨架）不是装饰：章蓝图答不出"结局是什么"
- * 和"我离结局还有多远"，这两个字段是每一章判断该往哪使劲的依据。
+ * ``spine``（当前已完成骨架）只记录目前已经确定、已经创建出来的这一段走向，
+ * 包含已创建但还没写正文的章；续写时再往后追加，不一次定完整本书。
  */
 export interface ProjectUpdatePayload {
   title?: string
   genre?: string
   logline?: string
-  ending?: string
   spine?: string
   global_settings?: string
   total_words?: number
@@ -128,7 +127,6 @@ export interface ProjectDetail {
   title: string
   genre: string
   logline: string
-  ending: string
   spine: string
   global_settings: string
   total_words: number

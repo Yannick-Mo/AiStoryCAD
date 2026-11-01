@@ -4,14 +4,17 @@
 流水线最终产出的键（= ``writer.write_project_from_state`` 的输入契约）：
 
     material / project_title / genre / tone / plot_summary / world_elements /
-    global_settings / ending / spine / logline / acts / chapters / characters /
+    global_settings / spine / logline / acts / chapters / characters /
     relations / errors
 
 另有三个**流水线内部**使用的键，不属于上面的契约：
 
     characters_raw   analyze 从素材里抽出的原始人物线索，只给 design_characters 读
-    estimated_words  plan_structure 估的目标字数，写库时落到 projects.total_words
+    estimated_words  plan_structure 估的全书目标字数，写库时落到 projects.total_words
     truncation       validate 记下的「被主动丢掉的数据」，writer 会把它并进返回的 truncated
+
+这条流水线只生成**故事开头**：初步全局设定 + 开头几幕几章 + 覆盖这些章的当前骨架，
+不预写全书结局。后面的走向等续写时再往后追加。
 
 场景层与章间连线已经随这次重构删掉：这里不再有它们的 TypedDict，
 章就是最底层，也是正文层（见 docs/故事模型设计规格.md 第 2、3 节）。
@@ -113,7 +116,6 @@ class MaterialState(TypedDict):
     plot_summary: str
     world_elements: str
     global_settings: str
-    ending: str
     spine: str
     logline: str
     acts: list[ActDef]

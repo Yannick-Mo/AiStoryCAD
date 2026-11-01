@@ -58,8 +58,7 @@ NEVER: list[str] = [
 
 async def _project(db_session: AsyncSession, test_user: dict) -> dict:
     project = await ProjectRepository(db_session).create("Render", "", test_user["id"])
-    project.spine = "主线"
-    project.ending = "终局"
+    project.spine = "当前已完成骨架"
     project.genre = "悬疑"
     project.logline = "一句话"
     project.global_settings = "小镇"

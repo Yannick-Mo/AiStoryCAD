@@ -49,7 +49,7 @@ class CallWriterAgentTool(BaseTool):
         description=(
             "调用专业写作智能体创作一章的正文（创作／续写／重写），完成后自动保存，"
             "只把摘要返回给你。本工具会自动加载：本章要写什么、上一章蓝图与结尾原文、"
-            "这一幕要干什么、主线骨架与终局、人物想要什么、还没收的伏笔、全局设定。"
+            "这一幕要干什么、当前已完成骨架、人物想要什么、还没收的伏笔、当前全局设定。"
             "这些不必先读，也不要写进 user_requirement。"
         ),
         concurrency=ConcurrencyMode.EXCLUSIVE,

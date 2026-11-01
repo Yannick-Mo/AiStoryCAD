@@ -1,8 +1,7 @@
-"""定这本书要走到哪：一句话梗概 / 终局 / 主线骨架。
+"""定故事开头这一段的走向：一句话梗概 / 当前已完成骨架。
 
-章蓝图答不出「结局是什么」，也答不出「这一章离结局还有多远」——规格 4.1 节的
-「终局」和「主线骨架」就是为这两问存在的。它们必须**先于**幕章结构定下来，
-后面的结构规划和逐章蓝图才有"该往哪使劲"的依据。
+这里只定**开头这一段**要走到哪，不预写全书结局——后面的走向等续写时再往后追加。
+骨架先于幕章结构定下来，后面的结构规划和逐章蓝图才有"这一段该往哪使劲"的依据。
 """
 from loguru import logger
 
@@ -28,7 +27,7 @@ async def plan_spine(state: MaterialState) -> dict:
 
     messages: list[Message] = [
         Message(role="system", content=system),
-        Message(role="user", content="请定下这本书的终局与主线骨架"),
+        Message(role="user", content="请定下故事开头这一段的梗概与当前已完成骨架"),
     ]
 
     result = await client.chat(messages, temperature=0.5, max_tokens=2048)
@@ -37,6 +36,5 @@ async def plan_spine(state: MaterialState) -> dict:
 
     return {
         "logline": as_text(parsed.get("logline")),
-        "ending": as_text(parsed.get("ending")),
         "spine": as_text(parsed.get("spine")),
     }

@@ -544,16 +544,15 @@ async def _build_turn_sections(
             gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {gs_total} 字，已截断。可用 read_project 读取完整设定]"
         else:
             gs_snippet = proj_global_settings
-        ctx_parts.append(f"全局设定:\n{gs_snippet}")
-    # 终局与主线骨架常驻：它们是每一章判断「该往哪使劲、离结局还有多远」的依据。
-    for key, label in (("spine", "主线骨架"), ("ending", "终局")):
-        value = proj.get(key) or ""
-        if not value:
-            continue
-        total = proj.get(f"{key}_chars") or len(value)
+        ctx_parts.append(f"当前全局设定:\n{gs_snippet}")
+    # 当前已完成骨架常驻：它是每一章判断「这一段该往哪使劲」的依据。
+    # 只覆盖已经创建（含还没写正文）的章，不是全书大纲，续写时再往后追加。
+    spine = proj.get("spine") or ""
+    if spine:
+        total = proj.get("spine_chars") or len(spine)
         if total > 1200:
-            value = value[:1200] + f"\n... [全文共 {total} 字，已截断。可用 read_project 读取完整内容]"
-        ctx_parts.append(f"{label}:\n{value}")
+            spine = spine[:1200] + f"\n... [全文共 {total} 字，已截断。可用 read_project 读取完整内容]"
+        ctx_parts.append(f"当前已完成骨架:\n{spine}")
     ctx_parts.append(f"Project ID: {proj_id}")
     sections.append("\n".join(ctx_parts))
 
@@ -707,7 +706,7 @@ async def autonomous_loop(
 - **章是最底层，也是正文层**：一章 = 本章要写什么（计划）+ 正文。**没有「本章写成了什么」**——
   正文本身就是下一章的前情，下一章读的是这一章的结尾原文。
 - 章正文**不包含在上下文中**——要改它或接续它时用 read_chapter_content 读取（默认返回完整正文）。
-- 动某一章之前用 read_chapter_package 一次拿齐（本章计划、上一章蓝图与结尾原文、幕要干什么、主线骨架与终局、人物动机、未收伏笔）。
+- 动某一章之前用 read_chapter_package 一次拿齐（本章计划、上一章蓝图与结尾原文、幕要干什么、当前已完成骨架、人物动机、未收伏笔）。
 - **一章写完，正文本身就是下一章的前情**，不需要补摘要；这一章长出的活线用 create_setup 记下来。
 - 在进行写入操作之前，先通过读取工具获取最新数据。
 - 不要编造幕、章、人物、关系或伏笔数据。

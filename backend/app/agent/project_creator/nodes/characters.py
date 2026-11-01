@@ -41,7 +41,6 @@ async def design_characters(state: MaterialState) -> dict:
             genre=state.get("genre", ""),
             tone=state.get("tone", ""),
             plot_summary=state.get("plot_summary", ""),
-            ending=state.get("ending", ""),
             characters_raw_text=_raw_chars_text(state.get("characters_raw", [])),
         )
     except KeyError as e:

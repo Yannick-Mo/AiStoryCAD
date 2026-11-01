@@ -52,9 +52,9 @@ def _snippet(text: str, keyword: str, radius: int = 90) -> str:
 class ReadProjectTool(BaseTool):
     meta = ToolMeta(
         name="read_project",
-        description="读作品层：书名 / 类型 / 一句话梗概 / 终局 / 主线骨架 / 全局设定全文 / 目标字数。"
-                    "终局、主线骨架、全局设定一次读完（全局设定给全文，不是常驻里的前 2000 字）"
-                    "。正文不在这里，用 read_chapter_content",
+        description="读作品层：书名 / 类型 / 一句话梗概 / 当前已完成骨架 / 当前全局设定全文 / 目标字数。"
+                    "当前已完成骨架（只覆盖已经创建、含还没写正文的章）与全局设定一次读完"
+                    "（全局设定给全文，不是常驻里的前 2000 字）。正文不在这里，用 read_chapter_content",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,
         max_result_chars=100000,
@@ -74,14 +74,14 @@ class ReadProjectTool(BaseTool):
             if not project:
                 return self._not_found("Project")
             settings = project.global_settings or ""
+            spine = project.spine or ""
             return ToolResult(success=True, data={
                 "id": str(project.id),
                 "title": project.title or "",
                 "genre": project.genre or "",
                 "logline": project.logline or "",
-                "ending": project.ending or "",
-                "ending_chars": len(project.ending or ""),
-                "spine": project.spine or "",
+                "spine": spine,
+                "spine_chars": len(spine),
                 "global_settings": settings,
                 "global_settings_chars": len(settings),
                 "total_words": int(project.total_words or 0),
@@ -151,7 +151,7 @@ class ReadActsTool(BaseTool):
 class ReadChaptersTool(BaseTool):
     meta = ToolMeta(
         name="read_chapters",
-        description="读第 X 到第 Y 章：每章的 本章要写什么 + 状态 + 所属幕 + 是否已有正文（回看全书走向的主力）"
+        description="读第 X 到第 Y 章：每章的 本章要写什么 + 状态 + 所属幕 + 是否已有正文（回看当前这一段的主力）"
                     "。全局章号从第 1 幕第 1 章起跨幕连续编号。**粗看很长的范围用 detail=index**："
                     "只给 章号/标题/状态/幕/是否已写，同样预算能读的章数是默认模式的三倍多。正文不在这里（用 read_chapter_content）"
                     "；动一章之前的全部输入用 read_chapter_package。truncated=true 时用 next_from 接着读",
@@ -164,7 +164,7 @@ class ReadChaptersTool(BaseTool):
                 "chapter_from": {"type": "integer", "description": "全局章序号起点（从1开始，含）"},
                 "chapter_to": {"type": "integer", "description": "全局章序号终点（含）"},
                 "detail": {"type": "string", "enum": ["full", "index"],
-                           "description": "full（默认）=每章的计划，梳理全书走向用它；"
+                           "description": "full（默认）=每章的计划，回看当前这一段用它；"
                                           "index=只给 章号/标题/状态/幕/有没有正文，粗看长范围（例如全书目录）用它"},
             },
             "required": ["chapter_from", "chapter_to"],
@@ -276,7 +276,7 @@ class ReadChapterPackageTool(BaseTool):
     meta = ToolMeta(
         name="read_chapter_package",
         description="动一章之前要的全部输入，一次拿齐：这一章的计划与结果、上一章的结果（本章的起点）"
-                    "、它在整本书里的位置（这一幕要干什么 + 主线骨架 + 终局）、人物动机、还没收的伏笔。"
+                    "、它在整本书里的位置（这一幕要干什么 + 当前已完成骨架）、人物动机、还没收的伏笔。"
                     "本章正文只给长度和尾部片段。写、改、或判断该接写还是重写之前先调这个",
         concurrency=ConcurrencyMode.SAFE,
         timeout=30,

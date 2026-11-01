@@ -40,11 +40,11 @@ async def get_project(project_id: uuid.UUID, current_user: dict = Depends(get_cu
     return result
 
 
-# 作品层的可写字段（规格第 3 节总表）：书名 / 类型 / 一句话梗概 / 终局 /
-# 主线骨架 / 全局设定 / 目标字数。description 与 status 是规格未表态的两个
-# 历史字段，暂留。
+# 作品层的可写字段（规格第 3 节总表）：书名 / 类型 / 一句话梗概 /
+# 当前已完成骨架 / 当前全局设定 / 目标字数。description 与 status 是规格未表态的两个
+# 历史字段，暂留。``ending`` 列保留在库里但不再对外可写。
 ALLOWED_PROJECT_FIELDS = {
-    "title", "genre", "logline", "ending", "spine", "global_settings", "total_words",
+    "title", "genre", "logline", "spine", "global_settings", "total_words",
     "description", "status",
 }
 

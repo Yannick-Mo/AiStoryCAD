@@ -1,4 +1,4 @@
-"""``read_project`` —— 作品层一次读完（书名 / 类型 / 梗概 / 终局 / 主线骨架 / 全局设定）。
+"""``read_project`` —— 作品层一次读完（书名 / 类型 / 梗概 / 当前已完成骨架 / 当前全局设定）。
 
 ``read_global_settings`` 已并入 ``read_project``（规格第 10 节的合并清单）：
 全局设定只剩一个消费者（写作循环第 3 步「这一章在整本书里的位置」），
@@ -30,7 +30,7 @@ def _make_db(project=None):
     if project is None:
         project = SimpleNamespace(
             id=pid, title="测试小说", genre="悬疑", logline="一句话梗概",
-            ending="终局", spine="主线骨架",
+            spine="当前已完成骨架",
             global_settings="世界观全文：魔法大陆的秩序由五大元素议会维持。",
             total_words=90000, status="init",
         )
@@ -54,15 +54,15 @@ class TestReadProject:
         assert res.data["title"] == "测试小说"
         assert res.data["genre"] == "悬疑"
         assert res.data["logline"] == "一句话梗概"
-        assert res.data["ending"] == "终局"
-        assert res.data["spine"] == "主线骨架"
+        assert res.data["spine"] == "当前已完成骨架"
+        assert "ending" not in res.data, "终局已废弃，不能再出现在作品层读取结果里"
         assert res.data["total_words"] == 90000
         assert res.data["status"] == "init"
 
     async def test_global_settings_is_returned_in_full(self):
         body = "甲" * 25000
         res = await self._run(SimpleNamespace(
-            id=uuid.uuid4(), title="T", genre="", logline="", ending="", spine="",
+            id=uuid.uuid4(), title="T", genre="", logline="", spine="",
             global_settings=body, total_words=100000, status="init"))
 
         assert res.data["global_settings"] == body
@@ -71,21 +71,21 @@ class TestReadProject:
     async def test_char_counts_are_reported_for_the_big_text_fields(self):
         body = "设" * 4321
         res = await self._run(SimpleNamespace(
-            id=uuid.uuid4(), title="T", genre="", logline="", ending="终" * 12,
-            spine="", global_settings=body, total_words=100000, status="init"))
+            id=uuid.uuid4(), title="T", genre="", logline="",
+            spine="骨" * 12, global_settings=body, total_words=100000, status="init"))
 
         assert res.data["global_settings_chars"] == 4321
-        assert res.data["ending_chars"] == 12
+        assert res.data["spine_chars"] == 12
 
     async def test_empty_project_text_fields_come_back_as_empty_strings(self):
         res = await self._run(SimpleNamespace(
-            id=uuid.uuid4(), title="T", genre=None, logline=None, ending=None,
+            id=uuid.uuid4(), title="T", genre=None, logline=None,
             spine=None, global_settings=None, total_words=None, status=None))
 
         assert res.data["genre"] == ""
         assert res.data["logline"] == ""
-        assert res.data["ending"] == ""
         assert res.data["spine"] == ""
+        assert res.data["spine_chars"] == 0
         assert res.data["global_settings"] == ""
         assert res.data["global_settings_chars"] == 0
         assert res.data["total_words"] == 0

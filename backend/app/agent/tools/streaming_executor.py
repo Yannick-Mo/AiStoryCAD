@@ -49,7 +49,7 @@ _STRUCTURAL_TOOL_NAMES: set[str] = {
 # needs for continuity writing — keep head AND tail with an omission marker.
 _LONG_TEXT_KEYS: frozenset[str] = frozenset({
     "content", "body", "goal", "result", "description", "global_settings",
-    "ending", "spine", "purpose", "arc", "notes", "note", "motivation",
+    "spine", "purpose", "arc", "notes", "note", "motivation",
     "background", "personality", "appearance", "outline",
 })
 

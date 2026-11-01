@@ -78,8 +78,7 @@ def _template_vars() -> set[str]:
 
 async def _project(db_session: AsyncSession, test_user: dict) -> dict:
     project = await ProjectRepository(db_session).create("WriterCtx", "", test_user["id"])
-    project.spine = "主线骨架：奔丧 → 发现账本缺页 → 姑妈改口 → 陈默留下"
-    project.ending = "终局：陈默留下查清旧债"
+    project.spine = "当前已完成骨架：奔丧 → 发现账本缺页 → 姑妈改口 → 旧债浮出"
     project.genre = "悬疑"
     project.logline = "一句话梗概：一个外人的丧事变成他的旧案"
     project.global_settings = "小镇名叫渡口，杂货铺是唯一还开着的店。"
@@ -201,8 +200,8 @@ async def test_position_in_the_book_is_included(db_session: AsyncSession, test_u
     assert ctx["project_title"] == "WriterCtx"
     assert ctx["genre"] == "悬疑"
     assert ctx["logline"].startswith("一句话梗概")
-    assert "主线骨架" in ctx["spine"], "主线骨架是判断「该往哪使劲」的依据"
-    assert "终局" in ctx["ending"]
+    assert "当前已完成骨架" in ctx["spine"], "当前已完成骨架是判断「这一段该往哪使劲」的依据"
+    assert "ending" not in ctx, "终局已废弃，不再进入写作上下文"
     assert "渡口" in ctx["global_settings"]
 
 
@@ -498,15 +497,15 @@ async def test_the_prompt_renders_without_leftover_placeholders(
 
 
 async def test_the_new_variable_set_actually_reaches_the_prompt(db_session: AsyncSession, test_user: dict):
-    """spine / ending / previous_chapter_goal / characters_text / chapter_setups_text
-    这五个是这次重构新增或改名的，缺一个都会让写手失去判断依据。"""
+    """spine / previous_chapter_goal / characters_text / chapter_setups_text
+    这四个是这次重构新增或改名的，缺一个都会让写手失去判断依据。"""
     f = await _project(db_session, test_user)
     ctx = await ContextBuilder(db_session).build_for_writing(f["target"].id, "write")
     ctx.update({"action": "write", "persona": "你是一位资深中文小说家"})
     rendered = PromptLoader().load("writer").render(**ctx)
 
     assert ctx["spine"] in rendered
-    assert ctx["ending"] in rendered
+    assert "当前已完成骨架" in rendered
     assert PREV_GOAL in rendered
     assert "上一章正文的结尾段落。" in rendered, "逐字结尾是接缝的唯一来源"
     assert "他想要什么：查清父亲留下的债" in rendered

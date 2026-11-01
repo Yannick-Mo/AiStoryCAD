@@ -39,9 +39,9 @@ async def main():
               "previous_chapter_result" in ctx and "previous_chapter_title" in ctx,
               f"上一章 = {ctx.get('previous_chapter_title')!r}")
 
-        check("全书走向（主线骨架 / 终局）在上下文里有位置",
-              all(k in ctx for k in ("spine", "ending", "act_purpose", "logline")),
-              f"spine={ctx.get('spine')!r} ending={ctx.get('ending')!r}")
+        check("当前这一段走向（当前已完成骨架 / 这一幕要干什么）在上下文里有位置",
+              all(k in ctx for k in ("spine", "act_purpose", "logline")),
+              f"spine={ctx.get('spine')!r}")
 
         check("人物「他想要什么」文案已拼好",
               bool(ctx.get("characters_text")),

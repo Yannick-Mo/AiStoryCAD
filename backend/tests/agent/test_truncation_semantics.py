@@ -136,7 +136,7 @@ class TestSinglePageClamp:
 
         pid = uuid.uuid4()
         project = SimpleNamespace(
-            id=pid, title="T", genre="", logline="", ending="", spine="",
+            id=pid, title="T", genre="", logline="", spine="",
             global_settings="设" * 25000, total_words=100000, status="init")
         db = _fake_db(_Q(scalars=[SimpleNamespace(id=uuid.uuid4())]),
                       _Q(scalars=[project]))

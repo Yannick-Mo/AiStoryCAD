@@ -253,6 +253,7 @@ class CreateChapterTool(BaseTool):
     meta = ToolMeta(
         name="create_chapter",
         description="新建章，**一次可传多章**（建 30 章不必调 30 次）。每章给「本章要写什么」。"
+                    "新建之前，先用 update_project 的 spine_append 把这一章对应的走向追加进当前已完成骨架；"
                     "默认接在所属幕末尾，用 after_id 插到某一章之后。正文用 write_chapter 写",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={

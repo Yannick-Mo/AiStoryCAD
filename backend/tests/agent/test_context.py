@@ -172,13 +172,12 @@ class TestTrimContextPreservesTier0InsertionOrder:
 
 
 class TestResidentContextTruncation:
-    """常驻上下文里的「主线骨架 / 终局」：**截断了就必须说**。
+    """常驻上下文里的「当前已完成骨架」：**截断了就必须说**。
 
-    这两块是判断"这一章该往哪使劲、离结局还有多远"的唯一依据（规格第 6 节第 3 步）。
-    少了却不说，模型会以为自己看到的是全文——而"静默截断"正是规格第 11 节列为
-    最该根除的坏习惯。
+    它是判断"这一章该往哪使劲"的依据（规格第 6 节第 3 步）。少了却不说，
+    模型会以为自己看到的是全文——而"静默截断"正是规格第 11 节列为最该根除的坏习惯。
 
-    这条链路确实坏过：``ContextBuilder.build_summary`` 把 spine/ending 截到 800 字，
+    这条链路确实坏过：``ContextBuilder.build_summary`` 把 spine 截到 800 字，
     而提示词层的「已截断」标记只在超过 1200 字时才出现——**800~1200 字之间截了却不说**。
 
     用例故意走**真实链路**（真实库 → build_summary → 提示词组装）：要验的正是这两层
@@ -188,9 +187,8 @@ class TestResidentContextTruncation:
     """
 
     @staticmethod
-    async def _prompt_text(db_session, project, spine: str = "", ending: str = "") -> str:
+    async def _prompt_text(db_session, project, spine: str = "") -> str:
         project.spine = spine
-        project.ending = ending
         await db_session.flush()
         ctx = await ContextBuilder(db_session).build_summary(
             project.id, depth="framework", skip_cache=True)
@@ -205,15 +203,5 @@ class TestResidentContextTruncation:
             spine = "骨" * length
             text = await self._prompt_text(db_session, project, spine=spine)
             assert spine in text or "已截断" in text, (
-                f"{length} 字的「主线骨架」被截断了却没打标记——模型会以为看到的是全文")
-
-    async def test_ending_is_either_complete_or_marked(self, db_session, test_user):
-        from app.project.repository import ProjectRepository
-
-        project = await ProjectRepository(db_session).create("截断2", "", test_user["id"])
-        for length in (799, 800, 801, 900, 1200, 1201, 2000):
-            ending = "局" * length
-            text = await self._prompt_text(db_session, project, ending=ending)
-            assert ending in text or "已截断" in text, (
-                f"{length} 字的「终局」被截断了却没打标记——模型会以为看到的是全文")
+                f"{length} 字的「当前已完成骨架」被截断了却没打标记——模型会以为看到的是全文")
 

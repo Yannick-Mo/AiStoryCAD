@@ -31,7 +31,7 @@ def _prompt(**overrides) -> str:
         next_chapter_title="第三章", next_chapter_goal="他决定留下。",
         genre="悬疑", logline="一个外人的丧事变成他的旧案",
         global_settings="小镇名叫渡口。",
-        spine="奔丧 → 留下", ending="他留下查清旧债",
+        spine="奔丧 → 旧债浮出",
         previous_chapter_title="第一章", previous_chapter_goal="他拿到了账本。",
         previous_chapter_tail="他站在门口。",
         characters_text="- 陈默（主角）", chapter_setups_text="**要收的**（本章必须收掉）：\n- 账本（第 1 章埋下）",

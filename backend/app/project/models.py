@@ -10,7 +10,7 @@ class Base(DeclarativeBase):
 
 
 class Project(Base):
-    """作品层：这本书是什么、要走到哪。
+    """作品层：这本书是什么、现在写到哪、目前确定了什么。
 
     字段去留的依据见 docs/故事模型设计规格.md 第 3 节总表。
 
@@ -31,10 +31,11 @@ class Project(Base):
     title = Column(String(255), default="Untitled Project")  # 书名
     genre = Column(String(100), default="")                  # 类型
     logline = Column(Text, default="")                       # 一句话梗概
-    ending = Column(Text, default="")                        # 终局
-    spine = Column(Text, default="")                         # 主线骨架
-    global_settings = Column(Text, default="")               # 全局设定
-    total_words = Column(Integer, default=100000)            # 目标字数
+    # 历史字段：终局已从产品里拿掉，列先保留、不迁移、不删旧数据，也不再读写。
+    ending = Column(Text, default="")                        # 终局（已废弃）
+    spine = Column(Text, default="")                         # 当前已完成骨架
+    global_settings = Column(Text, default="")               # 当前全局设定
+    total_words = Column(Integer, default=100000)            # 全书目标字数
 
     # 规格总表未列入、但仍有消费者的两个历史字段：
     # ``description`` 只有创建对话框在写；``status`` 被首页项目卡的阶段

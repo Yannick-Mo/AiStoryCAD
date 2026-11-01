@@ -18,9 +18,11 @@ interface Props {
  */
 const STEP_LABELS: Record<string, string> = {
   analyze_material: "分析素材",
-  plan_structure: "规划结构",
+  build_settings: "生成初始设定",
+  plan_spine: "规划开头走向",
+  plan_structure: "规划开头结构",
   design_characters: "设计角色",
-  build_settings: "生成世界观",
+  write_chapter_blueprints: "写章蓝图",
   validate: "校验结果",
 }
 const KNOWN_STEPS = Object.keys(STEP_LABELS)
@@ -141,7 +143,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
                 </div>
                 <div className="flex-1">
                   <div className="font-bold text-gray-100 mb-0.5">从素材创建</div>
-                  <div className="text-sm text-gray-500">粘贴故事创意，AI 自动搭建项目框架</div>
+                  <div className="text-sm text-gray-500">粘贴故事创意，AI 先帮你搭一个开头</div>
                 </div>
               </button>
             </div>
@@ -205,7 +207,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
             </div>
             <div className="mb-6">
               <label className="block text-sm text-gray-400 mb-2">
-                创作素材 <span className="text-gray-600">（输入故事创意或点子，AI 会自动扩展搭建完整项目框架）</span>
+                创作素材 <span className="text-gray-600">（输入故事创意或点子，AI 会先写一个开头：初步设定、开头几章和当前骨架）</span>
               </label>
               <textarea
                 value={materialText}
@@ -232,7 +234,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
         {mode === "material" && (aiGenerating || aiSteps.length > 0) && (
           <>
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-gray-100">AI 正在生成项目框架...</h2>
+              <h2 className="text-xl font-bold text-gray-100">AI 正在搭建故事开头...</h2>
               <button onClick={() => { abortCreateRef.current?.(); abortCreateRef.current = null; navigate("/") }} className="text-gray-500 hover:text-white text-lg">✕</button>
             </div>
             <div className="space-y-2 mb-6">
